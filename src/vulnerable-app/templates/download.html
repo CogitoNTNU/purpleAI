@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Rapporter{% endblock %}
+{% block content %}
+<h1>Kunderapporter</h1>
+<form method="get" class="form-inline">
+    <input type="text" name="file" placeholder="filnavn, f.eks. report1.txt" value="{{ filename }}">
+    <button type="submit">Vis fil</button>
+</form>
+<pre class="file-content">{{ content }}</pre>
+{% endblock %}

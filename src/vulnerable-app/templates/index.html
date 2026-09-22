@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}VulnShop - Forside{% endblock %}
+{% block content %}
+<h1>Velkommen til VulnShop</h1>
+<p>Norges (fiktivt) mest usikre juicebutikk.</p>
+
+<div class="grid">
+    {% for p in products %}
+    <div class="card">
+        <h3>{{ p['name'] }}</h3>
+        <p>{{ p['description'] }}</p>
+        <p class="price">{{ p['price'] }} kr</p>
+        <a href="{{ url_for('product', product_id=p['id']) }}">Se produkt</a>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

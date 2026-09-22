@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Server-diagnostikk{% endblock %}
+{% block content %}
+<h1>Ping-verktøy</h1>
+<form method="post" class="form-inline">
+    <input type="text" name="host" placeholder="f.eks. 127.0.0.1">
+    <button type="submit">Ping</button>
+</form>
+{% if output %}
+<pre class="file-content">{{ output }}</pre>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Søk{% endblock %}
+{% block content %}
+<h1>Søk etter produkter</h1>
+<form method="get" class="form-inline">
+    <input type="text" name="q" placeholder="Søkeord..." value="{{ q }}">
+    <button type="submit">Søk</button>
+</form>
+
+<!-- VULN: q rendres her usanert med |safe -> reflektert XSS -->
+<p>Du søkte etter: {{ q|safe }}</p>
+
+<div class="grid">
+    {% for p in results %}
+    <div class="card">
+        <h3>{{ p['name'] }}</h3>
+        <p>{{ p['description'] }}</p>
+        <p class="price">{{ p['price'] }} kr</p>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

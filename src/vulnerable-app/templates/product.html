@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}{{ product['name'] }}{% endblock %}
+{% block content %}
+<h1>{{ product['name'] }}</h1>
+<p>{{ product['description'] }}</p>
+<p class="price">{{ product['price'] }} kr</p>
+
+<form method="post" action="{{ url_for('checkout') }}" class="form-inline">
+    <input type="hidden" name="product_name" value="{{ product['name'] }}">
+    <!-- VULN: prisen ligger i et skjult felt klienten kan endre før innsending -->
+    <input type="hidden" name="price" value="{{ product['price'] }}">
+    <button type="submit">Kjøp nå</button>
+</form>
+
+<h2>Kommentarer</h2>
+<form method="post" class="form">
+    <textarea name="body" placeholder="Skriv en kommentar..."></textarea>
+    <button type="submit">Send kommentar</button>
+</form>
+
+<div class="comments">
+    {% for c in comments %}
+    <div class="comment">
+        <strong>{{ c['username'] }}</strong>
+        <!-- VULN: kommentar-body rendres med |safe -> stored XSS -->
+        <p>{{ c['body']|safe }}</p>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

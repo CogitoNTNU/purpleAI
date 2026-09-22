@@ -1,0 +1,8 @@
+Kunderapport #1
+----------------
+Produkt: Eplejuice
+Antall solgt: 128
+Omsetning: 4 992 kr
+
+(Denne filen ligger i /reports/. Prøv å bruke ../ i "file"-parameteret
+i URL-en for å se om du kan lese andre filer på serveren.)

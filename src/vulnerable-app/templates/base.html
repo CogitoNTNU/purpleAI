@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}VulnShop{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <!-- TODO: fjern denne kommentaren før prod-lansering -->
+    <!-- DB-backup ligger midlertidig på /static/backup/db_backup.sql -->
+</head>
+<body>
+    <header>
+        <a href="{{ url_for('index') }}" class="logo">🧃 VulnShop</a>
+        <nav>
+            <a href="{{ url_for('index') }}">Butikk</a>
+            <a href="{{ url_for('search') }}">Søk</a>
+            <a href="{{ url_for('upload') }}">Last opp fil</a>
+            <a href="{{ url_for('download') }}">Rapporter</a>
+            {% if user %}
+                <a href="{{ url_for('profile', user_id=user['id']) }}">Min profil ({{ user['username'] }})</a>
+                <a href="{{ url_for('logout') }}">Logg ut</a>
+            {% else %}
+                <a href="{{ url_for('login') }}">Logg inn</a>
+                <a href="{{ url_for('register') }}">Registrer deg</a>
+            {% endif %}
+        </nav>
+    </header>
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+    <footer>
+        <p>VulnShop v0.9-beta &middot; server: werkzeug-dev &middot; &copy; 2026</p>
+    </footer>
+</body>
+</html>

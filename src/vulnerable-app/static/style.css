@@ -1,0 +1,34 @@
+* { box-sizing: border-box; }
+body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    margin: 0; background: #f7f5f0; color: #222;
+}
+header {
+    background: #1f3b2c; color: #fff; padding: 1rem 2rem;
+    display: flex; justify-content: space-between; align-items: center;
+}
+header .logo { color: #fff; font-weight: bold; font-size: 1.3rem; text-decoration: none; }
+nav a { color: #e8e4d8; margin-left: 1.2rem; text-decoration: none; font-size: 0.95rem; }
+nav a:hover { text-decoration: underline; }
+main { max-width: 900px; margin: 2rem auto; padding: 0 1.5rem; }
+h1 { color: #1f3b2c; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; margin-top: 1.5rem; }
+.card { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 1rem; }
+.card .price { font-weight: bold; color: #c0392b; }
+.form, .form-inline { display: flex; flex-direction: column; gap: 0.6rem; max-width: 400px; margin-top: 1rem; }
+.form-inline { flex-direction: row; max-width: none; }
+input, textarea, button {
+    padding: 0.55rem; border: 1px solid #ccc; border-radius: 6px; font-size: 1rem;
+}
+button {
+    background: #1f3b2c; color: #fff; border: none; cursor: pointer;
+}
+button:hover { background: #16291f; }
+.error { color: #c0392b; }
+.success { color: #27ae60; }
+.profile-table { border-collapse: collapse; margin-top: 1rem; width: 100%; }
+.profile-table th, .profile-table td { border: 1px solid #ddd; padding: 0.5rem 0.8rem; text-align: left; }
+.comments { margin-top: 1.5rem; }
+.comment { background: #fff; border: 1px solid #eee; border-radius: 6px; padding: 0.7rem 1rem; margin-bottom: 0.6rem; }
+.file-content { background: #111; color: #0f0; padding: 1rem; border-radius: 6px; overflow-x: auto; }
+footer { text-align: center; color: #888; font-size: 0.8rem; padding: 2rem 0; }

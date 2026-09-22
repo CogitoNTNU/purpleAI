@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Kvittering{% endblock %}
+{% block content %}
+<h1>Takk for kjøpet!</h1>
+<p>Du kjøpte <strong>{{ product_name }}</strong> for <strong>{{ price }} kr</strong>.</p>
+<p><a href="{{ url_for('index') }}">Tilbake til butikken</a></p>
+{% endblock %}

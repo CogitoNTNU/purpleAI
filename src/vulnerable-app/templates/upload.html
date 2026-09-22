@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Last opp fil{% endblock %}
+{% block content %}
+<h1>Last opp profilbilde/dokument</h1>
+{% if message %}<p class="success">{{ message }}</p>{% endif %}
+<form method="post" enctype="multipart/form-data" class="form">
+    <input type="file" name="file">
+    <button type="submit">Last opp</button>
+</form>
+<p><small>Opplastede filer havner i /static/uploads/</small></p>
+{% endblock %}
