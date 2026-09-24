@@ -53,6 +53,9 @@ def _parse_target_host(target_url: str) -> str:
 
 def load_config(env_file: str = ".env") -> Config:
     """Load .env and return a validated Config."""
+    # load_dotenv() reads the file and sets its values as environment
+    # variables. It only fills variables that are not already set, so a
+    # value exported in the shell still wins over .env.
     load_dotenv(env_file)
 
     required = {}

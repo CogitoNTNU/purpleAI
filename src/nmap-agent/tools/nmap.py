@@ -19,6 +19,10 @@ from logging_utils import log_event
 
 def _run_nmap(target_host: str, timeout: int) -> str:
     """Run nmap against the configured host and return raw XML output."""
+    # Argument list instead of a shell string: no shell means the LLM can
+    # never inject extra nmap flags or commands. -sV probes service
+    # versions, -Pn skips ping checks (the lab host blocks ICMP), and
+    # -oX - writes the report as XML to stdout.
     command = ["nmap", "-sV", "-Pn", "-oX", "-", target_host]
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
@@ -60,6 +64,16 @@ def _parse_nmap_xml(xml_output: str) -> list[dict]:
     return ports
 
 
+# The @tool decorator turns an ordinary Python function into a LangChain
+# tool the LLM can call. It does three things:
+#   1. Registers the function as a tool with the agent.
+#   2. Sends the function's name, type hints (here: no parameters), and
+#      docstring to the model, so the docstring below is literally what
+#      the LLM reads to decide when and how to use the tool.
+#   3. Wraps the return value (the dict) as a ToolMessage that goes back
+#      into the conversation for the model's next step.
+# The LLM only ever sees this wrapper — _run_nmap/_parse_nmap_xml stay
+# private, and the target comes from config, not from the model.
 @tool
 def nmap_scan() -> dict:
     """Scan the single configured target and report exposed
@@ -69,6 +83,8 @@ def nmap_scan() -> dict:
     config = get_config()
     target_host = config.target_host
 
+    # Errors are returned as a dict (not raised) so the model can read
+    # the failure and reason about it, instead of crashing the agent run.
     try:
         xml_output = _run_nmap(target_host, config.nmap_timeout)
         ports = _parse_nmap_xml(xml_output)

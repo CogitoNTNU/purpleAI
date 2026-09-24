@@ -19,6 +19,8 @@ TASK = (
 
 
 def main() -> int:
+    # Load and validate configuration before anything else runs, so a
+    # bad .env fails fast with a clear message instead of mid-run.
     try:
         config = get_config()
     except ConfigError as exc:
