@@ -33,6 +33,19 @@ services:
       - frontend
       - backend
 
+  defender:
+    build: ../defender
+    ports:
+      - "8080:8080"
+    environment:
+      - IDUNN_BASE_URL
+      - IDUNN_API_KEY
+      - TARGET=http://backend:8000
+    networks:
+      - app_network
+    depends_on:
+      - backend
+
 networks:
   app_network:
     driver: bridge
