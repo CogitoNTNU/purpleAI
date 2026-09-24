@@ -1,0 +1,38 @@
+# docker-compose.yml
+services:
+  backend:
+    build:
+      context: backend/
+      dockerfile: Dockerfile
+    restart: always
+    volumes:
+      - ./backend:/app
+    networks:
+      - app_network
+
+  frontend:
+    build:
+      context: frontend/
+      dockerfile: Dockerfile
+    restart: always
+    networks:
+      - app_network
+    depends_on:
+      - backend
+
+  nginx:
+    build:
+      context: nginx/
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    restart: always
+    networks:
+      - app_network
+    depends_on:
+      - frontend
+      - backend
+
+networks:
+  app_network:
+    driver: bridge
