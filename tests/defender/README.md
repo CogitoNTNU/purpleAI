@@ -14,11 +14,13 @@ client / attacker  ──►  defender (port 8080)  ──►  backend (port 800
                                    NO  → forward to backend, return its response
 ```
 
-For each request, the defender:
 
-1. **Senses:** reads the method, URL (including query string) and body.
-2. **Decides:** runs every agent in the `AGENTS` list. Each agent returns `True` if it considers the request an attack.
-3. **Acts:** blocks the request if any agent says it's an attack, otherwise forwards it to the backend.
+1. Client sends a request to port 8080. 
+2. The defender intercepts the request and asks the IDUN model: "Does this look like SQL injection?", by running the `AGENTS` list. 
+3. Each agent returns `True` if it considers the request an attack. It sends back 403 Forbidden, and the backend never sees the request.
+4. If the answer is no, it forwards the request to the backend on port 8000 and passes the response back to the client.
+
+Blocks the request if any agent says it's an attack, otherwise forwards it to the backend.
 
 The backend's port is not published outside Docker, so the defender is the only way in. If the backend were reachable directly, an attacker could simply bypass the defender.
 
@@ -30,7 +32,6 @@ If the LLM cannot be reached (VPN off, API down), the defender **fails closed**:
 | --- | --- |
 | `defender.py` | The proxy and the agents |
 | `Dockerfile` | Builds the defender container |
-| `requirements.txt` | Python dependencies (Flask, requests, langchain-openai) |
 
 The defender is started as a service in `../vulnerable-web/docker-compose.yml`.
 
