@@ -3,14 +3,13 @@ services:
     build: ./vulnerable-app
     container_name: vulnerable-app
     ports:
-      - "192.168.0.120:5000:5000"
+      - "${HOST_IP:-127.0.0.1}:5000:5000"
     networks:
       - vulnerable-app-network
-   
   traffic:
     image: grafana/k6
     command: run --quiet /scripts/normal-traffic.js
-    volumes:
+    volumes:  
       - ./traffic:/scripts:ro
     depends_on:
       - defender
