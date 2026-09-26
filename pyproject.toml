@@ -5,7 +5,11 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 license-files = ["LICENSE"]
-dependencies = []
+dependencies = [
+    "flask>=3.1.0",
+    "requests>=2.32.0",
+    "langchain-openai>=0.3.6",
+]
 
 
 [dependency-groups]
@@ -24,6 +28,10 @@ docs = [
     "mkdocstrings>=0.30.0",
     "mkdocstrings-python>=1.16.12",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["defender", "src/venv", ".venv", "venv"]
 
 [tool.commitizen]
 name = "cz_conventional_commits"
