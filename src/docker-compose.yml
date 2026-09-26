@@ -4,7 +4,7 @@ services:
     container_name: vulnerable-app
     networks:
       - vulnerable-app-network
-    # No ports exposed - only accessible through defender on port 8080
+   
   traffic:
     image: grafana/k6
     command: run --quiet /scripts/normal-traffic.js
@@ -16,7 +16,9 @@ services:
       - vulnerable-app-network
 
   defender:
-    build: ./defender/defender-agent
+    build:
+      context: ..
+      dockerfile: src/defender/defender-agent/Dockerfile
     container_name: defender
     ports:
       - "8080:8080"
