@@ -1,11 +1,11 @@
 services:
-  vulnshop:
+  vulnerable-app:
     build: ./vulnerable-app
-    container_name: vulnshop
+    container_name: vulnerable-app
     ports:
-      - "127.0.0.1:5000:5000"
+      - "192.168.0.120:5000:5000"
     networks:
-      - lab
+      - vulnerable-app-network
 
 
   traffic:
@@ -14,21 +14,21 @@ services:
     volumes:
       - ./traffic:/scripts:ro
     depends_on:
-      - vulnshop
+      - vulnerable-app
     networks:
-      - lab
+      - vulnerable-app-network
 
   # The defender agent (add when ready). It reaches the app at
-  # http://vulnshop:5000 and can receive logs pushed from it.
+  # http://vulnerable-app:5000 and can receive logs pushed from it.
   # defender:
   #   build: ./defender
   #   container_name: defender
   #   ports:
   #     - "127.0.0.1:9000:9000"
   #   networks:
-  #     - lab
+  #     - vulnerable-app-network
 
 
 networks:
-  lab:
+  vulnerable-app-network:
     driver: bridge
