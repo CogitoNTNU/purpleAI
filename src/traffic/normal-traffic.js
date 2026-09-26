@@ -37,14 +37,14 @@ export const options = {
     },
 
     buyProduct: {
-      executor: 'shared-iterations',
+      executor: 'constant-vus',
       exec: 'buyProduct',
       vus: 10,
       duration: '2m',
     },
 
     browse: {
-      executor: 'shared-iterations',
+      executor: 'constant-vus',
       exec: 'browse',
       vus: 10,
       duration: '2m',
