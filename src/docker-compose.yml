@@ -1,0 +1,34 @@
+services:
+  vulnshop:
+    build: ./vulnerable-app
+    container_name: vulnshop
+    ports:
+      - "127.0.0.1:5000:5000"
+    networks:
+      - lab
+
+
+  traffic:
+    image: grafana/k6
+    command: run /scripts/normal-traffic.js
+    volumes:
+      - ./traffic:/scripts:ro
+    depends_on:
+      - vulnshop
+    networks:
+      - lab
+
+  # The defender agent (add when ready). It reaches the app at
+  # http://vulnshop:5000 and can receive logs pushed from it.
+  # defender:
+  #   build: ./defender
+  #   container_name: defender
+  #   ports:
+  #     - "127.0.0.1:9000:9000"
+  #   networks:
+  #     - lab
+
+
+networks:
+  lab:
+    driver: bridge
