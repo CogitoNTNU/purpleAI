@@ -31,7 +31,7 @@ docs = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-norecursedirs = ["defender", "src/venv", ".venv", "venv"]
+norecursedirs = ["src/defender", "src/venv", ".venv", "venv"]
 
 [tool.commitizen]
 name = "cz_conventional_commits"
