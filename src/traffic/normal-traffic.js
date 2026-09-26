@@ -25,30 +25,29 @@ const VALID_USERS = [
   { username: 'bob', password: 'bob123' },
 ]
 
+//endre duration på alle etter hvor lenge det er ønsket
+//endre vus etter ønsket load(sier hvor mange brukere som samtidig kjører)
 export const options = {
   scenarios: {
     login: {
-      executor: 'shared-iterations',
+      executor: 'constant-vus',
       exec: 'login',
       vus: 10,
-      iterations: 50,
-      startTime: '0s',
+      duration: '2m',
     },
 
     buyProduct: {
       executor: 'shared-iterations',
       exec: 'buyProduct',
       vus: 10,
-      iterations: 40,
-      startTime: '10s',
+      duration: '2m',
     },
 
     browse: {
       executor: 'shared-iterations',
       exec: 'browse',
       vus: 10,
-      iterations: 100,
-      startTime: '5s',
+      duration: '2m',
     },
   },
 }
