@@ -34,4 +34,4 @@ docker compose down
 
 ## Documentation
 
-For more information on how the application is structured, and how to run it without Docker for development, see the [Developer Guide](/docs/developer-guide.md).
+For more information on how the application is structured, and how to run it without Docker for development, see the [Developer Guide](docs/developer-guide.md).
