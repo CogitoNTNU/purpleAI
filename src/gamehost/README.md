@@ -13,10 +13,20 @@ and `action` strings. Sources can add fields such as `tool`, `target`, and
 On the gamehost (`192.168.0.110`), from the repository root:
 
 ```bash
-export GAMEHOST_LOG_TOKEN="choose-a-long-random-shared-token"
-export GAMEHOST_LOG_BIND="192.168.0.110"
+cp src/gamehost/.env.example src/gamehost/.env
+chmod 600 src/gamehost/.env
+python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+```
+
+Paste the generated token into `GAMEHOST_LOG_TOKEN` in
+`src/gamehost/.env`, then start the collector:
+
+```bash
 python3 src/gamehost/log_collector.py
 ```
+
+The `.env` file is ignored by Git. Shell environment variables with the
+same names take precedence over its values.
 
 The collector listens on TCP port `8765` by default. Permit that port only
 from the lab machines that send events. The terminal prints each received

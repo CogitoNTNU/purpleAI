@@ -15,8 +15,31 @@ from uuid import UUID
 
 MAX_EVENT_BYTES = 16 * 1024
 WRITE_LOCK = Lock()
-DATA_FILE = Path(os.environ.get("GAMEHOST_LOG_FILE", Path(__file__).parent / "data" / "events.jsonl"))
-TOKEN = os.environ.get("GAMEHOST_LOG_TOKEN", "")
+ENV_FILE = Path(__file__).parent / ".env"
+ENV_KEYS = {"GAMEHOST_LOG_TOKEN", "GAMEHOST_LOG_BIND", "GAMEHOST_LOG_PORT", "GAMEHOST_LOG_FILE"}
+DATA_FILE = Path(__file__).parent / "data" / "events.jsonl"
+TOKEN = ""
+
+
+def read_env_file(path: Path) -> dict[str, str]:
+    """Read the collector's small, literal KEY=VALUE configuration file."""
+    if not path.exists():
+        return {}
+    values = {}
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, separator, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if separator != "=" or key not in ENV_KEYS:
+            raise ValueError(f"{path}:{number}: expected a supported KEY=VALUE setting")
+        if value.startswith(("'", '"')):
+            if len(value) < 2 or value[-1] != value[0]:
+                raise ValueError(f"{path}:{number}: unmatched quote")
+            value = value[1:-1]
+        values[key] = value
+    return values
 
 
 def valid_event(event: object) -> bool:
@@ -90,10 +113,17 @@ class EventHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    global TOKEN, DATA_FILE
+    try:
+        settings = {**read_env_file(ENV_FILE), **os.environ}
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    TOKEN = settings.get("GAMEHOST_LOG_TOKEN", "")
     if not TOKEN:
-        raise SystemExit("Set GAMEHOST_LOG_TOKEN before starting the collector.")
-    host = os.environ.get("GAMEHOST_LOG_BIND", "127.0.0.1")
-    port = int(os.environ.get("GAMEHOST_LOG_PORT", "8765"))
+        raise SystemExit(f"Set GAMEHOST_LOG_TOKEN in {ENV_FILE} or the shell environment.")
+    DATA_FILE = Path(settings.get("GAMEHOST_LOG_FILE", DATA_FILE))
+    host = settings.get("GAMEHOST_LOG_BIND", "127.0.0.1")
+    port = int(settings.get("GAMEHOST_LOG_PORT", "8765"))
     server = ThreadingHTTPServer((host, port), EventHandler)
     print(f"Listening for PurpleAI events on {host}:{port}; writing to {DATA_FILE}", flush=True)
     server.serve_forever()

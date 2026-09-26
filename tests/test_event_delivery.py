@@ -25,6 +25,19 @@ def load_module(name, path):
 
 
 class EventDeliveryTest(unittest.TestCase):
+    def test_gamehost_env_file(self):
+        collector = load_module("test_collector_env", ROOT / "src/gamehost/log_collector.py")
+        with tempfile.TemporaryDirectory() as directory:
+            env_file = Path(directory) / ".env"
+            env_file.write_text(
+                '# collector settings\nGAMEHOST_LOG_TOKEN="test-token"\n'
+                "GAMEHOST_LOG_BIND=192.168.0.110\n"
+            )
+            self.assertEqual(
+                collector.read_env_file(env_file),
+                {"GAMEHOST_LOG_TOKEN": "test-token", "GAMEHOST_LOG_BIND": "192.168.0.110"},
+            )
+
     def test_events_are_available_before_the_run_ends(self):
         collector = load_module("test_collector", ROOT / "src/gamehost/log_collector.py")
         fake_config = types.ModuleType("config")
