@@ -334,7 +334,7 @@ def backup_files(filename):
     # VULN: eksponert backup-mappe med sensitiv info (simulerer feilkonfigurert server)
     return send_from_directory(os.path.join(APP_ROOT, "static", "backup"), filename)
 
-
+init_db()
 if __name__ == "__main__":
     init_db()
     os.makedirs(UPLOAD_DIR, exist_ok=True)
