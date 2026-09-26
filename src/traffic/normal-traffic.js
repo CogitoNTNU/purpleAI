@@ -32,22 +32,22 @@ export const options = {
     login: {
       executor: 'constant-vus',
       exec: 'login',
-      vus: 10,
-      duration: '2m',
+      vus: 5,
+      duration: '10s',
     },
 
     buyProduct: {
       executor: 'constant-vus',
       exec: 'buyProduct',
-      vus: 10,
-      duration: '2m',
+      vus: 5,
+      duration: '10s',
     },
 
     browse: {
       executor: 'constant-vus',
       exec: 'browse',
-      vus: 10,
-      duration: '2m',
+      vus: 5,
+      duration: '10s',
     },
   },
 }
