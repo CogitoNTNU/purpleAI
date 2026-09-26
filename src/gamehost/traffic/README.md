@@ -10,7 +10,7 @@ On gamehost, from the repository root:
 ```bash
 python3 -m venv ~/traffic-venv
 ~/traffic-venv/bin/python -m pip install locust
-~/traffic-venv/bin/locust -f src/traffic/locustfile.py --headless \
+~/traffic-venv/bin/locust -f src/gamehost/traffic/locustfile.py --headless \
   --host http://192.168.0.120:5000 \
   --users 2 --spawn-rate 1 --run-time 3m \
   --csv ~/normal-traffic
