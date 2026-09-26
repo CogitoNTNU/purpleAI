@@ -1,4 +1,4 @@
-# purpleAI
+# PurpleAI
 
 <div align="center">
 
@@ -14,7 +14,7 @@
 <details> 
 <summary><b>📋 Table of contents </b></summary>
 
-- [purpleAI](#purpleai)
+- [PurpleAI](#purpleai)
   - [Project description](#project-description)
     - [Technologies](#technologies)
   - [🛠️ Prerequisites](#️-prerequisites)
