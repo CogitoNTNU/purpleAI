@@ -26,7 +26,6 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
 from config import get_config
-from logging_utils import log_event
 from tools.nmap import nmap_scan
 
 SYSTEM_PROMPT = """You are the reconnaissance agent in the PurpleAI controlled cybersecurity lab.
@@ -106,7 +105,6 @@ def _display(message) -> None:
         # its next reasoning step.
         print("\n[TOOL RESULT]")
         print(message.content)
-        log_event("attacker", "tool_result", tool=message.name, status="returned")
     elif isinstance(message, AIMessage) and message.content:
         # A plain-text answer with no tool calls — this ends the loop.
         print("\n[AGENT]")

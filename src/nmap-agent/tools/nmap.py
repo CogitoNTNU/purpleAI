@@ -82,6 +82,7 @@ def nmap_scan() -> dict:
     discovered ports with service, state, product, and version."""
     config = get_config()
     target_host = config.target_host
+    log_event("attacker", "tool_call", tool="nmap_scan", target=target_host, status="started")
 
     # Errors are returned as a dict (not raised) so the model can read
     # the failure and reason about it, instead of crashing the agent run.
@@ -89,8 +90,8 @@ def nmap_scan() -> dict:
         xml_output = _run_nmap(target_host, config.nmap_timeout)
         ports = _parse_nmap_xml(xml_output)
     except RuntimeError as exc:
-        log_event("attacker", "tool_call", tool="nmap_scan", target=target_host, status="error")
+        log_event("attacker", "tool_result", tool="nmap_scan", target=target_host, status="error")
         return {"error": str(exc)}
 
-    log_event("attacker", "tool_call", tool="nmap_scan", target=target_host, status="success")
+    log_event("attacker", "tool_result", tool="nmap_scan", target=target_host, status="returned")
     return {"target": target_host, "ports": ports}

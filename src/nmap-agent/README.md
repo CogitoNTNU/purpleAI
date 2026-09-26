@@ -106,8 +106,16 @@ nmap_scan()
 The target exposes...
 ```
 
-Every agent action is also logged as a structured JSON line
-(timestamp, actor, action, tool, target, status) for later evaluation.
+Every agent action is logged as a structured JSON line. Events include a
+source, run ID, event ID, UTC timestamp, actor, action, and optional tool,
+target, and status. Set `LOG_COLLECTOR_URL` and `LOG_COLLECTOR_TOKEN` in
+`.env` to send each event to the gamehost as it happens. The agent keeps
+running if the collector is temporarily unavailable; it prints one
+delivery warning per run. Events missed while the collector is offline
+are not replayed.
+
+Start the collector on the gamehost as described in
+[`../gamehost/README.md`](../gamehost/README.md) before running the agent.
 
 ## Project structure
 
