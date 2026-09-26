@@ -1,0 +1,38 @@
+services:
+  vulnerable-app:
+    build: ./vulnerable-app
+    container_name: vulnerable-app
+    ports:
+      - "192.168.0.120:5000:5000"
+    networks:
+      - vulnerable-app-network
+   
+  traffic:
+    image: grafana/k6
+    command: run --quiet /scripts/normal-traffic.js
+    volumes:
+      - ./traffic:/scripts:ro
+    depends_on:
+      - defender
+    networks:
+      - vulnerable-app-network
+
+  defender:
+    build:
+      context: ..
+      dockerfile: src/defender/defender-agent/Dockerfile
+    container_name: defender
+    ports:
+      - "8080:8080"
+    environment:
+      - IDUNN_BASE_URL
+      - IDUNN_API_KEY
+      - TARGET=http://vulnerable-app:5000
+    networks:
+      - vulnerable-app-network
+    depends_on:
+      - vulnerable-app
+
+networks:
+  vulnerable-app-network:
+    driver: bridge
