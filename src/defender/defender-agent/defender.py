@@ -20,7 +20,7 @@ llm = ChatOpenAI(
     temperature=0,
 )
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder=None)
 
 
 # ---- Agents: each one looks at the request and returns True if it's an attack.

@@ -9,7 +9,7 @@ Client → Defender (port 8080) → Vulnerable-App (port 5000, internal only)
            │
            └─ asks IDUN LLM: "Is this SQL injection?"
                 YES → 403 Forbidden
-                NO  → forward to vulnerable-app
+                NO  → 200 Forward to vulnerable-app
 ```
 
 ## Prerequisites
@@ -48,7 +48,10 @@ curl http://localhost:8080/
 **SQL injection (should be blocked with 403):**
 ```bash
 curl "http://localhost:8080/search?q=' OR 1=1--"
+curl "http://localhost:8080/search?q=1%20OR%201%3D1"
 ```
+
+You should see "Blocked by defender agent" on the web
 
 **Check logs:**
 ```bash
