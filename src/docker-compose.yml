@@ -10,7 +10,7 @@ services:
 
   traffic:
     image: grafana/k6
-    command: run /scripts/normal-traffic.js
+    command: run --quiet /scripts/normal-traffic.js
     volumes:
       - ./traffic:/scripts:ro
     depends_on:
