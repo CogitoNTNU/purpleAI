@@ -29,6 +29,10 @@ docs = [
     "mkdocstrings-python>=1.16.12",
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["defender", "src/venv", ".venv", "venv"]
+
 [tool.commitizen]
 name = "cz_conventional_commits"
 tag_format = "$version"
