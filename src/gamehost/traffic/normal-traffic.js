@@ -32,27 +32,29 @@ export const options = {
     login: {
       executor: 'constant-vus',
       exec: 'login',
-      vus: 10,
-      duration: '2m',
+      vus: 5,
+      duration: '10s',
     },
 
     buyProduct: {
-      executor: 'shared-iterations',
+      executor: 'constant-vus',
       exec: 'buyProduct',
-      vus: 10,
-      duration: '2m',
+      vus: 5,
+      duration: '10s',
     },
 
     browse: {
-      executor: 'shared-iterations',
+      executor: 'constant-vus',
       exec: 'browse',
-      vus: 10,
-      duration: '2m',
+      vus: 5,
+      duration: '10s',
     },
   },
 }
 
 export function login(){
+  sleep(3);
+
   const user = USERS[Math.floor(Math.random()* USERS.length)]
 
   const res = http.post(baseUrl + '/login', {username: user.username, password: user.password}, {redirects: 0});
@@ -61,6 +63,8 @@ export function login(){
 }
 
 export function buyProduct(){
+  sleep(4);
+
   const user = VALID_USERS[Math.floor(Math.random()* VALID_USERS.length)]
   const product = PRODUCTS[Math.floor(Math.random() * PRODUCTS.length)];
 
@@ -74,6 +78,7 @@ export function buyProduct(){
 }
 
 export function browse(){
+  sleep(2);
   const choice = Math.random();
 
   let path;
@@ -96,6 +101,4 @@ export function browse(){
   check(response, {
     'browse ok': (response) => response.status === 200,
   });
-
-  sleep(Math.random() * 3 + 1);
 }
