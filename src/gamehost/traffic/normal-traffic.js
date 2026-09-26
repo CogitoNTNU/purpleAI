@@ -1,7 +1,7 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 
-const baseUrl = 'http://vulnerable-app:5000';
+const baseUrl = __ENV.TARGET || 'http://defender:8080';
 
 const USERS = [
   { username: 'alice', password: 'alice123'},

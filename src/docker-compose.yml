@@ -2,19 +2,20 @@ services:
   vulnerable-app:
     build: ./vulnerable-app
     container_name: vulnerable-app
-    ports:
-      - "${HOST_IP:-127.0.0.1}:5000:5000"
     networks:
-      - vulnerable-app-network
+      - backend-network
+
   traffic:
     image: grafana/k6
-    command: run --quiet /scripts/normal-traffic.js
-    volumes:  
-      - ./traffic:/scripts:ro
+    command: run --quiet /gamehost/traffic/normal-traffic.js
+    volumes:
+      - ./gamehost/traffic:/gamehost/traffic:ro
+    environment:
+      - TARGET=http://defender:8080
     depends_on:
       - defender
     networks:
-      - vulnerable-app-network
+      - proxy-network
 
   defender:
     build:
@@ -28,10 +29,14 @@ services:
       - IDUNN_API_KEY
       - TARGET=http://vulnerable-app:5000
     networks:
-      - vulnerable-app-network
+      - proxy-network
+      - backend-network
     depends_on:
       - vulnerable-app
 
+# Defender is the only service connected to both networks.
 networks:
-  vulnerable-app-network:
+  proxy-network:
+    driver: bridge
+  backend-network:
     driver: bridge
