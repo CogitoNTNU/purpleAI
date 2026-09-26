@@ -1,17 +1,79 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 
+const baseUrl = 'http://vulnerable-app:5000';
+
+const USERS = [
+  { username: 'alice', password: 'alice123'},
+  { username: 'bob', password: 'bob123' },
+  ...Array.from({ length: 20 }, (_, i) => ({
+    username: `bruker${i + 1}`,
+    password: `Passord${i + 1}!`,
+  })),
+]
+
+const PRODUCTS = [
+  { id: 1, name: 'Eplejuice', price: '39.0' },
+  { id: 2, name: 'Appelsinjuice', price: '45.0' },
+  { id: 3, name: 'Bærmix', price: '55.0' },
+  { id: 4, name: 'VIP Gullpakke', price: '999.0' },
+];
+
+//brukere vi vet får logget inn
+const VALID_USERS = [
+  { username: 'alice', password: 'alice123'},
+  { username: 'bob', password: 'bob123' },
+]
+
+//endre duration på alle etter hvor lenge det er ønsket
+//endre vus etter ønsket load(sier hvor mange brukere som samtidig kjører)
 export const options = {
-  stages: [
-    { duration: '10s', target: 5 },
-    { duration: '30s', target: 10 },
-    { duration: '10s', target: 0 },
-  ],
-};
+  scenarios: {
+    login: {
+      executor: 'constant-vus',
+      exec: 'login',
+      vus: 10,
+      duration: '2m',
+    },
 
-const baseUrl = 'http://host.docker.internal:5000';
+    buyProduct: {
+      executor: 'shared-iterations',
+      exec: 'buyProduct',
+      vus: 10,
+      duration: '2m',
+    },
 
-export default function () {
+    browse: {
+      executor: 'shared-iterations',
+      exec: 'browse',
+      vus: 10,
+      duration: '2m',
+    },
+  },
+}
+
+export function login(){
+  const user = USERS[Math.floor(Math.random()* USERS.length)]
+
+  const res = http.post(baseUrl + '/login', {username: user.username, password: user.password}, {redirects: 0});
+
+  check(res, { 'login OK': (r) => r.status === 302 });
+}
+
+export function buyProduct(){
+  const user = VALID_USERS[Math.floor(Math.random()* VALID_USERS.length)]
+  const product = PRODUCTS[Math.floor(Math.random() * PRODUCTS.length)];
+
+  http.post(baseUrl + '/login', {username: user.username, password: user.password}, {redirects: 0});
+
+  sleep(1);
+
+  const res = http.post(`${baseUrl}/checkout`, { product_name: product.name, price: product.price, });
+ 
+  check(res, { 'kjøp OK': (r) => r.status === 200 });
+}
+
+export function browse(){
   const choice = Math.random();
 
   let path;
@@ -32,7 +94,7 @@ export default function () {
   const response = http.get(`${baseUrl}${path}`);
 
   check(response, {
-    'status is 200': (response) => response.status === 200,
+    'browse ok': (response) => response.status === 200,
   });
 
   sleep(Math.random() * 3 + 1);

@@ -2,6 +2,8 @@ services:
   vulnerable-app:
     build: ./vulnerable-app
     container_name: vulnerable-app
+    ports:
+      - "192.168.0.120:5000:5000"
     networks:
       - vulnerable-app-network
    
