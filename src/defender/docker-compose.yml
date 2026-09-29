@@ -5,22 +5,10 @@ services:
     networks:
       - backend-network
 
-  traffic:
-    image: grafana/k6
-    command: run --quiet /gamehost/traffic/normal-traffic.js
-    volumes:
-      - ./gamehost/traffic:/gamehost/traffic:ro
-    environment:
-      - TARGET=http://defender:8080
-    depends_on:
-      - defender
-    networks:
-      - proxy-network
-
   defender:
     build:
-      context: ..
-      dockerfile: src/defender/defender-agent/Dockerfile
+      context: .
+      dockerfile: ./defender-agent/Dockerfile
     container_name: defender
     ports:
       - "8080:8080"
