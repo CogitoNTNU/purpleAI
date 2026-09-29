@@ -153,3 +153,10 @@ compose file bound to localhost.
   container resets it to a clean state — useful for repeatable demos.
 - `.dockerignore` in `src/vulnerable-app/` keeps the database, logs, and any
   `.env` out of the built image.
+
+
+
+
+
+  ## Installing docker on Ubuntu
+  https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository
