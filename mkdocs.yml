@@ -53,7 +53,8 @@ theme:
 
 nav:
   - Home: index.md
-      
+  - Event log format: event-format.md
+
 plugins:
   - search
   - awesome-nav
