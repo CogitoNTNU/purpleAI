@@ -6,9 +6,3 @@ services:
       - ./traffic:/traffic:ro
     environment:
       - TARGET=${TARGET:-http://localhost:8080}
-    networks:
-      - defender_proxy-network
-
-networks:
-  defender_proxy-network:
-    external: true
