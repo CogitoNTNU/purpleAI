@@ -1,14 +1,8 @@
 services:
   traffic:
     image: grafana/k6
-    command: run --quiet /traffic/normal-traffic.js
+    command: run /traffic/normal-traffic.js
     volumes:
       - ./traffic:/traffic:ro
     environment:
-      - TARGET=http://defender:8080
-    networks:
-      - defender_proxy-network
-
-networks:
-  defender_proxy-network:
-    external: true
+      - TARGET=${TARGET:-http://localhost:8080}
