@@ -20,6 +20,7 @@
   - [🛠️ Prerequisites](#️-prerequisites)
   - [Getting started](#getting-started)
   - [Usage](#usage)
+    - [Lab setup and testing guides](#lab-setup-and-testing-guides)
     - [📖 Generate Documentation Site](#-generate-documentation-site)
   - [Testing](#testing)
   - [Team](#team)
@@ -87,6 +88,21 @@ To run the project, run the following command from the root directory of the pro
 ```
 
 <!-- TODO: Instructions on how to run the project and use its features. -->
+
+### Lab setup and testing guides
+
+For a new lab, start with the first-time setup guide. For an existing lab, choose
+the run or testing guide that matches what you want to do.
+
+- [First-time setup](src/gamehost/SETUP.md): prepare gamehost, RedAI and BlueAI, including Docker, SSH and permissions.
+- [Two-PC sandbox](deploy/sandbox/README.md): configure and start the lab PCs, choose models, check connections and stop the stacks.
+- [Gamehost experiments](src/gamehost/README.md): run with or without the defender, view logs and recover interrupted runs.
+- [Manual testing](deploy/sandbox/TESTING.md): use Kali tools, scripts or agents from RedAI or your own PC, with or without defender checks.
+
+Component references: [Nmap attacker](src/nmap-agent/README.md),
+[defender](src/defender/defender-agent/README.md),
+[VulnShop target](src/defender/vulnerable-app/README.md),
+[shared logging](src/purpleai/README.md) and [event format](docs/event-format.md).
 
 ### 📖 Generate Documentation Site
 
