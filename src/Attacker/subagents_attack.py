@@ -1,3 +1,4 @@
+from attools import sqlmap
 subagents = [
     {
         "name": "recon_agent",
@@ -9,6 +10,6 @@ subagents = [
         "name": "execution_agent",
         "description": "This agent is responsible for executing tasks and implementing solutions.",
         "system_prompt": "You are an execution agent. Your task is to execute tasks and implement solutions.",
-        "tools": [my_custom_tool],
+        "tools": [sqlmap],
     },
 ]
