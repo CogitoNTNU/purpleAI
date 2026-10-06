@@ -22,7 +22,7 @@ def ipv4(value):
     return str(address)
 
 
-def policy(role, red_ip, blue_ip, idun_ip, gamehost_ip=None):
+def policy(role, red_ip, blue_ip, idun_ip, gamehost_ip=None, direct_testing=False):
     """Return permitted TCP initiations, managed subnets and bridge names."""
     logging = (
         [("172.28.10.10" if role == "red" else "172.28.20.10", gamehost_ip, 8765)]
@@ -36,7 +36,8 @@ def policy(role, red_ip, blue_ip, idun_ip, gamehost_ip=None):
                 ("172.28.10.10", blue_ip, 8080),
                 ("172.28.10.20", idun_ip, 443),
             ]
-            + logging,
+            + logging
+            + ([("172.28.10.10", blue_ip, 8081)] if direct_testing else []),
             ["172.28.10.0/24"],
             ["pai-red-lab"],
         )
@@ -48,14 +49,21 @@ def policy(role, red_ip, blue_ip, idun_ip, gamehost_ip=None):
             ("172.28.20.20", idun_ip, 443),
         ]
         + logging
-        + ([(gamehost_ip, "172.28.20.10", 8080)] if gamehost_ip else []),
+        + ([(gamehost_ip, "172.28.20.10", 8080)] if gamehost_ip else [])
+        + (
+            [(red_ip, "172.28.20.30", 5000), ("172.28.20.10", "172.28.20.30", 5000)]
+            if direct_testing
+            else []
+        ),
         ["172.28.20.0/24", "172.28.21.0/24"],
         ["pai-blue-front", "pai-blue-back"],
     )
 
 
-def rules(role, red_ip, blue_ip, idun_ip, gamehost_ip=None):
-    flows, subnets, bridges = policy(role, red_ip, blue_ip, idun_ip, gamehost_ip)
+def rules(role, red_ip, blue_ip, idun_ip, gamehost_ip=None, direct_testing=False):
+    flows, subnets, bridges = policy(
+        role, red_ip, blue_ip, idun_ip, gamehost_ip, direct_testing
+    )
     forward = []
     for source, destination, port in flows:
         # Only replies to an allowed TCP connection may travel back.
@@ -91,6 +99,7 @@ def main():
     parser.add_argument("--blue-ip", required=True, type=ipv4)
     parser.add_argument("--idun-ip", required=True, type=ipv4)
     parser.add_argument("--gamehost-ip", type=ipv4)
+    parser.add_argument("--direct-testing", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--remove", action="store_true")
@@ -143,7 +152,12 @@ def main():
 
     prefix = f"PAI_{args.role.upper()}"
     v4_forward, v4_host, v6_forward, v6_host = rules(
-        args.role, args.red_ip, args.blue_ip, args.idun_ip, args.gamehost_ip
+        args.role,
+        args.red_ip,
+        args.blue_ip,
+        args.idun_ip,
+        args.gamehost_ip,
+        args.direct_testing,
     )
     for binary, parent, suffix, entries in (
         ("iptables", "DOCKER-USER", "FWD", v4_forward),

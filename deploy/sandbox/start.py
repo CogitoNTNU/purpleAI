@@ -34,7 +34,21 @@ def main():
     parser.add_argument(
         "--run-id", help="Shared gamehost run UUID (red run/cancel or blue session)"
     )
+    parser.add_argument(
+        "--target",
+        choices=["defender", "direct"],
+        help="Target for red run/shell; defaults to defender",
+    )
+    parser.add_argument(
+        "--no-collector",
+        action="store_true",
+        help="Skip collector availability/delivery during check",
+    )
     args = parser.parse_args()
+    if args.target and (args.role != "red" or args.action not in ("run", "shell")):
+        parser.error("--target applies to red run/shell")
+    if args.no_collector and args.action != "check":
+        parser.error("--no-collector applies to check")
     if args.action == "cancel" and args.role != "red":
         parser.error("cancel is for RedAI")
     if args.action == "session" and args.role != "blue":
@@ -59,9 +73,16 @@ def main():
         ]
     except (OSError, ValueError, KeyError) as error:
         parser.error(f"Configure deploy/sandbox/.env first: {error}")
+    direct_setting = settings.get("DIRECT_TESTING", "false").lower()
+    if direct_setting not in ("true", "false"):
+        parser.error("DIRECT_TESTING must be true or false")
+    direct_testing = direct_setting == "true"
+    if args.target == "direct" and not direct_testing:
+        parser.error("Set DIRECT_TESTING=true on both PCs before using --target direct")
     env = os.environ.copy()
     env.update(settings)  # Compose and the firewall use the same values.
     env["PURPLEAI_RUN_ID"] = args.run_id or ""
+    env["TARGET_PORT"] = "8081" if args.target == "direct" else "8080"
     gamehost = settings.get("GAMEHOST_IP", "")
     log_token = settings.get("LOG_COLLECTOR_TOKEN", "")
     if bool(gamehost) != bool(log_token):
@@ -80,6 +101,8 @@ def main():
         "-f",
         str(ROOT / f"{args.role}.compose.yml"),
     ]
+    if args.role == "blue" and direct_testing:
+        compose += ["-f", str(ROOT / "blue.direct.compose.yml")]
 
     def call(*command):
         subprocess.run(command, check=True, env=env)
@@ -97,6 +120,8 @@ def main():
     ]
     if gamehost:
         firewall += ["--gamehost-ip", gamehost]
+    if direct_testing:
+        firewall += ["--direct-testing"]
     if args.action == "start":
         if not sys.platform.startswith("linux") or os.geteuid() != 0:
             parser.error("Start with sudo on the Kali/Ubuntu PC")
@@ -173,9 +198,20 @@ def main():
 
             def probe(service, allowed=(), denied=()):
                 """Run TCP checks in the selected service, without running the agent."""
-                command = ["exec", service, "python"]
+                skip_delivery = (
+                    ["-e", "LOG_COLLECTOR_URL="] if args.no_collector else []
+                )
+                command = ["exec", *skip_delivery, service, "python"]
                 if args.role == "red" and service == "attacker":
-                    command = "run --rm --no-deps --entrypoint python attacker".split()
+                    command = [
+                        "run",
+                        "--rm",
+                        "--no-deps",
+                        "--entrypoint",
+                        "python",
+                        *skip_delivery,
+                        "attacker",
+                    ]
                 endpoints = [("--allow", host) for host in allowed]
                 endpoints += [("--deny", host) for host in denied]
                 options = [value for pair in endpoints for value in pair]
@@ -190,23 +226,32 @@ def main():
                 )
 
             blocked = [f"{router}:80", f"{idun}:443"]
+            check_collector = gamehost and not args.no_collector
             if args.role == "red":
                 probe(
                     "attacker",
                     ["model-gateway:9000", f"{blue}:8080"]
-                    + ([f"{gamehost}:8765"] if gamehost else []),
-                    [f"{blue}:22", "172.28.10.1:22", *blocked],
+                    + ([f"{blue}:8081"] if direct_testing else [])
+                    + ([f"{gamehost}:8765"] if check_collector else []),
+                    [f"{blue}:22", "172.28.10.1:22", *blocked]
+                    + ([] if direct_testing else [f"{blue}:8081"]),
                 )
             else:
                 probe(
                     "defender",
                     ["model-gateway:9000", "vulnerable-app:5000"]
-                    + ([f"{gamehost}:8765"] if gamehost else []),
+                    + ([f"{gamehost}:8765"] if check_collector else []),
                     ["172.28.20.1:22", *blocked],
                 )
                 probe(
                     "vulnerable-app",
-                    denied=["172.28.20.20:9000", "172.28.21.20:8080", *blocked]
+                    denied=[
+                        "172.28.20.20:9000",
+                        "172.28.21.20:8080",
+                        "172.28.20.10:8080",
+                        "172.28.20.1:22",
+                        *blocked,
+                    ]
                     + ([f"{gamehost}:8765"] if gamehost else []),
                 )
             probe(

@@ -277,8 +277,12 @@ def test_network_policy_blocks_escape_and_backend_bypass():
     firewall = load("firewall")
     red, blue, idun = "192.168.0.130", "192.168.0.120", "129.241.121.16"
 
-    def permitted(role, source, destination, port, state="NEW", sport=45000):
-        entries = firewall.rules(role, red, blue, idun)[0]
+    def permitted(
+        role, source, destination, port, state="NEW", sport=45000, direct_testing=False
+    ):
+        entries = firewall.rules(role, red, blue, idun, direct_testing=direct_testing)[
+            0
+        ]
         for entry in entries:
 
             def option(name):
@@ -324,6 +328,29 @@ def test_network_policy_blocks_escape_and_backend_bypass():
     assert not permitted("blue", "172.28.21.10", "172.28.21.20", 8080)
     assert permitted("blue", "172.28.21.10", "172.28.21.20", 45000, "ESTABLISHED", 5000)
     assert not permitted("blue", "172.28.21.10", "172.28.21.20", 45000, "NEW", 5000)
+    assert not permitted("red", "172.28.10.10", blue, 8081)
+    assert not permitted("blue", red, "172.28.20.30", 5000)
+    assert permitted("red", "172.28.10.10", blue, 8081, direct_testing=True)
+    assert permitted("blue", red, "172.28.20.30", 5000, direct_testing=True)
+    assert permitted("blue", "172.28.20.10", "172.28.20.30", 5000, direct_testing=True)
+    assert not permitted(
+        "blue", "192.168.0.50", "172.28.20.30", 5000, direct_testing=True
+    )
+    for source in ("172.28.20.30", "172.28.21.10"):
+        for destination, port in [
+            (red, 22),
+            (blue, 22),
+            ("192.168.0.1", 80),
+            (idun, 443),
+            ("172.28.20.20", 9000),
+        ]:
+            assert not permitted("blue", source, destination, port, direct_testing=True)
+    assert permitted(
+        "blue", "172.28.20.30", red, 45000, "ESTABLISHED", 5000, direct_testing=True
+    )
+    assert not permitted(
+        "blue", "172.28.20.30", red, 45000, "NEW", 5000, direct_testing=True
+    )
     for role in ("red", "blue"):
         _, host, forward6, host6 = firewall.rules(role, red, blue, idun)
         assert all(entry[-1] == "DROP" for entry in host + forward6 + host6)
@@ -507,3 +534,70 @@ def test_network_output_labels_pass_fail_and_collector(monkeypatch, capsys):
         f"PASS [{origin}] router:80: unreachable",
         f"PASS [{origin}] collector: authenticated event accepted",
     ]
+
+
+def test_direct_overlay_and_fixed_attacker_target(tmp_path, monkeypatch):
+    module = operator(tmp_path, monkeypatch, "red", "run", "--target", "direct")
+    with (tmp_path / ".env").open("a") as settings:
+        settings.write("DIRECT_TESTING=true\n")
+    with patch.object(module.subprocess, "run") as run:
+        module.main()
+    assert "--direct-testing" in run.call_args_list[0].args[0]
+    assert run.call_args.kwargs["env"]["TARGET_PORT"] == "8081"
+    # The managed gamehost invocation has no --target and still selects 8080.
+    monkeypatch.setattr(sys, "argv", ["start.py", "red", "run"])
+    with patch.object(module.subprocess, "run") as run:
+        module.main()
+    assert run.call_args.kwargs["env"]["TARGET_PORT"] == "8080"
+    monkeypatch.setattr(sys, "argv", ["start.py", "blue", "check", "--no-collector"])
+    with patch.object(module.subprocess, "run") as run:
+        module.main()
+    for call in run.call_args_list:
+        if "compose" in call.args[0]:
+            assert str(tmp_path / "blue.direct.compose.yml") in call.args[0]
+
+
+@pytest.mark.parametrize(
+    "arguments,setting",
+    [
+        (("red", "run", "--target", "direct"), "false"),
+        (("blue", "start", "--target", "direct"), "true"),
+        (("red", "shell", "--no-collector"), "true"),
+        (("blue", "check"), "typo"),
+    ],
+)
+def test_operator_rejects_invalid_testing_options(
+    tmp_path, monkeypatch, arguments, setting
+):
+    module = operator(tmp_path, monkeypatch, *arguments)
+    with (tmp_path / ".env").open("a") as settings:
+        settings.write(f"DIRECT_TESTING={setting}\n")
+    with patch.object(module.subprocess, "run") as run, pytest.raises(SystemExit):
+        module.main()
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize("role", ["red", "blue"])
+def test_manual_checks_skip_only_collector_availability(tmp_path, monkeypatch, role):
+    module = operator(tmp_path, monkeypatch, role, "check", "--no-collector")
+    with (tmp_path / ".env").open("a") as settings:
+        settings.write(
+            "GAMEHOST_IP=192.168.0.110\nLOG_COLLECTOR_TOKEN=" + "x" * 32 + "\n"
+        )
+    with patch.object(module.subprocess, "run") as run:
+        module.main()
+    assert "--check" in run.call_args_list[0].args[0]
+    probes = [
+        call.args[0]
+        for call in run.call_args_list
+        if "/app/check_network.py" in call.args[0]
+    ]
+    assert all("LOG_COLLECTOR_URL=" in command for command in probes)
+    for command in probes:
+        assert not any(
+            command[i : i + 2] == ("--allow", "192.168.0.110:8765")
+            for i in range(len(command) - 1)
+        )
+    assert any(
+        "--deny" in command and "192.168.0.1:80" in command for command in probes
+    )

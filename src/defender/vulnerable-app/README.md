@@ -11,7 +11,9 @@ contains the application, templates, styling, and sample files used by the lab.
 VulnShop listens on port 5000 inside its internal Docker network. Access it through
 the defender at `http://BLUE_IP:8080` from RedAI or the configured gamehost,
 replacing `BLUE_IP` with BlueAI's
-configured address. The target's port is not published.
+configured address. The target's port is unpublished by default. Optional
+[direct testing](../../../deploy/sandbox/TESTING.md) publishes port 8081 to bypass
+the defender while using the same app and data.
 
 SQLite data, uploads and runtime reports use temporary container storage and are
 discarded when the stack stops. `VULNSHOP_DB_PATH` selects the SQLite location;

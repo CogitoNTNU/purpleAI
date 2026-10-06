@@ -1,0 +1,9 @@
+# Loaded by start.py only when DIRECT_TESTING=true.
+services:
+  vulnerable-app:
+    ports:
+      - "${BLUE_IP:?Set the BlueAI address}:8081:5000"
+    networks:
+      lab:
+        ipv4_address: 172.28.20.30
+        gw_priority: 1

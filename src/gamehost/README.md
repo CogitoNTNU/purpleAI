@@ -2,7 +2,9 @@
 
 Gamehost runs the log collector and normal-traffic containers. The host-side
 runner coordinates RedAI and BlueAI over SSH. The collector only stores events;
-it does not run commands.
+it does not run commands. For tools, scripts or individual agent tests with or
+without the defender, use [manual testing](../../deploy/sandbox/TESTING.md);
+gamehost and the collector are optional for those tests.
 
 For a new installation, follow [first-time setup](SETUP.md). SSH, Docker access
 and passwordless sudo are configured there once. For an existing installation,

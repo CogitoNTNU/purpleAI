@@ -26,8 +26,8 @@ services:
       target: attacker
     env_file: ../../src/nmap-agent/.env
     environment:
-      TARGET_URL: http://${BLUE_IP:?Set the BlueAI address}:8080
-      NMAP_PORT: "8080"
+      TARGET_URL: http://${BLUE_IP:?Set the BlueAI address}:${TARGET_PORT:-8080}
+      NMAP_PORT: "${TARGET_PORT:-8080}"
       PURPLEAI_RUN_ID: ${PURPLEAI_RUN_ID:-}
       LOG_COLLECTOR_URL: ${LOG_COLLECTOR_URL:-}
       LOG_COLLECTOR_TOKEN: ${LOG_COLLECTOR_TOKEN:-}

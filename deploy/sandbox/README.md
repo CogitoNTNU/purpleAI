@@ -13,7 +13,8 @@ RedAI attacker → BlueAI defender → VulnShop
 
 For the complete setup with gamehost, start with [first-time setup](../../src/gamehost/SETUP.md).
 For an already configured lab, use the [gamehost run guide](../../src/gamehost/README.md).
-This page covers the two lab PCs, including standalone use without gamehost.
+For tools, scripts and agents with or without the defender, use the
+[manual testing guide](TESTING.md). This page covers setup of the two lab PCs.
 
 Every host command below runs from **`~/purpleAI`**, the repository root.
 Replace that path if your checkout is elsewhere. Use the same code version on
@@ -39,14 +40,15 @@ nano deploy/sandbox/.env
 
 `cp -n` preserves an existing file. Set these deployment values:
 
-| Setting              | What to enter                                            |
-| -------------------- | -------------------------------------------------------- |
-| `RED_IP`             | RedAI's LAN IPv4 address, currently `192.168.0.130`      |
-| `BLUE_IP`            | BlueAI's LAN IPv4 address, currently `192.168.0.120`     |
-| `ROUTER_IP`          | Router's LAN address, currently `192.168.0.1`            |
-| `IDUN_IP`            | One current IPv4 address from the lookup above           |
-| `GATEWAY_TOKEN`      | The generated token; use a different token on each PC    |
-| `GATEWAY_CALL_LIMIT` | Keep the default unless you need a different call budget |
+| Setting              | What to enter                                                                                            |
+| -------------------- | -------------------------------------------------------------------------------------------------------- |
+| `RED_IP`             | RedAI's LAN IPv4 address, currently `192.168.0.130`                                                      |
+| `BLUE_IP`            | BlueAI's LAN IPv4 address, currently `192.168.0.120`                                                     |
+| `ROUTER_IP`          | Router's LAN address, currently `192.168.0.1`                                                            |
+| `IDUN_IP`            | One current IPv4 address from the lookup above                                                           |
+| `GATEWAY_TOKEN`      | The generated token; use a different token on each PC                                                    |
+| `GATEWAY_CALL_LIMIT` | Keep the default unless you need a different call budget                                                 |
+| `DIRECT_TESTING`     | Keep `false`; optionally enable [direct testing](TESTING.md#enable-direct-access-on-blueai) on port 8081 |
 
 Reserve the PC addresses in the router so they stay fixed. The Docker subnets
 `172.28.10.0/24`, `172.28.20.0/24` and `172.28.21.0/24` must not overlap your LAN
@@ -157,7 +159,8 @@ sudo python3 deploy/sandbox/start.py red run
 From a browser on **RedAI or the configured gamehost**, open
 `http://192.168.0.120:8080` (replace the address if `BLUE_IP` differs).
 This reaches VulnShop through the defender. Other LAN machines are blocked by the
-sandbox policy; VulnShop's internal port 5000 is not published.
+sandbox policy. VulnShop is unpublished by default; optional port 8081 is described
+in the [manual testing guide](TESTING.md).
 
 ## Change a model without rebuilding
 
@@ -226,18 +229,20 @@ For interrupted gamehost runs, follow [recovery](../../src/gamehost/README.md#st
 
 ## Isolation and limits
 
-| Component | May initiate connections to                                |
-| --------- | ---------------------------------------------------------- |
-| Attacker  | BlueAI port 8080; its gateway; optional gamehost port 8765 |
-| Defender  | VulnShop; its gateway; optional gamehost port 8765         |
-| VulnShop  | Nothing; it may reply to the defender                      |
-| Gateways  | Configured Idun IPv4 address on HTTPS port 443             |
+| Component | May initiate connections to                                                                           |
+| --------- | ----------------------------------------------------------------------------------------------------- |
+| Attacker  | BlueAI port 8080 (also 8081 when direct testing is enabled); its gateway; optional gamehost port 8765 |
+| Defender  | VulnShop; its gateway; optional gamehost port 8765                                                    |
+| VulnShop  | Nothing; it may reply to permitted requests                                                           |
+| Gateways  | Configured Idun IPv4 address on HTTPS port 443                                                        |
 
 Containers run as non-root with read-only images, dropped capabilities, no
 privilege escalation and bounded resources. Host source directories, home
 folders and the Docker socket are not mounted. The firewall blocks other
 container access to the host, router, LAN, internet and IPv6. VulnShop's separate
-internal network prevents direct attacker access. External container DNS is
+internal network prevents direct attacker access by default. Optional direct
+testing attaches VulnShop to the frontend too; the firewall permits only the
+configured clients to reach it and still blocks its outbound connections. External container DNS is
 disabled; the gateway resolves Idun through a fixed hosts entry.
 
 Each gateway permits one model call at a time. Overlapping requests wait up to
@@ -248,7 +253,8 @@ not reset this budget.
 
 Use synthetic lab data: requests reach Idun and may appear in logs. Containers
 share the host kernel; broader tools such as kernel exploits require a stronger
-boundary, such as disposable VMs. The current attacker scans only port 8080.
+boundary, such as disposable VMs. The current attacker scans only the selected endpoint port, 8080 by default or
+8081 with `--target direct`.
 
 If Idun's IPv4 address changes, stop both stacks, update `IDUN_IP` on each PC,
 then start/check both again. To inspect firewall DROP counters:

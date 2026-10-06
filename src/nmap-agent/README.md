@@ -11,7 +11,7 @@ with sandbox settings; the real Idun key stays in the gateway.
 
 Use the [gamehost runner](../gamehost/README.md#run-an-experiment) for coordinated
 runs with normal traffic and a shared run ID. For standalone use, follow
-[running the attacker](../../deploy/sandbox/README.md#run-and-view-the-app).
+[manual testing](../../deploy/sandbox/TESTING.md).
 
 ## Files
 
@@ -28,7 +28,7 @@ runs with normal traffic and a shared run ID. For standalone use, follow
 ## Tool and logs
 
 `nmap_scan()` accepts no parameters. Trusted configuration supplies the target
-and optional `NMAP_PORT`; the sandbox fixes the port to 8080. Nmap runs with an
+and optional `NMAP_PORT`; the sandbox fixes the port to 8080, or 8081 when you select `--target direct`. Nmap runs with an
 argument list and no shell. The agent cannot choose another scan target or
 execute arbitrary commands through this tool.
 
