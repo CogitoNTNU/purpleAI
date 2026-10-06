@@ -278,11 +278,18 @@ def test_network_policy_blocks_escape_and_backend_bypass():
     red, blue, idun = "192.168.0.130", "192.168.0.120", "129.241.121.16"
 
     def permitted(
-        role, source, destination, port, state="NEW", sport=45000, direct_testing=False
+        role,
+        source,
+        destination,
+        port,
+        state="NEW",
+        sport=45000,
+        direct_testing=False,
+        dev_ip=None,
     ):
-        entries = firewall.rules(role, red, blue, idun, direct_testing=direct_testing)[
-            0
-        ]
+        entries = firewall.rules(
+            role, red, blue, idun, direct_testing=direct_testing, dev_ip=dev_ip
+        )[0]
         for entry in entries:
 
             def option(name):
@@ -350,6 +357,37 @@ def test_network_policy_blocks_escape_and_backend_bypass():
     )
     assert not permitted(
         "blue", "172.28.20.30", red, 45000, "NEW", 5000, direct_testing=True
+    )
+    dev = "192.168.0.50"
+    assert permitted("blue", dev, "172.28.20.10", 8080, dev_ip=dev)
+    assert not permitted("blue", dev, "172.28.20.30", 5000, dev_ip=dev)
+    assert permitted("blue", dev, "172.28.20.30", 5000, dev_ip=dev, direct_testing=True)
+    for destination, port in [
+        ("172.28.20.20", 9000),
+        ("172.28.21.20", 8080),
+        ("172.28.21.10", 5000),
+        ("172.28.20.10", 22),
+    ]:
+        assert not permitted(
+            "blue", dev, destination, port, dev_ip=dev, direct_testing=True
+        )
+    assert not permitted(
+        "blue", "192.168.0.51", "172.28.20.30", 5000, dev_ip=dev, direct_testing=True
+    )
+    for source in ("172.28.20.30", "172.28.21.10"):
+        assert not permitted("blue", source, dev, 22, dev_ip=dev, direct_testing=True)
+        assert not permitted(
+            "blue", source, dev, 45000, "NEW", 5000, dev_ip=dev, direct_testing=True
+        )
+    assert permitted(
+        "blue",
+        "172.28.20.30",
+        dev,
+        45000,
+        "ESTABLISHED",
+        5000,
+        dev_ip=dev,
+        direct_testing=True,
     )
     for role in ("red", "blue"):
         _, host, forward6, host6 = firewall.rules(role, red, blue, idun)
@@ -601,3 +639,41 @@ def test_manual_checks_skip_only_collector_availability(tmp_path, monkeypatch, r
     assert any(
         "--deny" in command and "192.168.0.1:80" in command for command in probes
     )
+
+
+@pytest.mark.parametrize(
+    "dev",
+    [
+        "localhost",
+        "192.168.0.0/24",
+        "127.0.0.1",
+        "0.0.0.0",
+        "172.28.20.30",
+        "192.168.0.120",
+        "192.168.0.110",
+    ],
+)
+def test_invalid_development_address_fails_before_host_changes(
+    tmp_path, monkeypatch, dev
+):
+    module = operator(tmp_path, monkeypatch, "blue", "start")
+    with (tmp_path / ".env").open("a") as settings:
+        settings.write(
+            f"DEV_IP={dev}\nGAMEHOST_IP=192.168.0.110\nLOG_COLLECTOR_TOKEN={'x' * 32}\n"
+        )
+    with patch.object(module.subprocess, "run") as run, pytest.raises(SystemExit):
+        module.main()
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize("role", ["blue", "red"])
+def test_development_address_applies_only_to_blue_policy(tmp_path, monkeypatch, role):
+    module = operator(tmp_path, monkeypatch, role, "check", "--no-collector")
+    with (tmp_path / ".env").open("a") as settings:
+        settings.write("DEV_IP=192.168.0.50\n")
+    with patch.object(module.subprocess, "run") as run:
+        module.main()
+    command = run.call_args_list[0].args[0]
+    assert ("--dev-ip" in command) == (role == "blue")
+    if role == "blue":
+        assert command[command.index("--dev-ip") + 1] == "192.168.0.50"

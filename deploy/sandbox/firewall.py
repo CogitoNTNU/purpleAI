@@ -22,7 +22,19 @@ def ipv4(value):
     return str(address)
 
 
-def policy(role, red_ip, blue_ip, idun_ip, gamehost_ip=None, direct_testing=False):
+def validate_addresses(addresses):
+    if len(set(addresses)) != len(addresses):
+        raise ValueError(
+            "PC, gamehost, development PC and Idun addresses must be distinct"
+        )
+    managed = [ipaddress.ip_network(f"172.28.{n}.0/24") for n in (10, 20, 21)]
+    if any(ipaddress.ip_address(ip) in net for ip in addresses for net in managed):
+        raise ValueError("PC/Idun addresses must not overlap sandbox subnets")
+
+
+def policy(
+    role, red_ip, blue_ip, idun_ip, gamehost_ip=None, direct_testing=False, dev_ip=None
+):
     """Return permitted TCP initiations, managed subnets and bridge names."""
     logging = (
         [("172.28.10.10" if role == "red" else "172.28.20.10", gamehost_ip, 8765)]
@@ -54,15 +66,19 @@ def policy(role, red_ip, blue_ip, idun_ip, gamehost_ip=None, direct_testing=Fals
             [(red_ip, "172.28.20.30", 5000), ("172.28.20.10", "172.28.20.30", 5000)]
             if direct_testing
             else []
-        ),
+        )
+        + ([(dev_ip, "172.28.20.10", 8080)] if dev_ip else [])
+        + ([(dev_ip, "172.28.20.30", 5000)] if dev_ip and direct_testing else []),
         ["172.28.20.0/24", "172.28.21.0/24"],
         ["pai-blue-front", "pai-blue-back"],
     )
 
 
-def rules(role, red_ip, blue_ip, idun_ip, gamehost_ip=None, direct_testing=False):
+def rules(
+    role, red_ip, blue_ip, idun_ip, gamehost_ip=None, direct_testing=False, dev_ip=None
+):
     flows, subnets, bridges = policy(
-        role, red_ip, blue_ip, idun_ip, gamehost_ip, direct_testing
+        role, red_ip, blue_ip, idun_ip, gamehost_ip, direct_testing, dev_ip
     )
     forward = []
     for source, destination, port in flows:
@@ -99,6 +115,7 @@ def main():
     parser.add_argument("--blue-ip", required=True, type=ipv4)
     parser.add_argument("--idun-ip", required=True, type=ipv4)
     parser.add_argument("--gamehost-ip", type=ipv4)
+    parser.add_argument("--dev-ip", type=ipv4)
     parser.add_argument("--direct-testing", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     mode = parser.add_mutually_exclusive_group()
@@ -107,14 +124,13 @@ def main():
         "--check", action="store_true", help="Verify rules without changing them"
     )
     args = parser.parse_args()
-    addresses = [args.red_ip, args.blue_ip, args.idun_ip] + (
-        [args.gamehost_ip] if args.gamehost_ip else []
-    )
-    if len(set(addresses)) != len(addresses):
-        parser.error("PC, gamehost and Idun addresses must be distinct")
-    managed = [ipaddress.ip_network(f"172.28.{n}.0/24") for n in (10, 20, 21)]
-    if any(ipaddress.ip_address(ip) in net for ip in addresses for net in managed):
-        parser.error("PC/Idun addresses must not overlap sandbox subnets")
+    addresses = [args.red_ip, args.blue_ip, args.idun_ip] + [
+        ip for ip in (args.gamehost_ip, args.dev_ip) if ip
+    ]
+    try:
+        validate_addresses(addresses)
+    except ValueError as error:
+        parser.error(str(error))
     if not args.dry_run:
         if platform.system() != "Linux" or os.geteuid() != 0:
             parser.error(
@@ -158,6 +174,7 @@ def main():
         args.idun_ip,
         args.gamehost_ip,
         args.direct_testing,
+        args.dev_ip,
     )
     for binary, parent, suffix, entries in (
         ("iptables", "DOCKER-USER", "FWD", v4_forward),

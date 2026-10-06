@@ -13,7 +13,7 @@ RedAI attacker → BlueAI defender → VulnShop
 
 For the complete setup with gamehost, start with [first-time setup](../../src/gamehost/SETUP.md).
 For an already configured lab, use the [gamehost run guide](../../src/gamehost/README.md).
-For tools, scripts and agents with or without the defender, use the
+For tools, scripts and agents from RedAI or your own PC, with or without the defender, use the
 [manual testing guide](TESTING.md). This page covers setup of the two lab PCs.
 
 Every host command below runs from **`~/purpleAI`**, the repository root.
@@ -40,15 +40,16 @@ nano deploy/sandbox/.env
 
 `cp -n` preserves an existing file. Set these deployment values:
 
-| Setting              | What to enter                                                                                            |
-| -------------------- | -------------------------------------------------------------------------------------------------------- |
-| `RED_IP`             | RedAI's LAN IPv4 address, currently `192.168.0.130`                                                      |
-| `BLUE_IP`            | BlueAI's LAN IPv4 address, currently `192.168.0.120`                                                     |
-| `ROUTER_IP`          | Router's LAN address, currently `192.168.0.1`                                                            |
-| `IDUN_IP`            | One current IPv4 address from the lookup above                                                           |
-| `GATEWAY_TOKEN`      | The generated token; use a different token on each PC                                                    |
-| `GATEWAY_CALL_LIMIT` | Keep the default unless you need a different call budget                                                 |
-| `DIRECT_TESTING`     | Keep `false`; optionally enable [direct testing](TESTING.md#enable-direct-access-on-blueai) on port 8081 |
+| Setting              | What to enter                                                                                                |
+| -------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `RED_IP`             | RedAI's LAN IPv4 address, currently `192.168.0.130`                                                          |
+| `BLUE_IP`            | BlueAI's LAN IPv4 address, currently `192.168.0.120`                                                         |
+| `ROUTER_IP`          | Router's LAN address, currently `192.168.0.1`                                                                |
+| `IDUN_IP`            | One current IPv4 address from the lookup above                                                               |
+| `GATEWAY_TOKEN`      | The generated token; use a different token on each PC                                                        |
+| `GATEWAY_CALL_LIMIT` | Keep the default unless you need a different call budget                                                     |
+| `DEV_IP`             | Optional development PC LAN address on BlueAI; see [manual testing](TESTING.md#from-your-own-development-pc) |
+| `DIRECT_TESTING`     | Keep `false`; optionally enable [direct testing](TESTING.md#enable-direct-access-on-blueai) on port 8081     |
 
 Reserve the PC addresses in the router so they stay fixed. The Docker subnets
 `172.28.10.0/24`, `172.28.20.0/24` and `172.28.21.0/24` must not overlap your LAN
@@ -158,8 +159,8 @@ sudo python3 deploy/sandbox/start.py red run
 
 From a browser on **RedAI or the configured gamehost**, open
 `http://192.168.0.120:8080` (replace the address if `BLUE_IP` differs).
-This reaches VulnShop through the defender. Other LAN machines are blocked by the
-sandbox policy. VulnShop is unpublished by default; optional port 8081 is described
+This reaches VulnShop through the defender. You may also allow one development PC using `DEV_IP` on BlueAI. Other LAN
+machines are blocked by the sandbox policy. VulnShop is unpublished by default; optional port 8081 is described
 in the [manual testing guide](TESTING.md).
 
 ## Change a model without rebuilding

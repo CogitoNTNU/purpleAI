@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from uuid import UUID
 
-from firewall import ipv4
+from firewall import ipv4, validate_addresses
 
 ROOT = Path(__file__).resolve().parent
 
@@ -87,8 +87,14 @@ def main():
     log_token = settings.get("LOG_COLLECTOR_TOKEN", "")
     if bool(gamehost) != bool(log_token):
         parser.error("Set GAMEHOST_IP and LOG_COLLECTOR_TOKEN together")
+    dev = settings.get("DEV_IP", "") if args.role == "blue" else ""
+    try:
+        gamehost = ipv4(gamehost) if gamehost else ""
+        dev = ipv4(dev) if dev else ""
+        validate_addresses([red, blue, idun] + [ip for ip in (gamehost, dev) if ip])
+    except (ValueError, argparse.ArgumentTypeError) as error:
+        parser.error(str(error))
     if gamehost:
-        gamehost = ipv4(gamehost)
         if len(log_token) < 32:
             parser.error("LOG_COLLECTOR_TOKEN must have at least 32 characters")
     env["LOG_COLLECTOR_URL"] = f"http://{gamehost}:8765/events" if gamehost else ""
@@ -122,6 +128,8 @@ def main():
         firewall += ["--gamehost-ip", gamehost]
     if direct_testing:
         firewall += ["--direct-testing"]
+    if dev:
+        firewall += ["--dev-ip", dev]
     if args.action == "start":
         if not sys.platform.startswith("linux") or os.geteuid() != 0:
             parser.error("Start with sudo on the Kali/Ubuntu PC")

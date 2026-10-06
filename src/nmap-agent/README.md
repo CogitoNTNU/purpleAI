@@ -11,7 +11,8 @@ with sandbox settings; the real Idun key stays in the gateway.
 
 Use the [gamehost runner](../gamehost/README.md#run-an-experiment) for coordinated
 runs with normal traffic and a shared run ID. For standalone use, follow
-[manual testing](../../deploy/sandbox/TESTING.md).
+[manual testing](../../deploy/sandbox/TESTING.md), including running the agent
+[from your own PC](../../deploy/sandbox/TESTING.md#run-the-existing-nmap-agent-on-your-pc).
 
 ## Files
 

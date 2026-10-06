@@ -20,7 +20,7 @@ Avoid manual attacks during a managed gamehost run.
 
 ## Enable direct access on BlueAI
 
-This is optional and disabled by default. It initially permits only RedAI to
+This is optional and disabled by default. It permits RedAI, plus the optional development PC configured below, to
 access 8081. Docker Compose 2.33.1 or newer is required for the
 [direct endpoint's network gateway setting](https://docs.docker.com/reference/compose-file/services/#gw_priority).
 
@@ -58,7 +58,7 @@ browser, or test from a terminal.
 ```sh
 cd ~/purpleAI
 curl --max-time 180 -i http://192.168.0.120:8080/
-nmap -sT -sV -p 8080 192.168.0.120
+nmap -sT -sV -Pn -p 8080 192.168.0.120
 ```
 
 **RedAI — repository root:** test directly after enabling 8081 on BlueAI.
@@ -66,7 +66,7 @@ nmap -sT -sV -p 8080 192.168.0.120
 ```sh
 cd ~/purpleAI
 curl --max-time 10 -i http://192.168.0.120:8081/
-nmap -sT -sV -p 8081 192.168.0.120
+nmap -sT -sV -Pn -p 8081 192.168.0.120
 ```
 
 Give your other tools/scripts the matching target URL or IP and port. Scanning
@@ -131,7 +131,7 @@ sudo python3 deploy/sandbox/start.py red shell --target direct
 ```sh
 cd /app
 curl --max-time 10 -i "$TARGET_URL/"
-nmap -sT -sV -p "$NMAP_PORT" 192.168.0.120
+nmap -sT -sV -Pn -p "$NMAP_PORT" 192.168.0.120
 exit
 ```
 
@@ -142,6 +142,103 @@ access your host files. No collector is required; agent events still appear in
 the terminal. If you previously configured collector delivery, the agents keep
 attempting it on a best-effort basis. Leave `GAMEHOST_IP` and
 `LOG_COLLECTOR_TOKEN` empty in deployment `.env` for a fully standalone lab.
+
+## From your own development PC
+
+Your PC must have a LAN route to BlueAI. No RedAI container or gamehost is needed.
+Find your PC's **LAN IPv4 address** in its network settings, for example
+`192.168.0.150`. Use that address, not `127.0.0.1`, a Docker address or the public
+internet address. Reserve it in the router so it stays fixed.
+
+**BlueAI — repository root:** allow that development PC.
+
+```sh
+cd ~/purpleAI
+nano deploy/sandbox/.env
+```
+
+Set `DEV_IP=192.168.0.150`, replacing the example with your PC's address. Leave
+`DIRECT_TESTING=false` for defender-only access, or set it to `true` for both
+endpoints. Save, then apply the settings. **BlueAI — repository root:**
+
+```sh
+cd ~/purpleAI
+sudo python3 deploy/sandbox/start.py blue stop
+sudo python3 deploy/sandbox/start.py blue start
+sudo python3 deploy/sandbox/start.py blue check --no-collector
+```
+
+This clears temporary target data. Only BlueAI needs this change. `DEV_IP`
+permits one development PC at a time; to use another, replace the address and
+repeat stop/start/check. Other LAN PCs remain blocked from these endpoints.
+It grants no access to the model gateway or the internal backend network.
+
+**Development PC — repository root:** open the app in your browser at
+`http://192.168.0.120:8080`, or `http://192.168.0.120:8081` with direct testing enabled.
+For command-line tests on macOS/Linux (curl and Nmap must be installed):
+
+```sh
+cd ~/purpleAI
+curl --max-time 180 -i http://192.168.0.120:8080/
+curl --max-time 10 -i http://192.168.0.120:8081/
+nmap -sT -sV -Pn -p 8080,8081 192.168.0.120
+```
+
+The 8081 request/scan succeeds only with direct testing enabled. Give your own
+scripts or agents the chosen URL. No checkout is needed for browser/tools alone;
+run those commands from any existing directory if you have no local repository.
+Tools run locally with your PC's permissions. For tools available only on Kali,
+SSH to RedAI and use the [native Kali instructions](#tools-and-scripts-directly-on-redai).
+
+### Run the existing Nmap agent on your PC
+
+This optional example is for macOS/Linux with Python 3.12 or newer and Nmap on
+`PATH`. Use a local checkout of this branch. The agent calls Idun directly using
+its own API key; BlueAI's model gateway remains private. Your PC therefore also
+needs access to Idun. Raw tools/scripts that do not use a model need no Idun key.
+
+**Development PC — repository root:** create an agent-specific virtual environment.
+This does not change the repository's root virtual environment.
+
+```sh
+cd ~/purpleAI
+python3 -m venv src/nmap-agent/.venv
+src/nmap-agent/.venv/bin/python3 -m pip install -r src/nmap-agent/requirements.txt
+cp -n src/nmap-agent/.env.example src/nmap-agent/.env
+nano src/nmap-agent/.env
+chmod 600 src/nmap-agent/.env
+```
+
+Set these values in `src/nmap-agent/.env` for direct testing, using your own Idun
+key and chosen model:
+
+```dotenv
+TARGET_URL=http://192.168.0.120:8081
+NMAP_PORT=8081
+IDUN_BASE_URL=https://llm.hpc.ntnu.no/v1
+IDUN_API_KEY=your-idun-api-key
+AGENT_MODEL=openai/gpt-oss-120b
+```
+
+For defended testing, change **both** `TARGET_URL` and `NMAP_PORT` to use 8080.
+Leave `LOG_COLLECTOR_URL` and `LOG_COLLECTOR_TOKEN` unset; events print in the
+terminal. Existing exported environment variables take precedence over `.env`.
+
+**Development PC — `~/purpleAI/src/nmap-agent`:** run the agent. The working
+folder lets it read its own `.env`; `PYTHONPATH` makes the shared sender available.
+
+```sh
+cd ~/purpleAI/src/nmap-agent
+PYTHONPATH="$PWD/.." .venv/bin/python3 "$PWD/main.py"
+```
+
+The same setup works for a native agent run on RedAI. Direct local runs have
+local host permissions; use the RedAI container for sandboxed agent execution.
+Keep your Idun key in the ignored `.env`, never in source or command arguments.
+
+To remove development-PC access, clear `DEV_IP` on BlueAI and repeat its
+stop/start/check sequence. Changing or switching a Git branch alone does not
+remove running containers or firewall rules.
 
 ## Return to defended-only testing
 
@@ -178,6 +275,7 @@ enabled. Use its usual checks without `--no-collector` before a managed run.
 | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 8080 returns 403                            | Read `sudo python3 deploy/sandbox/start.py blue logs` from BlueAI's `~/purpleAI`. The defender may have detected an attack or failed to call its model. Use 8081 to test the target without those checks. |
 | 8081 is unreachable from RedAI              | Set `DIRECT_TESTING=true` on BlueAI and stop/start it. For the attacker container, also enable it and stop/start on RedAI. Native Kali tools need only the BlueAI change.                                 |
+| Cannot connect from your own PC             | Check `DEV_IP` on BlueAI, its applied policy and your LAN route. A VPN, VM or container may use a different source address; use the address BlueAI sees.                                                  |
 | Firewall missing or changed                 | From that PC's `~/purpleAI`, run the full stop/start/check sequence above. Editing `.env` alone does not apply a policy.                                                                                  |
 | Collector unreachable during a manual check | Use the full `sudo python3 deploy/sandbox/start.py blue check --no-collector` or `sudo python3 deploy/sandbox/start.py red check --no-collector` command from that PC's `~/purpleAI`.                     |
 
