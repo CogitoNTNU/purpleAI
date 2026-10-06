@@ -10,7 +10,7 @@ import os
 import requests
 from flask import Flask, request, Response
 from langchain_openai import ChatOpenAI
-from events import log_event
+from events import log_event, model_error_details
 
 TARGET = os.environ.get("TARGET", "http://backend:8000")  # the real backend
 
@@ -81,7 +81,8 @@ def proxy(path):
         attack = detection is not None
     except Exception as e:
         # AI unreachable (VPN off, API down): block to be safe
-        print(f"[ERROR] could not check request, blocking: {e}", flush=True)
+        details = model_error_details(e)
+        print(f"[ERROR] could not check request, blocking: {details}", flush=True)
         log_event(
             "request_decision",
             method=request.method,
@@ -89,6 +90,7 @@ def proxy(path):
             traffic=origin,
             status="model_error",
             http_status=403,
+            **details,
         )
         return Response("Blocked: defender could not check request\n", status=403)
 

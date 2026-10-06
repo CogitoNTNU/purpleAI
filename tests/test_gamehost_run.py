@@ -169,3 +169,61 @@ def test_ssh_quotes_repository_and_keeps_fixed_commands(monkeypatch):
         assert "BatchMode=yes" in command and "StrictHostKeyChecking=yes" in command
         with pytest.raises(ValueError):
             runner.remote("-oProxyCommand=bad", "purpleAI", "blue", "check")
+
+
+@pytest.mark.parametrize(
+    "kind,expected_type,status,reason",
+    [
+        ("busy", "RateLimitError", 429, "Gateway busy"),
+        ("upstream", "APIStatusError", 502, "Idun unavailable"),
+        ("unknown", "APIStatusError", 502, "Model HTTP request failed"),
+        ("timeout", "APITimeoutError", None, "Model request timed out"),
+        ("connection", "APIConnectionError", None, "Model connection failed"),
+    ],
+)
+def test_model_failure_details_reach_collector_without_secrets(
+    collector, monkeypatch, kind, expected_type, status, reason
+):
+    import httpx
+    from openai import (
+        APIConnectionError,
+        APIStatusError,
+        APITimeoutError,
+        RateLimitError,
+    )
+
+    module, base = collector
+    monkeypatch.setenv("LOG_COLLECTOR_URL", base + "/events")
+    monkeypatch.setenv("LOG_COLLECTOR_TOKEN", "x" * 32)
+    monkeypatch.setenv("AGENT_MODEL", "lab-model")
+    monkeypatch.setenv("IDUNN_BASE_URL", "http://unused/v1")
+    monkeypatch.setenv("IDUNN_API_KEY", "dummy")
+    events = load("error_detail_events", "src/defender/defender-agent/events.py")
+    monkeypatch.setitem(sys.modules, "events", events)
+    defender = load("error_detail_defender", "src/defender/defender-agent/defender.py")
+    request = httpx.Request("POST", "http://model-gateway:9000/v1/chat/completions")
+    secret = "private-key-and-request-text"
+    if kind == "timeout":
+        error = APITimeoutError(request=request)
+    elif kind == "connection":
+        error = APIConnectionError(message=secret, request=request)
+    else:
+        response = httpx.Response(status, request=request)
+        body = {"error": reason if kind != "unknown" else secret}
+        error_class = RateLimitError if kind == "busy" else APIStatusError
+        error = error_class(secret, response=response, body=body)
+
+    def fail(_):
+        raise error
+
+    defender.AGENTS = [fail]
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert defender.app.test_client().get("/search").status_code == 403
+    saved = module.DATA_FILE.read_text()
+    event = json.loads(saved.splitlines()[-1])
+    assert event["status"] == "model_error" and event["http_status"] == 403
+    assert event["error_type"] == expected_type
+    assert event["model_http_status"] == status
+    assert event["error_reason"] == reason
+    assert secret not in output.getvalue() and secret not in saved

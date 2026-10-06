@@ -30,3 +30,7 @@ Structured events are also sent to the collector when gamehost logging is enable
 in deployment `.env`. The [gamehost runner](../../gamehost/README.md) assigns a
 shared run ID to the defender and attacker and sends normal traffic. Delivery
 failures do not change defender decisions.
+
+Model failure events include `error_type`, `model_http_status` and a safe
+`error_reason` for diagnosing busy gateways, timeouts and connection failures.
+Requests still receive HTTP 403 if model checks fail.

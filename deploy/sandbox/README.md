@@ -211,7 +211,9 @@ The existing agent tools remain; this does not add autonomous shell execution or
 code-edit/restart tools. The attacker scan is scoped to port 8080.
 
 Gateway calls use non-streaming chat completions,
-2048 output tokens, and one call at a time. `GATEWAY_CALL_LIMIT` limits attempts
+2048 output tokens, and one call at a time. Overlapping requests wait up to
+10 seconds for the active call to finish; if still busy, the gateway returns 429.
+`GATEWAY_CALL_LIMIT` limits attempts
 per gateway process lifetime; restarting it resets the count. Use synthetic lab
 data: requests may reach Idun and appear in defender logs.
 

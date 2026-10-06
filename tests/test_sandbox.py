@@ -141,7 +141,8 @@ def test_langchain_client_can_call_the_gateway(gateway, monkeypatch):
         thread.join(timeout=5)
 
 
-def test_gateway_rejects_overlapping_calls(gateway):
+def test_gateway_rejects_calls_after_bounded_wait(gateway, monkeypatch):
+    monkeypatch.setattr(gateway, "WAIT_SECONDS", 0.05)
     app = gateway.create_app()
     started, release = threading.Event(), threading.Event()
     payload = {"model": "lab-model", "messages": [{}]}
@@ -178,6 +179,62 @@ def test_gateway_rejects_overlapping_calls(gateway):
             release.set()
             thread.join(timeout=5)
         assert results == [200]
+
+
+def test_gateway_waits_for_overlap_and_keeps_one_upstream_call(gateway, monkeypatch):
+    monkeypatch.setenv("GATEWAY_CALL_LIMIT", "2")
+    real_lock = threading.Lock()
+    waiting, started, release = threading.Event(), threading.Event(), threading.Event()
+
+    class ObservedLock:
+        def acquire(self, *, timeout):
+            assert timeout == 10
+            if real_lock.locked():
+                waiting.set()
+            return real_lock.acquire(timeout=timeout)
+
+        def release(self):
+            real_lock.release()
+
+    monkeypatch.setattr(gateway, "threading", types.SimpleNamespace(Lock=ObservedLock))
+    app = gateway.create_app()
+    results = []
+    payload = {"model": "lab-model", "messages": [{}]}
+    headers = {"Authorization": "Bearer " + "x" * 32}
+
+    def chunks(_):
+        started.set()
+        assert release.wait(timeout=5)
+        yield b'{"choices": []}'
+
+    def request():
+        results.append(
+            app.test_client()
+            .post("/v1/chat/completions", json=payload, headers=headers)
+            .status_code
+        )
+
+    with patch.object(gateway.requests, "Session") as factory:
+        response = factory.return_value.__enter__.return_value.post.return_value.__enter__.return_value
+        response.status_code = 200
+        response.iter_content.side_effect = chunks
+        first, second = (
+            threading.Thread(target=request),
+            threading.Thread(target=request),
+        )
+        first.start()
+        try:
+            assert started.wait(timeout=5)
+            second.start()
+            assert waiting.wait(timeout=5)
+            assert factory.call_count == 1
+        finally:
+            release.set()
+            first.join(timeout=5)
+            if second.ident is not None:
+                second.join(timeout=5)
+        assert results == [200, 200]
+        assert factory.call_count == 2
 
 
 def test_gateway_limits_upstream_response_size(gateway):

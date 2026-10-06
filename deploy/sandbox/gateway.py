@@ -9,6 +9,7 @@ import requests
 from flask import Flask, Response, jsonify, request
 
 UPSTREAM = "https://llm.hpc.ntnu.no/v1/chat/completions"
+WAIT_SECONDS = 10
 
 
 def create_app():
@@ -81,7 +82,7 @@ def create_app():
             return jsonify(error="Specify only one output limit"), 400
         if not {"max_tokens", "max_completion_tokens"} & payload.keys():
             payload["max_tokens"] = 2048
-        if not lock.acquire(blocking=False):
+        if not lock.acquire(timeout=WAIT_SECONDS):
             return jsonify(error="Gateway busy"), 429
         try:
             if calls >= budget:

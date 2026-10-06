@@ -199,8 +199,11 @@ docker compose --env-file src/gamehost/.env -f src/gamehost/docker-compose.yml e
 ```
 
 Events include IDs, UTC timestamps, actions and statuses. Defender events include
-method, path, decision and response status; request bodies and API keys are not
-included. Agent delivery is best effort: an unavailable collector does not stop
+method, path, decision and response status. Model failures also include
+`error_type`, `model_http_status` (null when there is no HTTP response), and a safe
+`error_reason`, such as `Gateway busy` or `Model request timed out`. These details
+persist in the collector after the defender is recreated. Raw exception messages,
+response bodies and API keys are not included. Agent delivery is best effort: an unavailable collector does not stop
 an agent, and missed events are not replayed. The preflight check catches incorrect
 tokens or unreachable collectors before a run.
 
