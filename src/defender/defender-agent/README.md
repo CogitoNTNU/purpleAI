@@ -32,11 +32,11 @@ Structured events are also sent to the collector when gamehost logging is enable
 in deployment `.env`. The [gamehost runner](../../gamehost/README.md) assigns a
 shared run ID to the defender and attacker and sends normal traffic. Delivery
 failures do not change defender decisions.
+Gamehost's `--without-defender` mode bypasses this proxy and sends no normal
+traffic; it leaves the defender's current session running.
 
-Both agents use the shared event sender in `src/purpleai/event_logging.py`, which
-is copied into their Docker images. Events stay as JSON on stdout; delivery
-failures produce one `WARNING` per agent process. Sending uses a 0.5-second timeout,
-with no queue or retries.
+JSON events use the [shared sender](../../purpleai/README.md), with a 0.5-second
+delivery timeout and no queue or retries. Events stay on stdout if delivery fails.
 
 Model failure events include `error_type`, `model_http_status` and a safe
 `error_reason` for diagnosing busy gateways, timeouts and connection failures.

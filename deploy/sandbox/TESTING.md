@@ -22,12 +22,23 @@ Both endpoints use the **same VulnShop instance and data**. The defender stays
 running on 8080 when direct testing is enabled; choose the URL for each test.
 Avoid manual attacks during a managed gamehost run.
 
+Choose the section matching where your tool runs:
+
+- [Native Kali tools on RedAI](#tools-and-scripts-directly-on-redai): only BlueAI needs to be running.
+- [Tools or agents in the RedAI container](#tools-or-the-agent-inside-the-redai-sandbox): start both sandbox stacks.
+- [Your own development PC](#from-your-own-development-pc): allow its address on BlueAI; gamehost is unnecessary.
+
+`DIRECT_TESTING` enables the optional 8081 endpoint. It does not switch off the
+defender or change the default target. `DEV_IP` grants your own PC access to
+8080, plus 8081 if enabled. Neither setting is needed for a normal gamehost run.
+
 ## Enable direct access on BlueAI
 
 This is optional and disabled by default. It permits RedAI, plus the optional development PC configured below, to
 access 8081. Gamehost can coordinate [runs without the defender](../../src/gamehost/README.md#run-without-the-defender)
 using the RedAI attacker; gamehost itself does not need direct HTTP access. Docker Compose 2.33.1 or newer is required for the
 [direct endpoint's network gateway setting](https://docs.docker.com/reference/compose-file/services/#gw_priority).
+If 8081 is already enabled on BlueAI, skip these configuration steps.
 
 **BlueAI — repository root:**
 
@@ -51,6 +62,7 @@ rebuilds images and installs the matching firewall policy. Use this sequence
 after changing deployment settings. `--no-collector` skips collector availability
 and event delivery during checks; firewall and network isolation checks still run.
 It lets you test while a previously configured collector is stopped.
+Use the same check without `--no-collector` when you also want to verify log delivery.
 
 ## Tools and scripts directly on RedAI
 
@@ -121,6 +133,8 @@ sudo python3 deploy/sandbox/start.py red run --target direct
 
 Omitting `--target` selects the defender. The selected endpoint supplies both
 `TARGET_URL` and `NMAP_PORT`; the agent cannot select another host or port.
+The script also sets the event's target mode automatically; do not add
+`PURPLEAI_TARGET_MODE` to the agent's `.env` for sandbox or gamehost runs.
 The agent still needs Idun for its own model calls, even when the target bypasses
 the defender.
 
@@ -151,9 +165,11 @@ attempting it on a best-effort basis. Leave `GAMEHOST_IP` and
 ## From your own development PC
 
 Your PC must have a LAN route to BlueAI. No RedAI container or gamehost is needed.
-Find your PC's **LAN IPv4 address** in its network settings, for example
-`192.168.0.150`. Use that address, not `127.0.0.1`, a Docker address or the public
-internet address. Reserve it in the router so it stays fixed.
+On the same LAN, use your PC's **LAN IPv4 address**, for example `192.168.0.150`.
+Reserve it in the router so it stays fixed. Through a VPN or Tailscale subnet
+route, use the **source address BlueAI sees**; the router may replace your PC's
+address. A shared translated address can also admit other PCs using that route.
+Do not use `127.0.0.1` or BlueAI's own address.
 
 **BlueAI — repository root:** allow that development PC.
 
@@ -180,13 +196,22 @@ It grants no access to the model gateway or the internal backend network.
 
 **Development PC — repository root:** open the app in your browser at
 `http://192.168.0.120:8080`, or `http://192.168.0.120:8081` with direct testing enabled.
-For command-line tests on macOS/Linux (curl and Nmap must be installed):
+For command-line tests on macOS/Linux, install curl and Nmap first.
+
+**Development PC — repository root:** test with the defender.
 
 ```sh
 cd ~/purpleAI
 curl --max-time 180 -i http://192.168.0.120:8080/
+nmap -sT -sV -Pn -p 8080 192.168.0.120
+```
+
+**Development PC — repository root, only after enabling direct access:** test without the defender.
+
+```sh
+cd ~/purpleAI
 curl --max-time 10 -i http://192.168.0.120:8081/
-nmap -sT -sV -Pn -p 8080,8081 192.168.0.120
+nmap -sT -sV -Pn -p 8081 192.168.0.120
 ```
 
 The 8081 request/scan succeeds only with direct testing enabled. Give your own
@@ -220,16 +245,20 @@ key and chosen model:
 ```dotenv
 TARGET_URL=http://192.168.0.120:8081
 NMAP_PORT=8081
-PURPLEAI_TARGET_MODE=without_defender
 IDUN_BASE_URL=https://llm.hpc.ntnu.no/v1
 IDUN_API_KEY=your-idun-api-key
 AGENT_MODEL=openai/gpt-oss-120b
 ```
 
-For defended testing, change `TARGET_URL` and `NMAP_PORT` to use 8080, and set
-`PURPLEAI_TARGET_MODE=with_defender`. The mode labels any locally printed or sent events.
+For defended testing, change `TARGET_URL` and `NMAP_PORT` to use 8080.
 Leave `LOG_COLLECTOR_URL` and `LOG_COLLECTOR_TOKEN` unset; events print in the
 terminal. Existing exported environment variables take precedence over `.env`.
+
+`PURPLEAI_TARGET_MODE` is optional logging metadata, not a target setting.
+Local attacks work without it. Printed events default to `with_defender`; add
+`PURPLEAI_TARGET_MODE=without_defender` if you want accurate labels for direct
+tests. If you enable collector delivery, set the matching mode so those events
+go to the correct log file.
 
 **Development PC — `~/purpleAI/src/nmap-agent`:** run the agent. The working
 folder lets it read its own `.env`; `PYTHONPATH` makes the shared sender available.

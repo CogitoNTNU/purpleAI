@@ -11,10 +11,11 @@ RedAI attacker → BlueAI defender → VulnShop
       └──────→ Idun ←────┘
 ```
 
-For the complete setup with gamehost, start with [first-time setup](../../src/gamehost/SETUP.md).
-For an already configured lab, use the [gamehost run guide](../../src/gamehost/README.md).
-For tools, scripts and agents from RedAI or your own PC, with or without the defender, use the
-[manual testing guide](TESTING.md). This page covers setup of the two lab PCs.
+This page configures and operates the two lab PCs.
+
+- **New lab with gamehost:** start with [first-time setup](../../src/gamehost/SETUP.md).
+- **Already configured lab:** use the [gamehost run guide](../../src/gamehost/README.md).
+- **Tools, scripts or agents from RedAI or your own PC:** use [manual testing](TESTING.md), with or without defender checks.
 
 Every host command below runs from **`~/purpleAI`**, the repository root.
 Replace that path if your checkout is elsewhere. Use the same code version on
@@ -101,11 +102,21 @@ checks currently use that defender model. The sandbox supplies the target,
 gateway address and gateway token automatically. Agent `.env` files only need
 the model; deployment `.env` holds network and gateway settings.
 
+Keep settings in these files; changing a model does not require editing deployment settings:
+
+| PC                           | File                               | Settings                                                                                          |
+| ---------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------- |
+| RedAI and BlueAI, separately | `deploy/sandbox/.env`              | Network addresses, gateway token, collector delivery and optional testing access                  |
+| RedAI                        | `src/nmap-agent/.env`              | Attacker's `AGENT_MODEL`                                                                          |
+| BlueAI                       | `src/defender/defender-agent/.env` | Defender's `AGENT_MODEL`                                                                          |
+| Gamehost                     | `src/gamehost/.env`                | Collector token/address and SSH destinations; see [first-time setup](../../src/gamehost/SETUP.md) |
+
 ## Start or rebuild the lab
 
 When logging is enabled, [start the collector on gamehost first](../../src/gamehost/README.md#run-an-experiment).
 Use the same sequence for initial startup, code updates, deployment setting
 changes, or recovery after a PC/Docker restart.
+Already running, unchanged stacks need no restart before a test or experiment.
 
 Stop/start rebuilds the images and installs the firewall before launching
 containers. Startup refuses to change firewall rules while a lab stack is
@@ -161,9 +172,10 @@ sudo python3 deploy/sandbox/start.py red run
 
 From a browser on **RedAI or the configured gamehost**, open
 `http://192.168.0.120:8080` (replace the address if `BLUE_IP` differs).
-This reaches VulnShop through the defender. You may also allow one development PC using `DEV_IP` on BlueAI. Other LAN
-machines are blocked by the sandbox policy. VulnShop is unpublished by default; optional port 8081 is described
-in the [manual testing guide](TESTING.md).
+This reaches VulnShop through the defender. To use your own PC, configure
+`DEV_IP` on BlueAI as described in [manual testing](TESTING.md#from-your-own-development-pc).
+Other LAN machines are blocked. Optional port 8081 bypasses the defender;
+it is disabled by default.
 
 ## Change a model without rebuilding
 
@@ -248,8 +260,11 @@ testing attaches VulnShop to the frontend too; the firewall permits only the
 configured clients to reach it and still blocks its outbound connections. External container DNS is
 disabled; the gateway resolves Idun through a fixed hosts entry.
 
-Each gateway permits one model call at a time. Overlapping requests wait up to
-10 seconds, then return 429 if still busy. Output is limited to 2048 tokens.
+Each gateway permits one model call at a time, independently on each PC.
+RedAI and BlueAI can therefore call Idun at the same time. Overlapping requests
+to the same gateway wait up to 10 seconds, then return 429 if still busy.
+This is a local gateway limit; it does not enforce Idun's per-minute rate limits.
+Output is limited to 2048 tokens.
 `GATEWAY_CALL_LIMIT` counts attempts for the gateway process lifetime, including
 failed calls; only restarting the gateway resets it. Starting a gamehost run does
 not reset this budget.

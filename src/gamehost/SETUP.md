@@ -10,6 +10,11 @@ Every command block identifies the PC and working directory. Apart from the
 initial clone, commands run from **`~/purpleAI`**, the repository root. Replace
 that path if needed. All three PCs must use the same code version.
 
+Follow the sections in order: prepare the checkouts, configure the sandbox and
+collector, set up management access, then start collector → BlueAI → RedAI.
+For a new installation, keep `DIRECT_TESTING=false` and `DEV_IP` empty.
+Optional access for tests is covered in the [manual testing guide](../../deploy/sandbox/TESTING.md).
+
 ## 1. Prepare the hosts
 
 On each PC, use a checkout of this sandbox branch at `~/purpleAI`. For a new

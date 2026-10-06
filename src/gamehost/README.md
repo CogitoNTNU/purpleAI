@@ -1,15 +1,20 @@
 # Run experiments from gamehost
 
-Gamehost runs the log collector and normal-traffic containers. The host-side
-runner coordinates RedAI and BlueAI over SSH. The collector only stores events;
-it does not run commands. For tools, scripts or individual agent tests with or
-without the defender, use [manual testing](../../deploy/sandbox/TESTING.md);
-gamehost and the collector are optional for those tests.
+Gamehost coordinates the attacker on RedAI and the defender/target on BlueAI
+over SSH. Its Docker stack stores events and, for defended runs, sends normal
+browsing traffic. The collector only receives logs; the host-side Python runner
+starts and stops the experiment.
 
 For a new installation, follow [first-time setup](SETUP.md). SSH, Docker access
 and passwordless sudo are configured there once. For an existing installation,
 use the commands below. All blocks run from **`~/purpleAI`**, the repository root,
 on the named PC. Replace that directory if your checkout is elsewhere.
+
+| What you want                                                       | What to use                                                                            |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Attacker + defender + normal traffic                                | [Run an experiment](#run-an-experiment)                                                |
+| Attacker against VulnShop without defender checks or normal traffic | [Run without the defender](#run-without-the-defender)                                  |
+| Your own tools, scripts or individual agent runs                    | [Manual testing](../../deploy/sandbox/TESTING.md); gamehost and collector are optional |
 
 ## Run an experiment
 
@@ -58,9 +63,9 @@ Use this mode to test the attacker against VulnShop itself on port 8081.
 The defender container can stay running; the runner bypasses it and does not
 recreate it before or after this run.
 
-First update **gamehost, RedAI and BlueAI** to the same code version. Rebuild the
-[collector](#update-code-or-models), which now separates the two log files.
-On both RedAI and BlueAI, add or update this value in `deploy/sandbox/.env`:
+**One-time preparation for this mode:** set the following in
+`deploy/sandbox/.env` on both RedAI and BlueAI, then apply it using the blocks below.
+If it is already applied on both PCs, skip to the gamehost run command.
 
 ```dotenv
 DIRECT_TESTING=true
@@ -91,8 +96,8 @@ sudo python3 deploy/sandbox/start.py red start
 sudo python3 deploy/sandbox/start.py red check --target direct
 ```
 
-All checks should show `PASS`. This check mode skips the defender probe;
-BlueAI's target isolation and RedAI's target/collector access are still checked.
+All checks should show `PASS`. These checks do not require the defender;
+they still verify target isolation, gateway restrictions and collector delivery.
 If either PC has not enabled `DIRECT_TESTING`, preflight refuses the run.
 
 **Gamehost — repository root:** with the collector running, start the attacker
@@ -108,7 +113,7 @@ against 8081, then cancels any remaining attacker and records completion.
 It does not pull, start or stop a normal-traffic container. The attacker still
 uses its RedAI Idun gateway for its own model calls.
 
-Subsequent runs need no restarts when you switch modes: omit `--without-defender`
+Once both ports are enabled, switching modes needs no restarts: omit `--without-defender`
 to use the defender and normal traffic again. Both modes use the same VulnShop
 data. For a fresh target, stop/start BlueAI between runs. To close port 8081,
 follow [returning to defended-only testing](../../deploy/sandbox/TESTING.md#return-to-defended-only-testing).
@@ -205,7 +210,8 @@ docker compose --env-file src/gamehost/.env -f src/gamehost/docker-compose.yml u
 
 For model-only changes, edit each agent's `AGENT_MODEL` as described in the
 [sandbox guide](../../deploy/sandbox/README.md#change-a-model-without-rebuilding).
-The next managed run reads both agents' updated model settings. Existing SSH and
+The next defended run reads both agents' updated model settings; a run without
+the defender reads only the attacker settings. Existing SSH and
 sudo permissions do not need to be reapplied after code updates or reboots.
 
 ## If a check fails
