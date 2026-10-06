@@ -29,20 +29,20 @@ def policy(role, red_ip, blue_ip, idun_ip):
             [
                 ("172.28.10.10", "172.28.10.20", 9000),
                 ("172.28.10.10", blue_ip, 8080),
-                ("172.28.11.20", idun_ip, 443),
+                ("172.28.10.20", idun_ip, 443),
             ],
-            ["172.28.10.0/24", "172.28.11.0/24"],
-            ["pai-red-lab", "pai-red-out"],
+            ["172.28.10.0/24"],
+            ["pai-red-lab"],
         )
     return (
         [
             (red_ip, "172.28.20.10", 8080),
             ("172.28.20.10", "172.28.20.20", 9000),
             ("172.28.21.20", "172.28.21.10", 5000),
-            ("172.28.22.20", idun_ip, 443),
+            ("172.28.20.20", idun_ip, 443),
         ],
-        ["172.28.20.0/24", "172.28.21.0/24", "172.28.22.0/24"],
-        ["pai-blue-front", "pai-blue-back", "pai-blue-out"],
+        ["172.28.20.0/24", "172.28.21.0/24"],
+        ["pai-blue-front", "pai-blue-back"],
     )
 
 
@@ -50,42 +50,17 @@ def rules(role, red_ip, blue_ip, idun_ip):
     flows, subnets, bridges = policy(role, red_ip, blue_ip, idun_ip)
     forward = []
     for source, destination, port in flows:
-        forward.extend(
-            [
-                [
-                    "-s",
-                    source,
-                    "-d",
-                    destination,
-                    "-p",
-                    "tcp",
-                    "--dport",
-                    str(port),
-                    "-m",
-                    "conntrack",
-                    "--ctstate",
-                    "NEW,ESTABLISHED",
-                    "-j",
-                    "ACCEPT",
-                ],
-                [
-                    "-s",
-                    destination,
-                    "-d",
-                    source,
-                    "-p",
-                    "tcp",
-                    "--sport",
-                    str(port),
-                    "-m",
-                    "conntrack",
-                    "--ctstate",
-                    "ESTABLISHED",
-                    "-j",
-                    "ACCEPT",
-                ],
-            ]
-        )
+        # Only replies to an allowed TCP connection may travel back.
+        forward += [
+            shlex.split(
+                f"-s {source} -d {destination} -p tcp --dport {port} "
+                "-m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT"
+            ),
+            shlex.split(
+                f"-s {destination} -d {source} -p tcp --sport {port} "
+                "-m conntrack --ctstate ESTABLISHED -j ACCEPT"
+            ),
+        ]
     for subnet in subnets:
         forward.extend([["-s", subnet, "-j", "DROP"], ["-d", subnet, "-j", "DROP"]])
     # Interface rules also catch unexpected or spoofed container addresses.
@@ -108,11 +83,15 @@ def main():
     parser.add_argument("--blue-ip", required=True, type=ipv4)
     parser.add_argument("--idun-ip", required=True, type=ipv4)
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--remove", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--remove", action="store_true")
+    mode.add_argument(
+        "--check", action="store_true", help="Verify rules without changing them"
+    )
     args = parser.parse_args()
     if len({args.red_ip, args.blue_ip, args.idun_ip}) != 3:
         parser.error("PC and Idun addresses must be distinct")
-    managed = [ipaddress.ip_network(f"172.28.{n}.0/24") for n in (10, 11, 20, 21, 22)]
+    managed = [ipaddress.ip_network(f"172.28.{n}.0/24") for n in (10, 20, 21)]
     if any(
         ipaddress.ip_address(ip) in net
         for ip in (args.red_ip, args.blue_ip, args.idun_ip)
@@ -144,7 +123,7 @@ def main():
             capture_output=True,
             text=True,
         )
-        if result.stdout.strip():
+        if result.stdout.strip() and not args.check:
             parser.error("Stop the sandbox containers before changing firewall rules")
 
     def run(binary, *parts, check=True):
@@ -165,6 +144,29 @@ def main():
         ("ip6tables", "INPUT", "HOST6", v6_host),
     ):
         chain = f"{prefix}_{suffix}"
+        if args.check:
+            lines = subprocess.check_output(
+                [binary, "-w", "-S", parent], text=True
+            ).splitlines()
+            first = next(
+                (shlex.split(line) for line in lines if line.startswith("-A ")), None
+            )
+            if first != ["-A", parent, "-j", chain]:
+                parser.error(
+                    "Firewall missing or misplaced; stop the lab, then start it again"
+                )
+            actual = subprocess.check_output(
+                [binary, "-w", "-S", chain], text=True
+            ).splitlines()
+            if len([line for line in actual if line.startswith("-A ")]) != len(
+                entries
+            ) + 1 or shlex.split(actual[-1]) != ["-A", chain, "-j", "RETURN"]:
+                parser.error(
+                    "Firewall rules changed; stop the lab, then start it again"
+                )
+            for entry in [*entries, ["-j", "RETURN"]]:
+                run(binary, "-C", chain, *entry)
+            continue
         if args.remove:
             run(binary, "-D", parent, "-j", chain, check=False)
             run(binary, "-F", chain, check=False)

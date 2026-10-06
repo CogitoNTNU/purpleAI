@@ -243,6 +243,8 @@ def test_network_policy_blocks_escape_and_backend_bypass():
 
     assert permitted("red", "172.28.10.10", blue, 8080)
     assert permitted("red", "172.28.10.10", "172.28.10.20", 9000)
+    assert permitted("red", "172.28.10.20", idun, 443)
+    assert not permitted("red", "172.28.10.20", "1.1.1.1", 443)
     for destination, port in [
         (blue, 22),
         ("192.168.0.1", 80),
@@ -254,6 +256,8 @@ def test_network_policy_blocks_escape_and_backend_bypass():
     assert not permitted("blue", "192.168.0.50", "172.28.20.10", 8080)
     assert not permitted("blue", red, "172.28.21.10", 5000)
     assert permitted("blue", "172.28.21.20", "172.28.21.10", 5000)
+    assert permitted("blue", "172.28.20.20", idun, 443)
+    assert not permitted("blue", "172.28.20.20", "1.1.1.1", 443)
     assert not permitted("blue", "172.28.21.10", idun, 443)
     assert not permitted("blue", "172.28.21.10", "172.28.21.20", 8080)
     assert permitted("blue", "172.28.21.10", "172.28.21.20", 45000, "ESTABLISHED", 5000)
@@ -291,3 +295,46 @@ def test_scan_port_is_validated_in_trusted_config(monkeypatch, port):
     else:
         with pytest.raises(config.ConfigError):
             config.load_config()
+
+
+def operator(tmp_path, monkeypatch, *arguments):
+    monkeypatch.setitem(sys.modules, "firewall", load("firewall"))
+    module = load("start")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["start.py", *arguments])
+    (tmp_path / ".env").write_text(
+        "RED_IP=192.168.0.130\nBLUE_IP=192.168.0.120\n"
+        "IDUN_IP=129.241.121.16\nROUTER_IP=192.168.0.1\n"
+        "GATEWAY_TOKEN=" + "x" * 32 + "\n"
+    )
+    return module
+
+
+def test_operator_refuses_agent_launch_when_firewall_check_fails(tmp_path, monkeypatch):
+    module = operator(tmp_path, monkeypatch, "red", "run")
+    with patch.object(
+        module.subprocess,
+        "run",
+        side_effect=module.subprocess.CalledProcessError(1, "firewall"),
+    ) as run:
+        with pytest.raises(module.subprocess.CalledProcessError):
+            module.main()
+        assert run.call_count == 1
+        assert "--check" in run.call_args.args[0]
+
+
+def test_operator_installs_firewall_before_starting_containers(tmp_path, monkeypatch):
+    module = operator(tmp_path, monkeypatch, "red")
+    monkeypatch.setattr(module.sys, "platform", "linux")
+    monkeypatch.setattr(module.os, "geteuid", lambda: 0)
+    (tmp_path / "secrets").mkdir()
+    (tmp_path / "secrets/idun_key").write_text("dummy-key")
+    with patch.object(module.subprocess, "run") as run:
+        module.main()
+        commands = [call.args[0] for call in run.call_args_list]
+        firewall_index = next(
+            i for i, cmd in enumerate(commands) if str(tmp_path / "firewall.py") in cmd
+        )
+        up_index = next(i for i, cmd in enumerate(commands) if "up" in cmd)
+        assert firewall_index < up_index
+        assert any(cmd[0] == "modprobe" for cmd in commands[:firewall_index])

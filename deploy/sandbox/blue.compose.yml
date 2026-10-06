@@ -22,7 +22,8 @@ services:
     <<: *hardened
     build:
       context: ../..
-      dockerfile: deploy/sandbox/Dockerfile.defender
+      dockerfile: deploy/sandbox/Dockerfile
+      target: defender
     ports:
       - "${BLUE_IP:?Set the BlueAI address}:8080:8080"
     environment:
@@ -49,7 +50,8 @@ services:
     <<: *hardened
     build:
       context: ../..
-      dockerfile: deploy/sandbox/Dockerfile.target
+      dockerfile: deploy/sandbox/Dockerfile
+      target: target
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001
       - /data:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001
@@ -63,7 +65,8 @@ services:
     <<: *hardened
     build:
       context: ../..
-      dockerfile: deploy/sandbox/Dockerfile.gateway
+      dockerfile: deploy/sandbox/Dockerfile
+      target: gateway
     environment:
       IDUN_KEY_FILE: /run/secrets/idun_key
       GATEWAY_TOKEN: ${GATEWAY_TOKEN:?Generate a gateway token}
@@ -75,9 +78,6 @@ services:
     networks:
       lab:
         ipv4_address: 172.28.20.20
-      egress:
-        ipv4_address: 172.28.22.20
-        gw_priority: 1
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=2)"]
       interval: 10s
@@ -104,16 +104,6 @@ networks:
     ipam:
       config:
         - subnet: 172.28.21.0/24
-
-  egress:
-    driver: bridge
-    internal: false
-    enable_ipv6: false
-    driver_opts:
-      com.docker.network.bridge.name: pai-blue-out
-    ipam:
-      config:
-        - subnet: 172.28.22.0/24
 
 secrets:
   idun_key:
