@@ -22,10 +22,14 @@ def remote(destination, repository, role, action, run_id=None):
         or any(c.isspace() for c in destination)
     ):
         raise ValueError("SSH destination must be an alias or user@host")
-    command = ["sudo", "-n", "python3", "deploy/sandbox/start.py", role, action]
+    command = [role, action]
     if run_id:
         command += ["--run-id", run_id]
-    script = f"cd -- {shlex.quote(repository)} && {shlex.join(command)}"
+    script = (
+        f"cd -- {shlex.quote(repository)} && "
+        'sudo -n /usr/bin/python3 "$(pwd)/deploy/sandbox/start.py" '
+        f"{shlex.join(command)}"
+    )
     subprocess.run(
         [
             "ssh",

@@ -48,6 +48,66 @@ same token as `GAMEHOST_LOG_TOKEN`. Set both together. Models still come from ea
 agent's own `.env`. Existing agent-level collector settings are overridden by the
 sandbox's deployment settings.
 
+## Allow the runner's remote sudo commands
+
+The gamehost runner must use your normal gamehost user, so it uses that user's
+SSH aliases and keys. Do not run `src/gamehost/run.py` with sudo. If Docker denies
+access, add the trusted gamehost user to the Docker group and log in again.
+
+On each lab PC, permit passwordless sudo only for the sandbox entry point. The
+examples below use the verified host accounts and `~/purpleAI` paths. If your SSH
+account or checkout differs, adjust both the username and absolute path. These
+are trusted management accounts: the repository code executes with root
+privileges. The agent containers have no mount of that repository or sudo access.
+
+**BlueAI — repository root (`~/purpleAI`):**
+
+```sh
+cd ~/purpleAI
+sudo visudo -f /etc/sudoers.d/purpleai-sandbox
+```
+
+Add this single line:
+
+```text
+blue-ai ALL=(root) NOPASSWD: /usr/bin/python3 /home/blue-ai/purpleAI/deploy/sandbox/start.py blue *
+```
+
+**RedAI — repository root (`~/purpleAI`):**
+
+```sh
+cd ~/purpleAI
+sudo visudo -f /etc/sudoers.d/purpleai-sandbox
+```
+
+Add this single line:
+
+```text
+purpleai ALL=(root) NOPASSWD: /usr/bin/python3 /home/purpleai/purpleAI/deploy/sandbox/start.py red *
+```
+
+`visudo` checks syntax before saving. The rule permits only Python running that
+absolute script path for the corresponding role; the script validates the action
+and run ID. Ordinary sudo commands still require a password.
+
+**BlueAI — repository root (`~/purpleAI`):** verify without a password prompt.
+The collector must be running for the logging check to pass.
+
+```sh
+cd ~/purpleAI
+sudo -n /usr/bin/python3 /home/blue-ai/purpleAI/deploy/sandbox/start.py blue check
+```
+
+**RedAI — repository root (`~/purpleAI`):**
+
+```sh
+cd ~/purpleAI
+sudo -n /usr/bin/python3 /home/purpleai/purpleAI/deploy/sandbox/start.py red check
+```
+
+Update gamehost to the commit containing the absolute-path runner command before
+using these rules. No sudo permissions need to be granted inside containers.
+
 ## Start the collector and lab
 
 **Gamehost — repository root (`~/purpleAI`):** start the collector first.

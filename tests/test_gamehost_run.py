@@ -164,7 +164,7 @@ def test_ssh_quotes_repository_and_keeps_fixed_commands(monkeypatch):
         command = ssh.call_args.args[0]
         assert (
             command[-1]
-            == "cd -- 'purpleAI; echo unsafe' && sudo -n python3 deploy/sandbox/start.py blue check"
+            == "cd -- 'purpleAI; echo unsafe' && sudo -n /usr/bin/python3 \"$(pwd)/deploy/sandbox/start.py\" blue check"
         )
         assert "BatchMode=yes" in command and "StrictHostKeyChecking=yes" in command
         with pytest.raises(ValueError):
