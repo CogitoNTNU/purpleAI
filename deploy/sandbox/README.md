@@ -1,174 +1,134 @@
-# Two-PC lab
+# RedAI and BlueAI sandbox
 
-RedAI (Kali) runs the attacker. BlueAI (Ubuntu) runs the defender and VulnShop.
-Each PC has a small gateway that forwards model calls to Idun and keeps the real
-API key away from the agent.
+RedAI (Kali) runs the attacker and an Idun gateway. BlueAI (Ubuntu) runs the
+defender, VulnShop and its own Idun gateway. Agents use the gateways; only the
+gateways hold real Idun API keys.
 
 ```text
-RedAI:   attacker ───────────────► BlueAI: defender ──► VulnShop
-             │                               │
-         Idun gateway                    Idun gateway
-             │                               │
-             └────────────► Idun ◄────────────┘
+RedAI attacker → BlueAI defender → VulnShop
+      ↓                 ↓
+ Idun gateway      Idun gateway
+      └──────→ Idun ←────┘
 ```
 
-The router and Ethernet wiring stay as they are. Docker contains the processes;
-the PC firewalls restrict where they can connect.
+For the complete setup with gamehost, start with [first-time setup](../../src/gamehost/SETUP.md).
+For an already configured lab, use the [gamehost run guide](../../src/gamehost/README.md).
+This page covers the two lab PCs, including standalone use without gamehost.
 
-## Working directory
+Every host command below runs from **`~/purpleAI`**, the repository root.
+Replace that path if your checkout is elsewhere. Use the same code version on
+all PCs. Run each block only on its named PC.
 
-These commands assume the repository is at `~/purpleAI` on each PC. If you cloned
-it elsewhere, replace `~/purpleAI` with that path in every `cd` command.
-Run host commands from the **repository root**, not `deploy/sandbox`.
-Every command block below starts by changing to that directory.
+## First-time configuration
 
-## First-time setup
+Do this once on each lab PC. Docker Engine, Docker Compose, Git, Python 3,
+OpenSSL and an Idun API key are required. Docker must use its iptables firewall
+backend. Stop any previous PurpleAI stack before starting this sandbox.
 
-Do this on **both PCs**. Docker Engine, Docker Compose and Python 3 must be
-installed. Docker must use its default iptables firewall backend. Stop the old
-PurpleAI containers before starting this setup.
+### 1. Configure the network and gateway
 
-1. **Both PCs — repository root (`~/purpleAI`):** copy the deployment settings,
-   generate a gateway password, and look up Idun's current IPv4 address.
-   `cp -n` preserves an existing `.env`.
-
-   ```sh
-   cd ~/purpleAI
-   cp -n deploy/sandbox/.env.example deploy/sandbox/.env
-   openssl rand -hex 32
-   getent ahostsv4 llm.hpc.ntnu.no
-   nano deploy/sandbox/.env
-   ```
-
-   Check the PC/router addresses, set `IDUN_IP` to a current address from the
-   lookup, and paste the generated password into `GATEWAY_TOKEN`. Use a different
-   password on each PC. Reserve the PC addresses in the router so they stay fixed.
-
-1. **Both PCs — repository root (`~/purpleAI`):** create the key file with your
-   editor. Put **only your Idun API key** in it.
-
-   ```sh
-   cd ~/purpleAI
-   mkdir -p deploy/sandbox/secrets
-   chmod 700 deploy/sandbox/secrets
-   nano deploy/sandbox/secrets/idun_key
-   chmod 444 deploy/sandbox/secrets/idun_key
-   chmod 600 deploy/sandbox/.env
-   ```
-
-   The protected directory prevents other host users reading the key. The file
-   is mounted read-only into the non-root gateway. Keys/settings are Git-ignored
-   and excluded from image builds.
-
-1. Create the agent settings on the appropriate PC. Set `AGENT_MODEL` to any
-   model available on Idun. If reusing an existing attacker `.env`, rename
-   `IDUN_MODEL` to `AGENT_MODEL`.
-
-   **RedAI only — repository root (`~/purpleAI`):**
-
-   ```sh
-   cd ~/purpleAI
-   cp -n src/nmap-agent/.env.example src/nmap-agent/.env
-   nano src/nmap-agent/.env
-   chmod 600 src/nmap-agent/.env
-   ```
-
-   **BlueAI only — repository root (`~/purpleAI`):**
-
-   ```sh
-   cd ~/purpleAI
-   cp -n src/defender/defender-agent/.env.example src/defender/defender-agent/.env
-   nano src/defender/defender-agent/.env
-   chmod 600 src/defender/defender-agent/.env
-   ```
-
-   Docker reads each agent's `.env` when creating its container. The sandbox
-   overrides the API address, API key and target with its protected gateway
-   settings. The agent does not need a real Idun key in its `.env` for sandbox use.
-   Deployment `.env` contains only network and gateway settings; remove its old
-   model setting. There is no legacy model fallback or model allowlist.
-
-## Start and check
-
-**BlueAI — repository root (`~/purpleAI`):** start the defender and target.
+**RedAI and BlueAI — separately on each PC, repository root:**
 
 ```sh
 cd ~/purpleAI
-sudo python3 deploy/sandbox/start.py blue start
+cp -n deploy/sandbox/.env.example deploy/sandbox/.env
+openssl rand -hex 32
+getent ahostsv4 llm.hpc.ntnu.no
+nano deploy/sandbox/.env
 ```
 
-**RedAI — repository root (`~/purpleAI`):** start the gateway and build the
-attacker. This does not run the attacker yet.
+`cp -n` preserves an existing file. Set these deployment values:
+
+| Setting              | What to enter                                            |
+| -------------------- | -------------------------------------------------------- |
+| `RED_IP`             | RedAI's LAN IPv4 address, currently `192.168.0.130`      |
+| `BLUE_IP`            | BlueAI's LAN IPv4 address, currently `192.168.0.120`     |
+| `ROUTER_IP`          | Router's LAN address, currently `192.168.0.1`            |
+| `IDUN_IP`            | One current IPv4 address from the lookup above           |
+| `GATEWAY_TOKEN`      | The generated token; use a different token on each PC    |
+| `GATEWAY_CALL_LIMIT` | Keep the default unless you need a different call budget |
+
+Reserve the PC addresses in the router so they stay fixed. The Docker subnets
+`172.28.10.0/24`, `172.28.20.0/24` and `172.28.21.0/24` must not overlap your LAN
+or VPN networks.
+
+For gamehost runs, configure `GAMEHOST_IP` and `LOG_COLLECTOR_TOKEN` using the
+[gamehost setup instructions](../../src/gamehost/SETUP.md#2-configure-the-collector-and-agent-delivery)
+before starting either stack. Leave both empty for standalone use.
+
+### 2. Store the Idun key
+
+**RedAI and BlueAI — separately on each PC, repository root:**
 
 ```sh
 cd ~/purpleAI
-sudo python3 deploy/sandbox/start.py red start
+mkdir -p deploy/sandbox/secrets
+chmod 700 deploy/sandbox/secrets
+nano deploy/sandbox/secrets/idun_key
+chmod 444 deploy/sandbox/secrets/idun_key
+chmod 600 deploy/sandbox/.env
 ```
 
-Startup enables bridge filtering and installs the firewall using deployment
-`.env` settings before starting containers. It refuses to rewrite rules while
-the lab is running: stop that PC's stack before restarting it.
+Put only the Idun API key in `secrets/idun_key`. The directory limits host access;
+the key file is mounted read-only into the non-root gateway. Secrets and `.env`
+files are excluded from Git and Docker image builds.
 
-Run the connection checks on **both PCs** before using the attacker.
+### 3. Choose the agent models
 
-**BlueAI — repository root (`~/purpleAI`):**
+**RedAI — repository root:**
 
 ```sh
 cd ~/purpleAI
-sudo python3 deploy/sandbox/start.py blue check
-```
-
-**RedAI — repository root (`~/purpleAI`):**
-
-```sh
-cd ~/purpleAI
-sudo python3 deploy/sandbox/start.py red check
-```
-
-**RedAI — repository root (`~/purpleAI`):** when ready, run the attacker.
-
-```sh
-cd ~/purpleAI
-sudo python3 deploy/sandbox/start.py red run
-```
-
-## Change a model
-
-**RedAI — repository root (`~/purpleAI`):** edit `AGENT_MODEL`; the next attacker
-run reads the updated value. The gateway must already be running.
-
-```sh
-cd ~/purpleAI
+cp -n src/nmap-agent/.env.example src/nmap-agent/.env
 nano src/nmap-agent/.env
-sudo python3 deploy/sandbox/start.py red run
+chmod 600 src/nmap-agent/.env
 ```
 
-**BlueAI — repository root (`~/purpleAI`):** edit `AGENT_MODEL`, then stop and
-recreate the defender. Stopping also discards the target's temporary data.
+**BlueAI — repository root:**
 
 ```sh
 cd ~/purpleAI
+cp -n src/defender/defender-agent/.env.example src/defender/defender-agent/.env
 nano src/defender/defender-agent/.env
+chmod 600 src/defender/defender-agent/.env
+```
+
+Set `AGENT_MODEL` to any available Idun model in each agent's `.env`. Both defender
+checks currently use that defender model. The sandbox supplies the target,
+gateway address and gateway token automatically. Agent `.env` files only need
+the model; deployment `.env` holds network and gateway settings.
+
+## Start or rebuild the lab
+
+When logging is enabled, [start the collector on gamehost first](../../src/gamehost/README.md#run-an-experiment).
+Use the same sequence for initial startup, code updates, deployment setting
+changes, or recovery after a PC/Docker restart.
+
+Stop/start rebuilds the images and installs the firewall before launching
+containers. Startup refuses to change firewall rules while a lab stack is
+running. **Stopping BlueAI discards VulnShop's temporary database, uploads and
+reports.** Finish any active experiment first.
+
+**BlueAI — repository root:**
+
+```sh
+cd ~/purpleAI
 sudo python3 deploy/sandbox/start.py blue stop
 sudo python3 deploy/sandbox/start.py blue start
 sudo python3 deploy/sandbox/start.py blue check
 ```
 
-Startup rebuilds the images, so use stop/start after updating this branch too.
+**RedAI — repository root:**
 
-## Gamehost runs and logging
+```sh
+cd ~/purpleAI
+sudo python3 deploy/sandbox/start.py red stop
+sudo python3 deploy/sandbox/start.py red start
+sudo python3 deploy/sandbox/start.py red check
+```
 
-To control runs from gamehost and include normal traffic, follow the
-[gamehost guide](../../src/gamehost/README.md). The collector runs in Docker on
-gamehost; the run command uses host SSH to coordinate the lab.
-
-Set `GAMEHOST_IP` and `LOG_COLLECTOR_TOKEN` together in deployment `.env` on both
-PCs, then stop/start both stacks to apply the changed firewall. Leaving both
-empty preserves the standalone setup. When enabled, only the agents can send to
-gamehost TCP 8765, and gamehost can reach the defender on BlueAI TCP 8080.
-Connection checks also send an authenticated test event to the collector.
-Every result identifies the PC and container making the connection, including
-when the checks are launched from gamehost:
+RedAI startup builds the attacker image but does not run the attacker.
+Every check should show `PASS`; an expected `unreachable` result is a pass:
 
 ```text
 PASS [BlueAI / defender] model-gateway:9000: reachable
@@ -176,61 +136,124 @@ PASS [BlueAI / vulnerable-app] 192.168.0.110:8765: unreachable
 PASS [RedAI / attacker] 192.168.0.120:8080: reachable
 ```
 
-## Other commands
+Each label identifies the PC and container initiating the connection. Checks
+verify the firewall, TCP reachability and authenticated collector delivery when
+enabled. They do not perform a model inference call. A failed connection can
+mean either filtering or no service listening.
 
-Run each command below from the **repository root (`~/purpleAI`)** on the listed
-PC. Run `cd ~/purpleAI` first if your terminal is in another directory.
+## Run and view the app
 
-| PC     | Full command                                     | Purpose                                           |
-| ------ | ------------------------------------------------ | ------------------------------------------------- |
-| RedAI  | `sudo python3 deploy/sandbox/start.py red shell` | Open a manual shell inside the attacker container |
-| RedAI  | `sudo python3 deploy/sandbox/start.py red logs`  | Show the last 100 log lines                       |
-| BlueAI | `sudo python3 deploy/sandbox/start.py blue logs` | Show the last 100 log lines                       |
-| RedAI  | `sudo python3 deploy/sandbox/start.py red stop`  | Stop the RedAI stack and discard temporary data   |
-| BlueAI | `sudo python3 deploy/sandbox/start.py blue stop` | Stop the BlueAI stack and discard temporary data  |
+For shared run IDs, normal traffic and collected events, use the
+[gamehost runner](../../src/gamehost/README.md#run-an-experiment).
 
-The manual shell opens **inside the attacker container**, initially in `/app`.
-Type `exit` to return to the host terminal.
+For a standalone attacker run, first pass both PCs' checks above.
+**RedAI — repository root:**
 
-Use this entry point instead of direct Compose commands: agent launches and
-connection checks verify the firewall first. After a PC reboot or Docker/firewall
-restart, stop/start the lab on that PC and repeat both PCs' connection checks.
-Firewall rules remain after stopping; startup reinstalls them.
+```sh
+cd ~/purpleAI
+sudo python3 deploy/sandbox/start.py red run
+```
 
-## What is protected
+From a browser on **RedAI or the configured gamehost**, open
+`http://192.168.0.120:8080` (replace the address if `BLUE_IP` differs).
+This reaches VulnShop through the defender. Other LAN machines are blocked by the
+sandbox policy; VulnShop's internal port 5000 is not published.
 
-| Component | May initiate connections to                                           |
-| --------- | --------------------------------------------------------------------- |
-| Attacker  | BlueAI port 8080; its local Idun gateway; optional gamehost port 8765 |
-| Defender  | VulnShop; its local Idun gateway; optional gamehost port 8765         |
-| VulnShop  | Nothing; it may reply to the defender                                 |
-| Gateways  | The configured Idun address on HTTPS port 443                         |
+## Change a model without rebuilding
 
-Only BlueAI port 8080 is published. RedAI may reach it; the configured gamehost
-may also reach it when gamehost integration is enabled. The firewall
-blocks other container access to the host, router, LAN, internet, and IPv6.
-VulnShop is on a separate internal network, so the attacker cannot bypass the
-defender. External DNS is disabled for containers; Idun uses a fixed hosts entry.
+**RedAI — repository root:** edit the attacker model. Its next run reads the file.
 
-Containers run as non-root, without capabilities or privilege escalation, with
-read-only images and bounded temporary storage, CPU, memory, processes, and logs.
-No host source directories, home directories, or Docker socket are mounted.
-The existing agent tools remain; this does not add autonomous shell execution or
-code-edit/restart tools. The attacker scan is scoped to port 8080.
+```sh
+cd ~/purpleAI
+nano src/nmap-agent/.env
+```
 
-Gateway calls use non-streaming chat completions,
-2048 output tokens, and one call at a time. Overlapping requests wait up to
-10 seconds for the active call to finish; if still busy, the gateway returns 429.
-`GATEWAY_CALL_LIMIT` limits attempts
-per gateway process lifetime; restarting it resets the count. Use synthetic lab
-data: requests may reach Idun and appear in defender logs.
+**BlueAI — repository root:** edit the defender model and recreate only the
+defender. This preserves VulnShop's data. The next gamehost run also recreates
+the defender automatically.
 
-The checks test TCP reachability and, when configured, authenticated collector
-delivery. They do not test authenticated model inference. A failed connection
-may also mean no service is listening. Confirm blocked probes increase the DROP
-counters with these read-only host commands.
+```sh
+cd ~/purpleAI
+nano src/defender/defender-agent/.env
+sudo python3 deploy/sandbox/start.py blue session
+```
 
-**RedAI — repository root (`~/purpleAI`):**
+Model-only changes need no image rebuild. For code or deployment setting changes,
+use [stop/start](#start-or-rebuild-the-lab).
+
+## Logs, shell and shutdown
+
+**BlueAI — repository root:** show the last 100 stack log lines.
+
+```sh
+cd ~/purpleAI
+sudo python3 deploy/sandbox/start.py blue logs
+```
+
+**RedAI — repository root:** show gateway logs. The attacker transcript appears
+in the terminal that launches it; run containers are removed when they finish.
+
+```sh
+cd ~/purpleAI
+sudo python3 deploy/sandbox/start.py red logs
+```
+
+**RedAI — repository root:** open a manual shell in the attacker container.
+The shell starts in `/app`; enter `exit` to return to the host.
+
+```sh
+cd ~/purpleAI
+sudo python3 deploy/sandbox/start.py red shell
+```
+
+**RedAI — repository root:** stop its stack.
+
+```sh
+cd ~/purpleAI
+sudo python3 deploy/sandbox/start.py red stop
+```
+
+**BlueAI — repository root:** stop its stack and discard temporary target data.
+
+```sh
+cd ~/purpleAI
+sudo python3 deploy/sandbox/start.py blue stop
+```
+
+Firewall rules remain after shutdown and are reinstalled at startup. Use
+`start.py` for sandbox operations so agent launches and checks verify the policy.
+For interrupted gamehost runs, follow [recovery](../../src/gamehost/README.md#stop-and-recover).
+
+## Isolation and limits
+
+| Component | May initiate connections to                                |
+| --------- | ---------------------------------------------------------- |
+| Attacker  | BlueAI port 8080; its gateway; optional gamehost port 8765 |
+| Defender  | VulnShop; its gateway; optional gamehost port 8765         |
+| VulnShop  | Nothing; it may reply to the defender                      |
+| Gateways  | Configured Idun IPv4 address on HTTPS port 443             |
+
+Containers run as non-root with read-only images, dropped capabilities, no
+privilege escalation and bounded resources. Host source directories, home
+folders and the Docker socket are not mounted. The firewall blocks other
+container access to the host, router, LAN, internet and IPv6. VulnShop's separate
+internal network prevents direct attacker access. External container DNS is
+disabled; the gateway resolves Idun through a fixed hosts entry.
+
+Each gateway permits one model call at a time. Overlapping requests wait up to
+10 seconds, then return 429 if still busy. Output is limited to 2048 tokens.
+`GATEWAY_CALL_LIMIT` counts attempts for the gateway process lifetime, including
+failed calls; only restarting the gateway resets it. Starting a gamehost run does
+not reset this budget.
+
+Use synthetic lab data: requests reach Idun and may appear in logs. Containers
+share the host kernel; broader tools such as kernel exploits require a stronger
+boundary, such as disposable VMs. The current attacker scans only port 8080.
+
+If Idun's IPv4 address changes, stop both stacks, update `IDUN_IP` on each PC,
+then start/check both again. To inspect firewall DROP counters:
+
+**RedAI — repository root:**
 
 ```sh
 cd ~/purpleAI
@@ -238,30 +261,10 @@ sudo iptables -nvL PAI_RED_FWD
 sudo iptables -nvL PAI_RED_HOST
 ```
 
-**BlueAI — repository root (`~/purpleAI`):**
+**BlueAI — repository root:**
 
 ```sh
 cd ~/purpleAI
 sudo iptables -nvL PAI_BLUE_FWD
 sudo iptables -nvL PAI_BLUE_HOST
 ```
-
-Verify BlueAI port 8080 is blocked from a third LAN machine before granting broader
-tools. These runtime checks are still needed
-on the actual PCs. Containers share the host kernel; use disposable VMs for
-kernel exploits or privileged tools.
-
-## Files
-
-- `red.compose.yml` / `blue.compose.yml`: services, limits and networks.
-- `Dockerfile`: builds the four service images from named stages.
-- `gateway.py`: fixed Idun forwarding and request limits.
-- `firewall.py`: permitted connections and host protection.
-- `start.py`: operator commands; `check_network.py`: TCP checks.
-
-Only three Docker subnets are used: `172.28.10.0/24` on RedAI and
-`172.28.20.0/24` / `172.28.21.0/24` on BlueAI. They must not overlap your networks.
-If Idun's address changes, stop both stacks, update `IDUN_IP`, and start/check again.
-
-For implementation details, see [Docker's firewall documentation](https://docs.docker.com/engine/network/packet-filtering-firewalls/).
-UFW alone does not protect Docker-published ports.

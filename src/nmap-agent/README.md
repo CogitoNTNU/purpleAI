@@ -9,14 +9,9 @@ model changes, logs, and shutdown. Choose any Idun model using `AGENT_MODEL` in
 this folder's `.env`. Docker overrides the target, port, API address and API key
 with sandbox settings; the real Idun key stays in the gateway.
 
-**RedAI — repository root (`~/purpleAI`):** run the attacker after the gateway is
-started and both PCs pass their connection checks. Replace `~/purpleAI` if your
-checkout is elsewhere.
-
-```sh
-cd ~/purpleAI
-sudo python3 deploy/sandbox/start.py red run
-```
+Use the [gamehost runner](../gamehost/README.md#run-an-experiment) for coordinated
+runs with normal traffic and a shared run ID. For standalone use, follow
+[running the attacker](../../deploy/sandbox/README.md#run-and-view-the-app).
 
 ## Files
 

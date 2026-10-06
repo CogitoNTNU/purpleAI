@@ -10,8 +10,9 @@ The checks are in the `AGENTS` list. Both currently use the same model, chosen b
 Docker injects these settings and overrides the target, API address and API key
 with sandbox values. The real Idun key is held by the gateway.
 
-Follow the [sandbox guide](../../../deploy/sandbox/README.md) for setup and model
-changes. The shared sandbox Dockerfile builds this agent; no separate Dockerfile
+Follow the [sandbox guide](../../../deploy/sandbox/README.md) for setup and
+[model changes](../../../deploy/sandbox/README.md#change-a-model-without-rebuilding).
+The shared sandbox Dockerfile builds this agent; no separate Dockerfile
 or dependency export is needed here.
 
 **BlueAI — repository root (`~/purpleAI`):** view defender and stack logs.
@@ -23,8 +24,9 @@ sudo python3 deploy/sandbox/start.py blue logs
 ```
 
 Diagnostics use Python `logging` on stderr: forwarding and blocking are `INFO`,
-and model or target failures are `ERROR`. LLM classification can make mistakes, so use synthetic lab
-traffic. This proxy detects and blocks requests; it does not patch target code.
+and model or target failures are `ERROR`. LLM classification can make mistakes,
+so use synthetic lab traffic. This proxy detects and blocks requests; it does
+not patch target code.
 
 Structured events are also sent to the collector when gamehost logging is enabled
 in deployment `.env`. The [gamehost runner](../../gamehost/README.md) assigns a

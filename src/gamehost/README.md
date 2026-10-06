@@ -1,196 +1,64 @@
-# Gamehost: runs, normal traffic and logs
+# Run experiments from gamehost
 
-Gamehost runs the collector and normal-traffic containers. A small host-side
-Python script coordinates RedAI and BlueAI over SSH. SSH keys stay on gamehost;
-the collector only accepts events and never runs commands.
+Gamehost runs the log collector and normal-traffic containers. The host-side
+runner coordinates RedAI and BlueAI over SSH. The collector only stores events;
+it does not run commands.
 
-All commands below assume the repository is `~/purpleAI`. Replace that path if
-your checkout is elsewhere. All three PCs must have this branch's code.
+For a new installation, follow [first-time setup](SETUP.md). SSH, Docker access
+and passwordless sudo are configured there once. For an existing installation,
+use the commands below. All blocks run from **`~/purpleAI`**, the repository root,
+on the named PC. Replace that directory if your checkout is elsewhere.
 
-## First-time setup
+## Run an experiment
 
-**Gamehost — repository root (`~/purpleAI`):**
-
-```sh
-cd ~/purpleAI
-cp -n src/gamehost/.env.example src/gamehost/.env
-openssl rand -hex 32
-nano src/gamehost/.env
-chmod 600 src/gamehost/.env
-```
-
-Set these values in `src/gamehost/.env`:
-
-| Setting                | Value                                                          |
-| ---------------------- | -------------------------------------------------------------- |
-| `GAMEHOST_LOG_BIND`    | Gamehost's LAN IPv4 address, for example `192.168.0.110`       |
-| `GAMEHOST_LOG_TOKEN`   | The generated token                                            |
-| `RED_SSH` / `BLUE_SSH` | SSH aliases or `user@PC-address` reachable from gamehost       |
-| `REMOTE_REPO`          | Repository path on both lab PCs; `purpleAI` means `~/purpleAI` |
-| `BLUE_IP`              | BlueAI's LAN address, for example `192.168.0.120`              |
-
-Docker Engine, Compose, Python 3 and SSH must be available on gamehost. Your host
-user must be able to run Docker. Confirm SSH keys and host keys by connecting to
-each PC once from gamehost. The runner uses non-interactive SSH and `sudo -n`;
-the SSH users need permission to run the sandbox entry point without a password.
-Keep that management access outside the agent containers. If it fails, configure
-SSH/sudo on the hosts before starting an experiment.
-
-**RedAI and BlueAI — repository root (`~/purpleAI`), separately on each PC:**
+**Gamehost — repository root:** first ensure the collector is running.
+Use your normal management user for all gamehost commands.
 
 ```sh
 cd ~/purpleAI
-nano deploy/sandbox/.env
+docker compose --env-file src/gamehost/.env -f src/gamehost/docker-compose.yml up -d --wait collector
 ```
 
-Add `GAMEHOST_IP` with gamehost's LAN address and `LOG_COLLECTOR_TOKEN` with the
-same token as `GAMEHOST_LOG_TOKEN`. Set both together. Models still come from each
-agent's own `.env`. Existing agent-level collector settings are overridden by the
-sandbox's deployment settings.
+The RedAI and BlueAI stacks must also be running. If stopped or updated,
+[start and check them now](../../deploy/sandbox/README.md#start-or-rebuild-the-lab).
+Already running stacks need no restart between experiments.
 
-## Allow the runner's remote sudo commands
-
-The gamehost runner must use your normal gamehost user, so it uses that user's
-SSH aliases and keys. Do not run `src/gamehost/run.py` with sudo. If Docker denies
-access, add the trusted gamehost user to the Docker group and log in again.
-
-On each lab PC, permit passwordless sudo only for the sandbox entry point. The
-examples below use the verified host accounts and `~/purpleAI` paths. If your SSH
-account or checkout differs, adjust both the username and absolute path. These
-are trusted management accounts: the repository code executes with root
-privileges. The agent containers have no mount of that repository or sudo access.
-
-**BlueAI — repository root (`~/purpleAI`):**
-
-```sh
-cd ~/purpleAI
-sudo visudo -f /etc/sudoers.d/purpleai-sandbox
-```
-
-Add this single line:
-
-```text
-blue-ai ALL=(root) NOPASSWD: /usr/bin/python3 /home/blue-ai/purpleAI/deploy/sandbox/start.py blue *
-```
-
-**RedAI — repository root (`~/purpleAI`):**
-
-```sh
-cd ~/purpleAI
-sudo visudo -f /etc/sudoers.d/purpleai-sandbox
-```
-
-Add this single line:
-
-```text
-purpleai ALL=(root) NOPASSWD: /usr/bin/python3 /home/purpleai/purpleAI/deploy/sandbox/start.py red *
-```
-
-`visudo` checks syntax before saving. The rule permits only Python running that
-absolute script path for the corresponding role; the script validates the action
-and run ID. Ordinary sudo commands still require a password.
-
-**BlueAI — repository root (`~/purpleAI`):** verify without a password prompt.
-The collector must be running for the logging check to pass.
-
-```sh
-cd ~/purpleAI
-sudo -n /usr/bin/python3 /home/blue-ai/purpleAI/deploy/sandbox/start.py blue check
-```
-
-**RedAI — repository root (`~/purpleAI`):**
-
-```sh
-cd ~/purpleAI
-sudo -n /usr/bin/python3 /home/purpleai/purpleAI/deploy/sandbox/start.py red check
-```
-
-Update gamehost to the commit containing the absolute-path runner command before
-using these rules. No sudo permissions need to be granted inside containers.
-
-## Start the collector and lab
-
-**Gamehost — repository root (`~/purpleAI`):** start the collector first.
-
-```sh
-cd ~/purpleAI
-docker compose --env-file src/gamehost/.env -f src/gamehost/docker-compose.yml up --build -d --wait collector
-```
-
-The collector listens on gamehost port **8765**. It requires the token, validates
-JSON events, prints them immediately, and saves them in a persistent Docker
-volume. It runs as non-root with a read-only image. This is a plain HTTP service
-for the controlled lab LAN; do not forward its port through the router.
-
-**BlueAI — repository root (`~/purpleAI`):** stop/start to install the new policy
-and rebuild the defender. Stopping discards temporary target data.
-
-```sh
-cd ~/purpleAI
-sudo python3 deploy/sandbox/start.py blue stop
-sudo python3 deploy/sandbox/start.py blue start
-sudo python3 deploy/sandbox/start.py blue check
-```
-
-**RedAI — repository root (`~/purpleAI`):**
-
-```sh
-cd ~/purpleAI
-sudo python3 deploy/sandbox/start.py red stop
-sudo python3 deploy/sandbox/start.py red start
-sudo python3 deploy/sandbox/start.py red check
-```
-
-Checks now verify authenticated event delivery as well as network reachability.
-Both agents may send logs only to gamehost port 8765. Gamehost may send normal
-traffic only to BlueAI's defender port 8080. VulnShop and model gateways cannot
-connect to the collector. See the [sandbox guide](../../deploy/sandbox/README.md)
-for the rest of first-time lab setup.
-
-## Start one run
-
-**Gamehost — repository root (`~/purpleAI`):**
+**Gamehost — repository root:** start one experiment. Do not use sudo.
 
 ```sh
 cd ~/purpleAI
 python3 src/gamehost/run.py
 ```
 
-This command:
+The runner:
 
-1. Checks the collector, SSH access, and both sandboxes.
-1. Creates a shared run ID and recreates the defender with it.
-1. Checks a normal request through the defender.
-1. Starts one k6 user browsing ordinary shop pages while the Nmap agent runs.
-1. Stops normal traffic, cancels any remaining attacker container, and returns the
-   defender to a separate session after completion, errors, or Ctrl+C.
+1. Checks collector availability, both sandbox policies and event delivery.
+1. Assigns a shared run ID and recreates the defender for that run.
+1. Verifies a request through the defender, then starts normal browsing traffic.
+1. Runs the Nmap attacker on RedAI against BlueAI port 8080.
+1. Stops traffic and recreates the defender in a separate session at the end.
 
-The collector stays running. The target's database is preserved between runs.
-A local lock prevents overlapping runs from this gamehost. Use this runner for
-experiments instead of starting additional attackers manually.
+Normal traffic visits `/`, `/search`, `/product/1`, `/login` and `/register`, using
+one user and sequential requests. The runner stops it when the attacker finishes.
+Only one gamehost run may be active at a time. Avoid launching extra attackers
+manually during a managed run.
 
-The run ID groups gamehost markers, attacker actions, and defender decisions.
-Normal requests are tagged in defender events. These tags and agent events are
-untrusted observations, not instructions or proof of attack success. A successful
-run means execution completed, not that every normal request was accepted.
+`Finished: RUN_ID` and a `run_end` event with `status: success` mean the workflow
+completed. Check defender events to assess decisions and model errors; a
+successful workflow does not mean every request returned 200. The collector and
+lab stacks stay running, and VulnShop data is preserved between experiments.
 
-The runner pulls the pinned k6 image before starting the experiment. Normal
-traffic uses one user, sequential requests and a three-second pause; its emergency
-maximum duration is 24 hours. The runner normally stops it as soon as the attacker
-ends. A killed process or lost SSH connection may prevent cleanup; recovery
-commands are below.
+## View logs and save events
 
-## View logs and saved events
-
-**Gamehost — repository root (`~/purpleAI`):** follow live events. Ctrl+C exits log
-viewing without stopping the collector.
+**Gamehost — repository root:** follow live collected events. Ctrl+C stops viewing
+without stopping the collector.
 
 ```sh
 cd ~/purpleAI
 docker compose --env-file src/gamehost/.env -f src/gamehost/docker-compose.yml logs -f --tail 100 collector
 ```
 
-**Gamehost — repository root (`~/purpleAI`):** export the saved JSON lines.
+**Gamehost — repository root:** export all saved events to a local JSONL file.
 
 ```sh
 cd ~/purpleAI
@@ -198,51 +66,121 @@ mkdir -p src/gamehost/data
 docker compose --env-file src/gamehost/.env -f src/gamehost/docker-compose.yml exec -T collector cat /data/events.jsonl > src/gamehost/data/events.jsonl
 ```
 
-Both agents use the shared sender in `src/purpleai/event_logging.py`. Structured
-events are printed as JSON and sent directly to the collector; Python `logging`
-handles diagnostic messages on stderr. Diagnostic messages and the attacker's
-readable transcript remain in container output; they are not sent as experiment
-events. Connection check results identify both the PC and container, for example
-`PASS [BlueAI / defender] model-gateway:9000: reachable`.
+The shared `run_id` groups gamehost markers, attacker actions and defender
+request decisions. Preflight `sandbox-check` events and the defender's separate
+session after cleanup have their own IDs. Normal traffic is labelled `normal`;
+other requests are labelled `other`.
 
-Events include IDs, UTC timestamps, actions and statuses. Defender events include
-method, path, decision and response status. Model failures also include
-`error_type`, `model_http_status` (null when there is no HTTP response), and a safe
-`error_reason`, such as `Gateway busy` or `Model request timed out`. These details
-persist in the collector after the defender is recreated. Raw exception messages,
-response bodies and API keys are not included. Agent delivery is best effort: an unavailable collector does not stop
-an agent, and missed events are not replayed. The preflight check catches incorrect
-tokens or unreachable collectors before a run.
+Defender model failures have `status: model_error`, `http_status: 403`,
+`error_type`, `model_http_status` and a safe `error_reason`. The model status is
+null when there was no HTTP response. A 404 with `status: forwarded` is a target
+response, often from an Nmap probe to an unknown path; it is not a model error.
 
-Saved events persist when the collector stops. The JSONL file grows until you
-archive or clear it; Docker's separate console logs rotate automatically.
+Both agents print structured JSON and send it directly to the collector.
+Diagnostics use Python `logging` on stderr. The attacker's readable transcript
+and diagnostic messages stay in console output; they are not collector events.
+Use the [sandbox log commands](../../deploy/sandbox/README.md#logs-shell-and-shutdown)
+for stack diagnostics. Attacker run containers are removed after completion.
 
-## Stop and recover
+Delivery is best effort with a 0.5-second send timeout, no queue and no retries.
+Missing events are not replayed. Raw exception messages, request/response bodies
+and API keys are not included in structured events. Agent events and traffic tags
+are observations, not proof of attack success.
 
-**Gamehost — repository root (`~/purpleAI`):** stop the collector while preserving
-saved events.
+Saved events live in the collector's Docker volume and survive container
+recreation and shutdown. The JSONL file grows until archived or cleared;
+Docker's separate console logs rotate automatically.
+
+## Update code or models
+
+Update all three checkouts to the same code version between experiments.
+For agent, gateway, target or sandbox changes,
+[stop/start both lab stacks](../../deploy/sandbox/README.md#start-or-rebuild-the-lab).
+This rebuilds their images; stopping BlueAI clears temporary target data.
+
+The gamehost runner reads its Python source on each invocation. If collector code
+or its Compose configuration changed, rebuild it too. **Gamehost — repository root:**
 
 ```sh
 cd ~/purpleAI
-docker compose --env-file src/gamehost/.env -f src/gamehost/docker-compose.yml down
+docker compose --env-file src/gamehost/.env -f src/gamehost/docker-compose.yml up --build -d --wait collector
 ```
 
-After an interrupted run, use the displayed run ID to find any remaining normal
-traffic container named `purpleai-traffic-RUN_ID` and stop it with
-`docker stop purpleai-traffic-RUN_ID` on gamehost. Do not delete the events volume
-unless you intend to discard saved logs.
+For model-only changes, edit each agent's `AGENT_MODEL` as described in the
+[sandbox guide](../../deploy/sandbox/README.md#change-a-model-without-rebuilding).
+The next managed run reads both agents' updated model settings. Existing SSH and
+sudo permissions do not need to be reapplied after code updates or reboots.
 
-**RedAI — repository root (`~/purpleAI`):** cancel any remaining managed attacker.
+## If a check fails
+
+Each line identifies the origin, for example:
+
+```text
+PASS [BlueAI / defender] model-gateway:9000: reachable
+PASS [BlueAI / vulnerable-app] 192.168.0.110:8765: unreachable
+```
+
+`PASS ... unreachable` means an intended restriction held. `FAIL` stops the run;
+the Python traceback reports that failed check.
+
+| Symptom                                              | What to check                                                                                                                                                            |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Both agents cannot reach gamehost port 8765          | Start the collector using the first command block above. Check its health as shown below.                                                                                |
+| Collector reachable but authenticated event rejected | `LOG_COLLECTOR_TOKEN` on both PCs must match gamehost's `GAMEHOST_LOG_TOKEN`. After changing deployment settings, stop/start both lab stacks.                            |
+| SSH alias works manually but fails in the runner     | Run `python3 src/gamehost/run.py` as the normal gamehost user, without sudo. Check `RED_SSH` and `BLUE_SSH` in its `.env`.                                               |
+| `sudo: a password is required`                       | Check the account and absolute script path in the [one-time sudo rules](SETUP.md#passwordless-sudo-on-the-lab-pcs). No restart is required.                              |
+| Defender returns 403 with `status: model_error`      | Read `error_reason` and `model_http_status` in the saved event. `Gateway busy` means the 10-second wait expired; `Run call budget exhausted` requires a gateway restart. |
+
+**Gamehost — repository root:** inspect collector state and health. Replace the
+address if `GAMEHOST_LOG_BIND` differs.
+
+```sh
+cd ~/purpleAI
+docker compose --env-file src/gamehost/.env -f src/gamehost/docker-compose.yml ps collector
+curl --max-time 5 http://192.168.0.110:8765/health
+```
+
+Health should return `ok`. If not, inspect collector logs with the command above.
+If health succeeds but agents still cannot connect, check addresses and host
+firewall rules; the agent token is not used by a TCP reachability test.
+
+## Stop and recover
+
+After a normal run, cleanup is automatic. After a killed runner or lost SSH
+connection, check for remaining traffic and attacker containers.
+
+**Gamehost — repository root:** list traffic containers and stop the one matching
+the interrupted run. Replace `RUN_ID` with the ID printed by that run.
+
+```sh
+cd ~/purpleAI
+docker ps --filter name=purpleai-traffic --format '{{.Names}}'
+docker stop purpleai-traffic-RUN_ID
+```
+
+**RedAI — repository root:** cancel remaining managed attackers.
 
 ```sh
 cd ~/purpleAI
 sudo python3 deploy/sandbox/start.py red cancel
 ```
 
-**BlueAI — repository root (`~/purpleAI`):** restore an independent defender
-session while preserving target data.
+**BlueAI — repository root:** restore a separate defender session while preserving
+target data.
 
 ```sh
 cd ~/purpleAI
 sudo python3 deploy/sandbox/start.py blue session
 ```
+
+**Gamehost — repository root:** stop its Compose stack while preserving saved
+events. Stop any one-off traffic container using the block above first.
+
+```sh
+cd ~/purpleAI
+docker compose --env-file src/gamehost/.env -f src/gamehost/docker-compose.yml down
+```
+
+Stop the lab stacks separately using the
+[sandbox shutdown commands](../../deploy/sandbox/README.md#logs-shell-and-shutdown).
+Do not add `--volumes` to gamehost shutdown unless you intend to delete saved logs.
