@@ -62,7 +62,7 @@ def load_config(env_file: str = ".env") -> Config:
     load_dotenv(env_file)
 
     required = {}
-    for name in ("TARGET_URL", "IDUN_BASE_URL", "IDUN_API_KEY", "IDUN_MODEL"):
+    for name in ("TARGET_URL", "IDUN_BASE_URL", "IDUN_API_KEY", "AGENT_MODEL"):
         value = os.environ.get(name, "").strip()
         if not value:
             raise ConfigError(
@@ -117,7 +117,7 @@ def load_config(env_file: str = ".env") -> Config:
         target_host=target_host,
         idun_base_url=required["IDUN_BASE_URL"].rstrip("/"),
         idun_api_key=required["IDUN_API_KEY"],
-        idun_model=required["IDUN_MODEL"],
+        idun_model=required["AGENT_MODEL"],
         nmap_timeout=120,
         log_collector_url=log_collector_url,
         log_collector_token=log_collector_token,

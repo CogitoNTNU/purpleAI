@@ -16,7 +16,6 @@ def create_app():
     app.config["MAX_CONTENT_LENGTH"] = 256 * 1024
     key = Path(os.environ["IDUN_KEY_FILE"]).read_text().strip()
     token = os.environ["GATEWAY_TOKEN"]
-    model = os.environ["IDUN_MODEL"]
     if not key or len(token) < 32:
         raise ValueError(
             "An Idun key and gateway token of at least 32 characters are required"
@@ -44,9 +43,13 @@ def create_app():
         ):
             return jsonify(error="Unauthorized"), 401
         payload = request.get_json(silent=True)
-        if not isinstance(payload, dict) or payload.get("model") != model:
-            return jsonify(error="Configured model required"), 400
-        allowed = {
+        if (
+            not isinstance(payload, dict)
+            or not isinstance(payload.get("model"), str)
+            or not payload["model"].strip()
+        ):
+            return jsonify(error="A model ID is required"), 400
+        allowed_fields = {
             "model",
             "messages",
             "tools",
@@ -61,7 +64,7 @@ def create_app():
             "max_completion_tokens",
             "stream",
         }
-        if payload.keys() - allowed or payload.get("stream", False) is not False:
+        if payload.keys() - allowed_fields or payload.get("stream", False) is not False:
             return jsonify(
                 error="Unsupported request options; streaming is disabled"
             ), 400

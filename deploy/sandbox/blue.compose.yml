@@ -24,13 +24,13 @@ services:
       context: ../..
       dockerfile: deploy/sandbox/Dockerfile
       target: defender
+    env_file: ../../src/defender/defender-agent/.env
     ports:
       - "${BLUE_IP:?Set the BlueAI address}:8080:8080"
     environment:
       TARGET: http://vulnerable-app:5000
       IDUNN_BASE_URL: http://model-gateway:9000/v1
       IDUNN_API_KEY: ${GATEWAY_TOKEN:?Generate a gateway token}
-      IDUN_MODEL: ${IDUN_MODEL:-openai/gpt-oss-120b}
       HOME: /workspace
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001
@@ -70,7 +70,6 @@ services:
     environment:
       IDUN_KEY_FILE: /run/secrets/idun_key
       GATEWAY_TOKEN: ${GATEWAY_TOKEN:?Generate a gateway token}
-      IDUN_MODEL: ${IDUN_MODEL:-openai/gpt-oss-120b}
       GATEWAY_CALL_LIMIT: ${GATEWAY_CALL_LIMIT:-1000}
     extra_hosts:
       - "llm.hpc.ntnu.no:${IDUN_IP:?Set the current Idun IPv4 address}"

@@ -124,7 +124,7 @@ def describe_llm_error(exc: Exception) -> str:
     if isinstance(exc, AuthenticationError):
         return "IDUN rejected the API key. Check IDUN_API_KEY in .env."
     if isinstance(exc, NotFoundError):
-        return "IDUN returned 404. Check IDUN_MODEL in .env."
+        return "IDUN returned 404. Check the selected model ID."
     if isinstance(exc, APITimeoutError):
         return "IDUN request timed out. Try again."
     if isinstance(exc, APIConnectionError):

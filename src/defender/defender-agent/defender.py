@@ -14,7 +14,7 @@ from langchain_openai import ChatOpenAI
 TARGET = os.environ.get("TARGET", "http://backend:8000")   # the real backend
 
 llm = ChatOpenAI(
-    model=os.environ.get("IDUN_MODEL", "openai/gpt-oss-120b"),
+    model=os.environ["AGENT_MODEL"],
     base_url=os.environ["IDUNN_BASE_URL"],
     api_key=os.environ["IDUNN_API_KEY"],
     temperature=0,

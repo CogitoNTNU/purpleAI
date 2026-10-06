@@ -76,7 +76,7 @@ TARGET_URL=http://192.168.50.10:8080
 
 IDUN_BASE_URL=https://llm.hpc.ntnu.no/v1
 IDUN_API_KEY=your-idun-api-key
-IDUN_MODEL=openai/gpt-oss-120b
+AGENT_MODEL=openai/gpt-oss-120b
 ```
 
 Optionally set `NMAP_PORT` to a single port (1–65535) to limit reconnaissance.
@@ -89,6 +89,8 @@ configuration, never from the LLM.
 ```bash
 python main.py
 ```
+
+Choose any model available on Idun by setting `AGENT_MODEL` in this agent's `.env`.
 
 Example output:
 

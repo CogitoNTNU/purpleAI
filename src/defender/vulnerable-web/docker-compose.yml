@@ -35,6 +35,7 @@ services:
 
   defender:
     build: ../defender-agent
+    env_file: ../defender-agent/.env
     ports:
       - "8080:8080"
     environment:

@@ -43,7 +43,12 @@ The defender is started as a service in `../vulnerable-web/docker-compose.yml`.
 
 ## Running
 
-All commands are run from the `vulnerable-web` folder.
+For the two-PC sandbox, follow `deploy/sandbox/README.md`. Set `AGENT_MODEL`
+in `src/defender/defender-agent/.env` to choose any model available on Idun.
+
+For the original setup, all commands below run from the `vulnerable-web` folder.
+First copy `../defender-agent/.env.example` to `../defender-agent/.env` and set
+`AGENT_MODEL` there. Docker reads that file when creating the defender container.
 
 1. Connect to the NTNU VPN.
 

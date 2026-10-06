@@ -30,7 +30,6 @@ def gateway(tmp_path, monkeypatch):
     key.write_text("private-upstream-key")
     monkeypatch.setenv("IDUN_KEY_FILE", str(key))
     monkeypatch.setenv("GATEWAY_TOKEN", "x" * 32)
-    monkeypatch.setenv("IDUN_MODEL", "lab-model")
     monkeypatch.setenv("GATEWAY_CALL_LIMIT", "1")
     return load("gateway")
 
@@ -42,7 +41,10 @@ def test_gateway_authentication_and_options(gateway):
     with patch.object(gateway.requests, "Session") as upstream:
         assert client.post("/v1/chat/completions", json=payload).status_code == 401
         for options in (
-            {"model": "other"},
+            {"model": ""},
+            {"model": "   "},
+            {"model": ["lab-model"]},
+            {"model": None},
             {"stream": True},
             {"url": "http://router/"},
             {"max_tokens": 2049},
@@ -69,10 +71,11 @@ def test_gateway_authentication_and_options(gateway):
         upstream.assert_not_called()
 
 
-def test_gateway_fixed_upstream_key_replacement_and_budget(gateway):
+@pytest.mark.parametrize("model", ["lab-model", "other-model"])
+def test_gateway_fixed_upstream_key_replacement_and_budget(gateway, model):
     client = gateway.create_app().test_client()
     headers = {"Authorization": "Bearer " + "x" * 32}
-    payload = {"model": "lab-model", "messages": [{"role": "user", "content": "hello"}]}
+    payload = {"model": model, "messages": [{"role": "user", "content": "hello"}]}
     session = MagicMock()
     response = session.post.return_value.__enter__.return_value
     response.status_code = 200
@@ -86,11 +89,13 @@ def test_gateway_fixed_upstream_key_replacement_and_budget(gateway):
         assert args == ("https://llm.hpc.ntnu.no/v1/chat/completions",)
         assert kwargs["headers"] == {"Authorization": "Bearer private-upstream-key"}
         assert kwargs["json"]["max_tokens"] == 2048
+        assert kwargs["json"]["model"] == model
         assert kwargs["allow_redirects"] is False
         assert session.trust_env is False
+        other = "other-model" if model == "lab-model" else "lab-model"
         assert (
             client.post(
-                "/v1/chat/completions", json=payload, headers=headers
+                "/v1/chat/completions", json=payload | {"model": other}, headers=headers
             ).status_code
             == 429
         )
@@ -282,7 +287,7 @@ def test_scan_port_is_validated_in_trusted_config(monkeypatch, port):
         "TARGET_URL": "http://192.168.0.120:8080",
         "IDUN_BASE_URL": "http://model-gateway:9000/v1",
         "IDUN_API_KEY": "dummy",
-        "IDUN_MODEL": "lab-model",
+        "AGENT_MODEL": "lab-model",
         "NMAP_PORT": port,
     }.items():
         monkeypatch.setenv(name, value)
@@ -292,6 +297,9 @@ def test_scan_port_is_validated_in_trusted_config(monkeypatch, port):
         assert config.load_config().nmap_port == 8080
         monkeypatch.delenv("NMAP_PORT")
         assert config.load_config().nmap_port is None
+        monkeypatch.delenv("AGENT_MODEL")
+        with pytest.raises(config.ConfigError, match="AGENT_MODEL"):
+            config.load_config()
     else:
         with pytest.raises(config.ConfigError):
             config.load_config()
@@ -338,3 +346,10 @@ def test_operator_installs_firewall_before_starting_containers(tmp_path, monkeyp
         up_index = next(i for i, cmd in enumerate(commands) if "up" in cmd)
         assert firewall_index < up_index
         assert any(cmd[0] == "modprobe" for cmd in commands[:firewall_index])
+
+
+def test_operator_runs_attacker_with_compose_environment(tmp_path, monkeypatch):
+    module = operator(tmp_path, monkeypatch, "red", "run")
+    with patch.object(module.subprocess, "run") as run:
+        module.main()
+        assert run.call_args.args[0][-4:] == ("run", "--rm", "--no-deps", "attacker")

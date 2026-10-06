@@ -48,6 +48,9 @@ backend. Stop the old PurpleAI containers before starting this setup.
    is mounted read-only into the non-root gateway. Keys/settings are Git-ignored
    and excluded from image builds.
 
+Before startup, create the agent `.env` on that PC as described below under
+“Pick a model for each agent”.
+
 ## Everyday commands
 
 On **BlueAI**, start the defender and target:
@@ -78,6 +81,24 @@ Then, on RedAI:
 ```sh
 sudo python3 deploy/sandbox/start.py red run
 ```
+
+## Pick a model for each agent
+
+Set `AGENT_MODEL` in each agent's own `.env` to any model available on Idun:
+
+- **RedAI:** `src/nmap-agent/.env`
+- **BlueAI:** `src/defender/defender-agent/.env`
+
+Create the file on each PC by copying that agent's `.env.example` to `.env`, then
+edit `AGENT_MODEL` (rename the old model variable if reusing an existing file).
+Docker reads it when creating the agent container. The sandbox
+overrides the API address, API key and target with its protected gateway settings.
+The deployment `.env` contains only network and gateway settings.
+
+After changing the model, run `red run` for the next attacker run. On BlueAI, use
+`blue stop` then `blue` to recreate the defender. Remove the previous model setting
+from deployment `.env`; there is no legacy fallback or model allowlist. Rebuild the
+containers after updating this branch.
 
 Other commands use the same form:
 
@@ -112,7 +133,7 @@ No host source directories, home directories, or Docker socket are mounted.
 The existing agent tools remain; this does not add autonomous shell execution or
 code-edit/restart tools. The attacker scan is scoped to port 8080.
 
-Gateway calls are limited to one configured model, non-streaming chat completions,
+Gateway calls use non-streaming chat completions,
 2048 output tokens, and one call at a time. `GATEWAY_CALL_LIMIT` limits attempts
 per gateway process lifetime; restarting it resets the count. Use synthetic lab
 data: requests may reach Idun and appear in defender logs.
