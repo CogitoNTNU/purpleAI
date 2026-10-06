@@ -29,7 +29,8 @@ runs with normal traffic and a shared run ID. For standalone use, follow
 ## Tool and logs
 
 `nmap_scan()` accepts no parameters. Trusted configuration supplies the target
-and optional `NMAP_PORT`; the sandbox fixes the port to 8080, or 8081 when you select `--target direct`. Nmap runs with an
+and optional `NMAP_PORT`; the sandbox fixes the port to 8080 (through the defender),
+or 8081 (without the defender) when you select `--target direct`. Nmap runs with an
 argument list and no shell. The agent cannot choose another scan target or
 execute arbitrary commands through this tool.
 

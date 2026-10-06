@@ -4,6 +4,10 @@ Use this guide for tools, scripts and individual agent runs. Gamehost, normal
 traffic and a log collector are not required. For coordinated experiments, use
 the [gamehost runner](../../src/gamehost/README.md).
 
+**Direct testing means testing VulnShop without the defender checking your
+requests.** Requests go straight to VulnShop on port 8081. Port 8080 still goes
+through the defender, which remains running.
+
 First configure and start BlueAI using the [sandbox setup](README.md).
 The examples below use `BLUE_IP=192.168.0.120`; replace that address if yours differs.
 Every host command block starts from `~/purpleAI`, the repository root on the

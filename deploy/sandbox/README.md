@@ -40,16 +40,16 @@ nano deploy/sandbox/.env
 
 `cp -n` preserves an existing file. Set these deployment values:
 
-| Setting              | What to enter                                                                                                |
-| -------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `RED_IP`             | RedAI's LAN IPv4 address, currently `192.168.0.130`                                                          |
-| `BLUE_IP`            | BlueAI's LAN IPv4 address, currently `192.168.0.120`                                                         |
-| `ROUTER_IP`          | Router's LAN address, currently `192.168.0.1`                                                                |
-| `IDUN_IP`            | One current IPv4 address from the lookup above                                                               |
-| `GATEWAY_TOKEN`      | The generated token; use a different token on each PC                                                        |
-| `GATEWAY_CALL_LIMIT` | Keep the default unless you need a different call budget                                                     |
-| `DEV_IP`             | Optional development PC LAN address on BlueAI; see [manual testing](TESTING.md#from-your-own-development-pc) |
-| `DIRECT_TESTING`     | Keep `false`; optionally enable [direct testing](TESTING.md#enable-direct-access-on-blueai) on port 8081     |
+| Setting              | What to enter                                                                                                                                     |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RED_IP`             | RedAI's LAN IPv4 address, currently `192.168.0.130`                                                                                               |
+| `BLUE_IP`            | BlueAI's LAN IPv4 address, currently `192.168.0.120`                                                                                              |
+| `ROUTER_IP`          | Router's LAN address, currently `192.168.0.1`                                                                                                     |
+| `IDUN_IP`            | One current IPv4 address from the lookup above                                                                                                    |
+| `GATEWAY_TOKEN`      | The generated token; use a different token on each PC                                                                                             |
+| `GATEWAY_CALL_LIMIT` | Keep the default unless you need a different call budget                                                                                          |
+| `DEV_IP`             | Optional development PC LAN address on BlueAI; see [manual testing](TESTING.md#from-your-own-development-pc)                                      |
+| `DIRECT_TESTING`     | Keep `false`; set `true` to test VulnShop **without the defender** on port 8081. See [direct testing](TESTING.md#enable-direct-access-on-blueai). |
 
 Reserve the PC addresses in the router so they stay fixed. The Docker subnets
 `172.28.10.0/24`, `172.28.20.0/24` and `172.28.21.0/24` must not overlap your LAN
