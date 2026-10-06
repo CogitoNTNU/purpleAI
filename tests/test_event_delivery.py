@@ -8,7 +8,7 @@ import tempfile
 import threading
 import types
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import redirect_stdout
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
@@ -26,7 +26,9 @@ def load_module(name, path):
 
 class EventDeliveryTest(unittest.TestCase):
     def test_gamehost_env_file(self):
-        collector = load_module("test_collector_env", ROOT / "src/gamehost/log_collector.py")
+        collector = load_module(
+            "test_collector_env", ROOT / "src/gamehost/log_collector.py"
+        )
         with tempfile.TemporaryDirectory() as directory:
             env_file = Path(directory) / ".env"
             env_file.write_text(
@@ -35,15 +37,22 @@ class EventDeliveryTest(unittest.TestCase):
             )
             self.assertEqual(
                 collector.read_env_file(env_file),
-                {"GAMEHOST_LOG_TOKEN": "test-token", "GAMEHOST_LOG_BIND": "192.168.0.110"},
+                {
+                    "GAMEHOST_LOG_TOKEN": "test-token",
+                    "GAMEHOST_LOG_BIND": "192.168.0.110",
+                },
             )
 
     def test_events_are_available_before_the_run_ends(self):
-        collector = load_module("test_collector", ROOT / "src/gamehost/log_collector.py")
+        collector = load_module(
+            "test_collector", ROOT / "src/gamehost/log_collector.py"
+        )
         fake_config = types.ModuleType("config")
         fake_config.get_config = lambda: None
         with patch.dict(sys.modules, {"config": fake_config}):
-            logging = load_module("test_nmap_logging", ROOT / "src/nmap-agent/logging_utils.py")
+            logging = load_module(
+                "test_nmap_logging", ROOT / "src/nmap-agent/logging_utils.py"
+            )
 
         with tempfile.TemporaryDirectory() as directory:
             collector.DATA_FILE = Path(directory) / "events.jsonl"
@@ -62,8 +71,13 @@ class EventDeliveryTest(unittest.TestCase):
                     self.assertEqual(first["action"], "task_start")
                     logging.log_event("attacker", "task_end", status="success")
 
-                events = [json.loads(line) for line in collector.DATA_FILE.read_text().splitlines()]
-                self.assertEqual([event["action"] for event in events], ["task_start", "task_end"])
+                events = [
+                    json.loads(line)
+                    for line in collector.DATA_FILE.read_text().splitlines()
+                ]
+                self.assertEqual(
+                    [event["action"] for event in events], ["task_start", "task_end"]
+                )
                 self.assertEqual(events[0]["run_id"], events[1]["run_id"])
                 self.assertNotEqual(events[0]["event_id"], events[1]["event_id"])
             finally:
@@ -75,17 +89,23 @@ class EventDeliveryTest(unittest.TestCase):
         fake_config = types.ModuleType("config")
         fake_config.get_config = lambda: None
         with patch.dict(sys.modules, {"config": fake_config}):
-            logging = load_module("test_nmap_logging_offline", ROOT / "src/nmap-agent/logging_utils.py")
+            logging = load_module(
+                "test_nmap_logging_offline", ROOT / "src/nmap-agent/logging_utils.py"
+            )
         logging.get_config = lambda: types.SimpleNamespace(
             log_collector_url="http://127.0.0.1:1/events",
             log_collector_token="test-token",
         )
-        output, errors = io.StringIO(), io.StringIO()
-        with redirect_stdout(output), redirect_stderr(errors):
+        output = io.StringIO()
+        with (
+            redirect_stdout(output),
+            self.assertLogs("purpleai.event_logging", level="WARNING") as diagnostics,
+        ):
             logging.log_event("attacker", "task_start")
             logging.log_event("attacker", "task_end")
         self.assertEqual(len(output.getvalue().splitlines()), 2)
-        self.assertEqual(errors.getvalue().count("Gamehost log delivery failed"), 1)
+        self.assertEqual(len(diagnostics.records), 1)
+        self.assertIn("Gamehost log delivery failed", diagnostics.output[0])
 
 
 if __name__ == "__main__":

@@ -182,7 +182,7 @@ def test_ssh_quotes_repository_and_keeps_fixed_commands(monkeypatch):
     ],
 )
 def test_model_failure_details_reach_collector_without_secrets(
-    collector, monkeypatch, kind, expected_type, status, reason
+    collector, monkeypatch, caplog, kind, expected_type, status, reason
 ):
     import httpx
     from openai import (
@@ -227,3 +227,8 @@ def test_model_failure_details_reach_collector_without_secrets(
     assert event["model_http_status"] == status
     assert event["error_reason"] == reason
     assert secret not in output.getvalue() and secret not in saved
+    assert secret not in caplog.text
+    assert any(
+        record.levelname == "ERROR" and reason in record.message
+        for record in caplog.records
+    )

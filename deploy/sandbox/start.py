@@ -179,7 +179,15 @@ def main():
                 endpoints = [("--allow", host) for host in allowed]
                 endpoints += [("--deny", host) for host in denied]
                 options = [value for pair in endpoints for value in pair]
-                call(*compose, *command, "/app/check_network.py", *options)
+                pc = "RedAI" if args.role == "red" else "BlueAI"
+                call(
+                    *compose,
+                    *command,
+                    "/app/check_network.py",
+                    "--from",
+                    f"{pc} / {service}",
+                    *options,
+                )
 
             blocked = [f"{router}:80", f"{idun}:443"]
             if args.role == "red":

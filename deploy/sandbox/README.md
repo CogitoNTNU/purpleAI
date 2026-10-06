@@ -167,6 +167,14 @@ PCs, then stop/start both stacks to apply the changed firewall. Leaving both
 empty preserves the standalone setup. When enabled, only the agents can send to
 gamehost TCP 8765, and gamehost can reach the defender on BlueAI TCP 8080.
 Connection checks also send an authenticated test event to the collector.
+Every result identifies the PC and container making the connection, including
+when the checks are launched from gamehost:
+
+```text
+PASS [BlueAI / defender] model-gateway:9000: reachable
+PASS [BlueAI / vulnerable-app] 192.168.0.110:8765: unreachable
+PASS [RedAI / attacker] 192.168.0.120:8080: reachable
+```
 
 ## Other commands
 

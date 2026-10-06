@@ -20,6 +20,12 @@ def endpoint(value):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--from",
+        dest="origin",
+        required=True,
+        help="PC and container running the check",
+    )
     parser.add_argument("--allow", action="append", default=[], type=endpoint)
     parser.add_argument("--deny", action="append", default=[], type=endpoint)
     args = parser.parse_args()
@@ -34,7 +40,7 @@ def main():
             passed = reachable == expected
             failures += not passed
             print(
-                f"{'PASS' if passed else 'FAIL'} {host}:{port}: {'reachable' if reachable else 'unreachable'}"
+                f"{'PASS' if passed else 'FAIL'} [{args.origin}] {host}:{port}: {'reachable' if reachable else 'unreachable'}"
             )
     if os.environ.get("LOG_COLLECTOR_URL"):
         event = {
@@ -58,11 +64,11 @@ def main():
         try:
             with urlopen(message, timeout=3):
                 pass
-            print("PASS collector: authenticated event accepted")
+            print(f"PASS [{args.origin}] collector: authenticated event accepted")
         except OSError:
             failures += 1
             print(
-                "FAIL collector: event delivery failed (check address, token and collector)"
+                f"FAIL [{args.origin}] collector: event delivery failed (check address, token and collector)"
             )
     if not args.allow and not args.deny:
         parser.error("Supply at least one --allow or --deny endpoint")

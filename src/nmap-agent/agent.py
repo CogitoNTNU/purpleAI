@@ -130,5 +130,5 @@ def describe_llm_error(exc: Exception) -> str:
     if isinstance(exc, APIConnectionError):
         return "Could not reach IDUN. You must be on an NTNU network or NTNU VPN."
     if isinstance(exc, BadRequestError):
-        return f"IDUN rejected the request: {exc}"
-    return f"Unexpected error while calling IDUN: {exc}"
+        return "IDUN rejected the request. Check the model and request settings."
+    return f"Unexpected error while calling IDUN ({type(exc).__name__})."

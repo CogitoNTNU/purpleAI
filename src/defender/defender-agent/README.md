@@ -22,14 +22,19 @@ cd ~/purpleAI
 sudo python3 deploy/sandbox/start.py blue logs
 ```
 
-Logs show forwarded requests as `[ok]`, detected attacks as `[BLOCKED]`, and model
-failures as `[ERROR]`. LLM classification can make mistakes, so use synthetic lab
+Diagnostics use Python `logging` on stderr: forwarding and blocking are `INFO`,
+and model or target failures are `ERROR`. LLM classification can make mistakes, so use synthetic lab
 traffic. This proxy detects and blocks requests; it does not patch target code.
 
 Structured events are also sent to the collector when gamehost logging is enabled
 in deployment `.env`. The [gamehost runner](../../gamehost/README.md) assigns a
 shared run ID to the defender and attacker and sends normal traffic. Delivery
 failures do not change defender decisions.
+
+Both agents use the shared event sender in `src/purpleai/event_logging.py`, which
+is copied into their Docker images. Events stay as JSON on stdout; delivery
+failures produce one `WARNING` per agent process. Sending uses a 0.5-second timeout,
+with no queue or retries.
 
 Model failure events include `error_type`, `model_http_status` and a safe
 `error_reason` for diagnosing busy gateways, timeouts and connection failures.

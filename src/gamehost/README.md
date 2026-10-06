@@ -198,6 +198,13 @@ mkdir -p src/gamehost/data
 docker compose --env-file src/gamehost/.env -f src/gamehost/docker-compose.yml exec -T collector cat /data/events.jsonl > src/gamehost/data/events.jsonl
 ```
 
+Both agents use the shared sender in `src/purpleai/event_logging.py`. Structured
+events are printed as JSON and sent directly to the collector; Python `logging`
+handles diagnostic messages on stderr. Diagnostic messages and the attacker's
+readable transcript remain in container output; they are not sent as experiment
+events. Connection check results identify both the PC and container, for example
+`PASS [BlueAI / defender] model-gateway:9000: reachable`.
+
 Events include IDs, UTC timestamps, actions and statuses. Defender events include
 method, path, decision and response status. Model failures also include
 `error_type`, `model_http_status` (null when there is no HTTP response), and a safe

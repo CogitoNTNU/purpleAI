@@ -446,3 +446,64 @@ def test_operator_shared_session_checks_firewall_and_preserves_target(
         command = run.call_args.args[0]
         assert "--no-deps" in command and command[-1] == "defender"
         assert run.call_args.kwargs["env"]["PURPLEAI_RUN_ID"] == run_id
+
+
+@pytest.mark.parametrize(
+    "role,expected",
+    [
+        ("red", ["RedAI / attacker", "RedAI / model-gateway"]),
+        (
+            "blue",
+            ["BlueAI / defender", "BlueAI / vulnerable-app", "BlueAI / model-gateway"],
+        ),
+    ],
+)
+def test_operator_labels_each_probe_with_pc_and_container(
+    tmp_path, monkeypatch, role, expected
+):
+    module = operator(tmp_path, monkeypatch, role, "check")
+    with patch.object(module.subprocess, "run") as run:
+        module.main()
+    probes = [
+        call.args[0]
+        for call in run.call_args_list
+        if "/app/check_network.py" in call.args[0]
+    ]
+    assert [command[command.index("--from") + 1] for command in probes] == expected
+
+
+def test_network_output_labels_pass_fail_and_collector(monkeypatch, capsys):
+    from unittest.mock import MagicMock
+
+    module = load("check_network")
+    origin = "BlueAI / defender"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "check_network.py",
+            "--from",
+            origin,
+            "--allow",
+            "model-gateway:9000",
+            "--deny",
+            "router:80",
+        ],
+    )
+    monkeypatch.setenv("LOG_COLLECTOR_URL", "http://collector:8765/events")
+    monkeypatch.setenv("LOG_COLLECTOR_TOKEN", "dummy")
+    # The allowed gateway unexpectedly fails; the forbidden router stays blocked.
+    monkeypatch.setattr(
+        module.socket,
+        "create_connection",
+        lambda *a, **kw: (_ for _ in ()).throw(OSError()),
+    )
+    monkeypatch.setattr(module, "urlopen", lambda *a, **kw: MagicMock())
+    with pytest.raises(SystemExit) as result:
+        module.main()
+    assert result.value.code == 1
+    assert capsys.readouterr().out.splitlines() == [
+        f"FAIL [{origin}] model-gateway:9000: unreachable",
+        f"PASS [{origin}] router:80: unreachable",
+        f"PASS [{origin}] collector: authenticated event accepted",
+    ]

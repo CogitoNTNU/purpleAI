@@ -6,11 +6,15 @@ agent, backed by the NTNU IDUN LLM API and the restricted Nmap tool.
 
 from __future__ import annotations
 
+import logging
 import sys
 
 from agent import describe_llm_error, run_agent
 from config import ConfigError, get_config
 from logging_utils import log_event
+from purpleai.event_logging import configure_logging
+
+logger = logging.getLogger(__name__)
 
 TASK = (
     "Investigate the configured PurpleAI target and determine which "
@@ -19,18 +23,19 @@ TASK = (
 
 
 def main() -> int:
+    configure_logging()
     # Load and validate configuration before anything else runs, so a
     # bad .env fails fast with a clear message instead of mid-run.
     try:
         config = get_config()
     except ConfigError as exc:
-        print(f"Configuration error: {exc}")
+        logger.error("Configuration error: %s", exc)
         return 1
 
-    print("PurpleAI attacker v0")
-    print(f"Target: {config.target_url}")
-    print(f"Model: {config.idun_model}")
-    print(f"LLM API: {config.idun_base_url}")
+    logger.info("PurpleAI attacker v0")
+    logger.info("Target: %s", config.target_url)
+    logger.info("Model: %s", config.idun_model)
+    logger.info("LLM API: %s", config.idun_base_url)
 
     log_event("attacker", "task_start", target=config.target_host, status="started")
 
@@ -38,7 +43,7 @@ def main() -> int:
         run_agent(TASK)
     except Exception as exc:
         message = describe_llm_error(exc)
-        print(f"\nError: {message}")
+        logger.error("%s", message)
         log_event("attacker", "task_end", target=config.target_host, status="error")
         return 1
 

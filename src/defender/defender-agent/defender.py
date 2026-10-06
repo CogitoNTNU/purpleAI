@@ -6,11 +6,16 @@ Every request comes here first. We ask the Idun AI "is this SQL injection?".
   NO  -> pass it on to the backend and send the answer back
 """
 
+import logging
 import os
 import requests
 from flask import Flask, request, Response
 from langchain_openai import ChatOpenAI
 from events import log_event, model_error_details
+from purpleai.event_logging import configure_logging
+
+configure_logging()
+logger = logging.getLogger(__name__)
 
 TARGET = os.environ.get("TARGET", "http://backend:8000")  # the real backend
 
@@ -82,7 +87,7 @@ def proxy(path):
     except Exception as e:
         # AI unreachable (VPN off, API down): block to be safe
         details = model_error_details(e)
-        print(f"[ERROR] could not check request, blocking: {details}", flush=True)
+        logger.error("Could not check request, blocking: %s", details)
         log_event(
             "request_decision",
             method=request.method,
@@ -96,7 +101,7 @@ def proxy(path):
 
     # 3. ACT: block or forward
     if attack:
-        print(f"[BLOCKED] {request.method} {request.path}", flush=True)
+        logger.info("Blocked %s %s", request.method, request.path[:512])
         log_event(
             "request_decision",
             method=request.method,
@@ -108,7 +113,7 @@ def proxy(path):
         )
         return Response("Blocked by defender agent\n", status=403)
 
-    print(f"[ok]      {request.method} {request.full_path}", flush=True)
+    logger.info("Forwarding %s %s", request.method, request.path[:512])
 
     headers = {
         k: v for k, v in request.headers if k.lower() not in ("host", "content-length")
@@ -126,6 +131,7 @@ def proxy(path):
             timeout=(5, 30),
         )
     except requests.RequestException:
+        logger.error("Target unavailable; returning HTTP 502")
         log_event(
             "request_decision",
             method=request.method,
@@ -152,5 +158,5 @@ def proxy(path):
 
 
 if __name__ == "__main__":
-    print(f"Defender listening on :8080, protecting {TARGET}", flush=True)
+    logger.info("Defender listening on :8080, protecting %s", TARGET)
     app.run(host="0.0.0.0", port=8080, threaded=True)

@@ -26,7 +26,7 @@ sudo python3 deploy/sandbox/start.py red run
 | `agent.py`         | Agent construction, workflow output, and model error messages |
 | `config.py`        | Settings validation and trusted target selection              |
 | `tools/nmap.py`    | Restricted Nmap tool and result parsing                       |
-| `logging_utils.py` | Structured console events and optional gamehost delivery      |
+| `logging_utils.py` | Agent event fields passed to the shared sender                |
 | `requirements.txt` | Dependencies installed by the sandbox Dockerfile              |
 | `.env.example`     | Agent model setting and optional settings for direct use      |
 
@@ -42,3 +42,9 @@ Actions are printed as JSON events. Optional gamehost delivery uses
 [gamehost guide](../gamehost/README.md). In this sandbox, configure
 `GAMEHOST_IP` and `LOG_COLLECTOR_TOKEN` in deployment `.env`; Compose supplies the
 collector settings. The gamehost runner supplies a shared `PURPLEAI_RUN_ID`.
+
+Both agents use `src/purpleai/event_logging.py`, copied into their Docker images,
+for JSON event output and delivery. Startup diagnostics use Python `logging` at
+`INFO`, errors at `ERROR`, and delivery failures at `WARNING` on stderr. The task,
+tool results and final answer remain readable console output. Sending uses a
+0.5-second timeout, with no queue or retries.
