@@ -22,7 +22,7 @@ from flask import (
 )
 
 APP_ROOT = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(APP_ROOT, "vulnshop.db")
+DB_PATH = os.environ.get("VULNSHOP_DB_PATH", os.path.join(APP_ROOT, "vulnshop.db"))
 UPLOAD_DIR = os.path.join(APP_ROOT, "static", "uploads")
 REPORTS_DIR = os.path.join(APP_ROOT, "reports")
 

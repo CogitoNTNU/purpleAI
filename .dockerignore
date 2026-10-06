@@ -1,0 +1,9 @@
+.git
+.venv
+**/.venv
+**/__pycache__
+**/.env
+**/secrets
+**/node_modules
+**/*.db
+src/gamehost/data

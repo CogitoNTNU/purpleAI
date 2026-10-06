@@ -76,6 +76,10 @@
 
 ## Usage
 
+For the Kali RedAI / Ubuntu BlueAI deployment, see the
+[two-PC Docker sandbox setup](deploy/sandbox/README.md). It includes separate
+Compose stacks, a restricted Idun gateway, and required host firewall rules.
+
 To run the project, run the following command from the root directory of the project:
 
 ```bash

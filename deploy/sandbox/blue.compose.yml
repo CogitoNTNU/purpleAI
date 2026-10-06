@@ -1,0 +1,120 @@
+x-hardened: &hardened
+  read_only: true
+  user: "10001:10001"
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  init: true
+  pids_limit: 128
+  mem_limit: 512m
+  cpus: 1.0
+  dns: ["127.0.0.1"]
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+name: purpleai-blue
+services:
+  defender:
+    <<: *hardened
+    build:
+      context: ../..
+      dockerfile: deploy/sandbox/Dockerfile.defender
+    ports:
+      - "${BLUE_IP:?Set the BlueAI address}:8080:8080"
+    environment:
+      TARGET: http://vulnerable-app:5000
+      IDUNN_BASE_URL: http://model-gateway:9000/v1
+      IDUNN_API_KEY: ${GATEWAY_TOKEN:?Generate a gateway token}
+      IDUN_MODEL: ${IDUN_MODEL:-openai/gpt-oss-120b}
+      HOME: /workspace
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001
+      - /workspace:rw,nosuid,nodev,size=128m,uid=10001,gid=10001
+    networks:
+      lab:
+        ipv4_address: 172.28.20.10
+      backend:
+        ipv4_address: 172.28.21.20
+    depends_on:
+      vulnerable-app:
+        condition: service_started
+      model-gateway:
+        condition: service_healthy
+
+  vulnerable-app:
+    <<: *hardened
+    build:
+      context: ../..
+      dockerfile: deploy/sandbox/Dockerfile.target
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001
+      - /data:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001
+      - /app/static/uploads:rw,noexec,nosuid,nodev,size=32m,uid=10001,gid=10001
+      - /app/reports:rw,noexec,nosuid,nodev,size=32m,uid=10001,gid=10001
+    networks:
+      backend:
+        ipv4_address: 172.28.21.10
+
+  model-gateway:
+    <<: *hardened
+    build:
+      context: ../..
+      dockerfile: deploy/sandbox/Dockerfile.gateway
+    environment:
+      IDUN_KEY_FILE: /run/secrets/idun_key
+      GATEWAY_TOKEN: ${GATEWAY_TOKEN:?Generate a gateway token}
+      IDUN_MODEL: ${IDUN_MODEL:-openai/gpt-oss-120b}
+      GATEWAY_CALL_LIMIT: ${GATEWAY_CALL_LIMIT:-1000}
+    extra_hosts:
+      - "llm.hpc.ntnu.no:${IDUN_IP:?Set the current Idun IPv4 address}"
+    secrets: [idun_key]
+    networks:
+      lab:
+        ipv4_address: 172.28.20.20
+      egress:
+        ipv4_address: 172.28.22.20
+        gw_priority: 1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+networks:
+  lab:
+    driver: bridge
+    internal: false
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.name: pai-blue-front
+    ipam:
+      config:
+        - subnet: 172.28.20.0/24
+
+  backend:
+    driver: bridge
+    internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.name: pai-blue-back
+    ipam:
+      config:
+        - subnet: 172.28.21.0/24
+
+  egress:
+    driver: bridge
+    internal: false
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.name: pai-blue-out
+    ipam:
+      config:
+        - subnet: 172.28.22.0/24
+
+secrets:
+  idun_key:
+    file: ./secrets/idun_key

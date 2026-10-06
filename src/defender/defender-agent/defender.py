@@ -14,13 +14,14 @@ from langchain_openai import ChatOpenAI
 TARGET = os.environ.get("TARGET", "http://backend:8000")   # the real backend
 
 llm = ChatOpenAI(
-    model="openai/gpt-oss-120b",
+    model=os.environ.get("IDUN_MODEL", "openai/gpt-oss-120b"),
     base_url=os.environ["IDUNN_BASE_URL"],
     api_key=os.environ["IDUNN_API_KEY"],
     temperature=0,
 )
 
 app = Flask(__name__, static_folder=None)
+app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
 
 
 # ---- Agents: each one looks at the request and returns True if it's an attack.
@@ -83,6 +84,7 @@ def proxy(path):
         headers=headers,
         data=request.get_data(),
         allow_redirects=False,
+        timeout=(5, 30),
     )
     skip = {"content-encoding", "transfer-encoding", "content-length", "connection"}
     return Response(

@@ -79,6 +79,11 @@ IDUN_API_KEY=your-idun-api-key
 IDUN_MODEL=openai/gpt-oss-120b
 ```
 
+Optionally set `NMAP_PORT` to a single port (1–65535) to limit reconnaissance.
+The two-PC sandbox sets it to `8080`, the only exposed defender port. If unset,
+Nmap retains its normal default port selection. The value comes from trusted
+configuration, never from the LLM.
+
 ## Run
 
 ```bash

@@ -29,6 +29,7 @@ class Config:
     nmap_timeout: int
     log_collector_url: str | None
     log_collector_token: str | None
+    nmap_port: int | None = None
 
 
 def _parse_target_host(target_url: str) -> str:
@@ -64,7 +65,9 @@ def load_config(env_file: str = ".env") -> Config:
     for name in ("TARGET_URL", "IDUN_BASE_URL", "IDUN_API_KEY", "IDUN_MODEL"):
         value = os.environ.get(name, "").strip()
         if not value:
-            raise ConfigError(f"Missing '{name}' in .env. Copy .env.example to .env and fill it in.")
+            raise ConfigError(
+                f"Missing '{name}' in .env. Copy .env.example to .env and fill it in."
+            )
         required[name] = value
 
     if not required["IDUN_BASE_URL"].startswith(("http://", "https://")):
@@ -75,10 +78,23 @@ def load_config(env_file: str = ".env") -> Config:
 
     target_host = _parse_target_host(required["TARGET_URL"])
 
+    nmap_port = None
+    if os.environ.get("NMAP_PORT"):
+        try:
+            nmap_port = int(os.environ["NMAP_PORT"])
+        except ValueError as exc:
+            raise ConfigError(
+                "NMAP_PORT must be an integer between 1 and 65535"
+            ) from exc
+        if not 1 <= nmap_port <= 65535:
+            raise ConfigError("NMAP_PORT must be between 1 and 65535")
+
     log_collector_url = os.environ.get("LOG_COLLECTOR_URL", "").strip() or None
     log_collector_token = os.environ.get("LOG_COLLECTOR_TOKEN", "").strip() or None
     if bool(log_collector_url) != bool(log_collector_token):
-        raise ConfigError("LOG_COLLECTOR_URL and LOG_COLLECTOR_TOKEN must be set together.")
+        raise ConfigError(
+            "LOG_COLLECTOR_URL and LOG_COLLECTOR_TOKEN must be set together."
+        )
     if log_collector_url:
         parsed = urlparse(log_collector_url)
         if (
@@ -105,6 +121,7 @@ def load_config(env_file: str = ".env") -> Config:
         nmap_timeout=120,
         log_collector_url=log_collector_url,
         log_collector_token=log_collector_token,
+        nmap_port=nmap_port,
     )
 
 
