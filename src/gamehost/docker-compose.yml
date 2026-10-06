@@ -1,8 +1,54 @@
+name: purpleai-gamehost
 services:
+  collector:
+    build: .
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    init: true
+    restart: unless-stopped
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.5
+    ports:
+      - "${GAMEHOST_LOG_BIND:?Set the gamehost LAN address}:8765:8765"
+    environment:
+      GAMEHOST_LOG_TOKEN: ${GAMEHOST_LOG_TOKEN:?Set a collector token}
+      GAMEHOST_LOG_BIND: 0.0.0.0
+      GAMEHOST_LOG_PORT: "8765"
+      GAMEHOST_LOG_FILE: /data/events.jsonl
+    volumes:
+      - events:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
   traffic:
-    image: grafana/k6
+    image: grafana/k6:1.0.0
+    profiles: [run]
     command: run /traffic/normal-traffic.js
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.5
     volumes:
       - ./traffic:/traffic:ro
     environment:
-      - TARGET=${TARGET:-http://localhost:8080}
+      TARGET: http://${BLUE_IP:?Set the BlueAI LAN address}:8080
+      PURPLEAI_RUN_ID: ${PURPLEAI_RUN_ID:-}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  events:

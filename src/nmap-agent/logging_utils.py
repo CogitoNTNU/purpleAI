@@ -7,16 +7,21 @@ the gamehost when a collector URL and token are configured.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from urllib.error import URLError
 from urllib.request import Request, urlopen
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from config import get_config
 
 
-RUN_ID = str(uuid4())
+RUN_ID = (
+    str(UUID(os.environ["PURPLEAI_RUN_ID"]))
+    if os.environ.get("PURPLEAI_RUN_ID")
+    else str(uuid4())
+)
 _delivery_warning_shown = False
 
 

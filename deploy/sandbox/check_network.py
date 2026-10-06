@@ -6,6 +6,11 @@ firewall drop. Pair this check with host firewall counters and a known listener.
 
 import argparse
 import socket
+import os
+import json
+from datetime import datetime, timezone
+from urllib.request import Request, urlopen
+from uuid import uuid4
 
 
 def endpoint(value):
@@ -30,6 +35,34 @@ def main():
             failures += not passed
             print(
                 f"{'PASS' if passed else 'FAIL'} {host}:{port}: {'reachable' if reachable else 'unreachable'}"
+            )
+    if os.environ.get("LOG_COLLECTOR_URL"):
+        event = {
+            "schema_version": 1,
+            "event_id": str(uuid4()),
+            "run_id": str(uuid4()),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "source": "sandbox-check",
+            "actor": "sandbox-check",
+            "action": "log_check",
+        }
+        message = Request(
+            os.environ["LOG_COLLECTOR_URL"],
+            data=json.dumps(event).encode(),
+            headers={
+                "Authorization": f"Bearer {os.environ['LOG_COLLECTOR_TOKEN']}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(message, timeout=3):
+                pass
+            print("PASS collector: authenticated event accepted")
+        except OSError:
+            failures += 1
+            print(
+                "FAIL collector: event delivery failed (check address, token and collector)"
             )
     if not args.allow and not args.deny:
         parser.error("Supply at least one --allow or --deny endpoint")

@@ -22,15 +22,21 @@ def ipv4(value):
     return str(address)
 
 
-def policy(role, red_ip, blue_ip, idun_ip):
+def policy(role, red_ip, blue_ip, idun_ip, gamehost_ip=None):
     """Return permitted TCP initiations, managed subnets and bridge names."""
+    logging = (
+        [("172.28.10.10" if role == "red" else "172.28.20.10", gamehost_ip, 8765)]
+        if gamehost_ip
+        else []
+    )
     if role == "red":
         return (
             [
                 ("172.28.10.10", "172.28.10.20", 9000),
                 ("172.28.10.10", blue_ip, 8080),
                 ("172.28.10.20", idun_ip, 443),
-            ],
+            ]
+            + logging,
             ["172.28.10.0/24"],
             ["pai-red-lab"],
         )
@@ -40,14 +46,16 @@ def policy(role, red_ip, blue_ip, idun_ip):
             ("172.28.20.10", "172.28.20.20", 9000),
             ("172.28.21.20", "172.28.21.10", 5000),
             ("172.28.20.20", idun_ip, 443),
-        ],
+        ]
+        + logging
+        + ([(gamehost_ip, "172.28.20.10", 8080)] if gamehost_ip else []),
         ["172.28.20.0/24", "172.28.21.0/24"],
         ["pai-blue-front", "pai-blue-back"],
     )
 
 
-def rules(role, red_ip, blue_ip, idun_ip):
-    flows, subnets, bridges = policy(role, red_ip, blue_ip, idun_ip)
+def rules(role, red_ip, blue_ip, idun_ip, gamehost_ip=None):
+    flows, subnets, bridges = policy(role, red_ip, blue_ip, idun_ip, gamehost_ip)
     forward = []
     for source, destination, port in flows:
         # Only replies to an allowed TCP connection may travel back.
@@ -82,6 +90,7 @@ def main():
     parser.add_argument("--red-ip", required=True, type=ipv4)
     parser.add_argument("--blue-ip", required=True, type=ipv4)
     parser.add_argument("--idun-ip", required=True, type=ipv4)
+    parser.add_argument("--gamehost-ip", type=ipv4)
     parser.add_argument("--dry-run", action="store_true")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--remove", action="store_true")
@@ -89,14 +98,13 @@ def main():
         "--check", action="store_true", help="Verify rules without changing them"
     )
     args = parser.parse_args()
-    if len({args.red_ip, args.blue_ip, args.idun_ip}) != 3:
-        parser.error("PC and Idun addresses must be distinct")
+    addresses = [args.red_ip, args.blue_ip, args.idun_ip] + (
+        [args.gamehost_ip] if args.gamehost_ip else []
+    )
+    if len(set(addresses)) != len(addresses):
+        parser.error("PC, gamehost and Idun addresses must be distinct")
     managed = [ipaddress.ip_network(f"172.28.{n}.0/24") for n in (10, 20, 21)]
-    if any(
-        ipaddress.ip_address(ip) in net
-        for ip in (args.red_ip, args.blue_ip, args.idun_ip)
-        for net in managed
-    ):
+    if any(ipaddress.ip_address(ip) in net for ip in addresses for net in managed):
         parser.error("PC/Idun addresses must not overlap sandbox subnets")
     if not args.dry_run:
         if platform.system() != "Linux" or os.geteuid() != 0:
@@ -135,7 +143,7 @@ def main():
 
     prefix = f"PAI_{args.role.upper()}"
     v4_forward, v4_host, v6_forward, v6_host = rules(
-        args.role, args.red_ip, args.blue_ip, args.idun_ip
+        args.role, args.red_ip, args.blue_ip, args.idun_ip, args.gamehost_ip
     )
     for binary, parent, suffix, entries in (
         ("iptables", "DOCKER-USER", "FWD", v4_forward),

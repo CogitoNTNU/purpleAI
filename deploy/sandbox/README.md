@@ -156,6 +156,18 @@ sudo python3 deploy/sandbox/start.py blue check
 
 Startup rebuilds the images, so use stop/start after updating this branch too.
 
+## Gamehost runs and logging
+
+To control runs from gamehost and include normal traffic, follow the
+[gamehost guide](../../src/gamehost/README.md). The collector runs in Docker on
+gamehost; the run command uses host SSH to coordinate the lab.
+
+Set `GAMEHOST_IP` and `LOG_COLLECTOR_TOKEN` together in deployment `.env` on both
+PCs, then stop/start both stacks to apply the changed firewall. Leaving both
+empty preserves the standalone setup. When enabled, only the agents can send to
+gamehost TCP 8765, and gamehost can reach the defender on BlueAI TCP 8080.
+Connection checks also send an authenticated test event to the collector.
+
 ## Other commands
 
 Run each command below from the **repository root (`~/purpleAI`)** on the listed
@@ -179,14 +191,15 @@ Firewall rules remain after stopping; startup reinstalls them.
 
 ## What is protected
 
-| Component | May initiate connections to                   |
-| --------- | --------------------------------------------- |
-| Attacker  | BlueAI port 8080; its local Idun gateway      |
-| Defender  | VulnShop; its local Idun gateway              |
-| VulnShop  | Nothing; it may reply to the defender         |
-| Gateways  | The configured Idun address on HTTPS port 443 |
+| Component | May initiate connections to                                           |
+| --------- | --------------------------------------------------------------------- |
+| Attacker  | BlueAI port 8080; its local Idun gateway; optional gamehost port 8765 |
+| Defender  | VulnShop; its local Idun gateway; optional gamehost port 8765         |
+| VulnShop  | Nothing; it may reply to the defender                                 |
+| Gateways  | The configured Idun address on HTTPS port 443                         |
 
-Only BlueAI port 8080 is published, and only RedAI may reach it. The firewall
+Only BlueAI port 8080 is published. RedAI may reach it; the configured gamehost
+may also reach it when gamehost integration is enabled. The firewall
 blocks other container access to the host, router, LAN, internet, and IPv6.
 VulnShop is on a separate internal network, so the attacker cannot bypass the
 defender. External DNS is disabled for containers; Idun uses a fixed hosts entry.
@@ -202,7 +215,8 @@ Gateway calls use non-streaming chat completions,
 per gateway process lifetime; restarting it resets the count. Use synthetic lab
 data: requests may reach Idun and appear in defender logs.
 
-The checks test TCP reachability, not authenticated inference. A failed connection
+The checks test TCP reachability and, when configured, authenticated collector
+delivery. They do not test authenticated model inference. A failed connection
 may also mean no service is listening. Confirm blocked probes increase the DROP
 counters with these read-only host commands.
 

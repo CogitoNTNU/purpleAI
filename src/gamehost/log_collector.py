@@ -16,7 +16,16 @@ from uuid import UUID
 MAX_EVENT_BYTES = 16 * 1024
 WRITE_LOCK = Lock()
 ENV_FILE = Path(__file__).parent / ".env"
-ENV_KEYS = {"GAMEHOST_LOG_TOKEN", "GAMEHOST_LOG_BIND", "GAMEHOST_LOG_PORT", "GAMEHOST_LOG_FILE"}
+ENV_KEYS = {
+    "GAMEHOST_LOG_TOKEN",
+    "GAMEHOST_LOG_BIND",
+    "GAMEHOST_LOG_PORT",
+    "GAMEHOST_LOG_FILE",
+    "RED_SSH",
+    "BLUE_SSH",
+    "REMOTE_REPO",
+    "BLUE_IP",
+}
 DATA_FILE = Path(__file__).parent / "data" / "events.jsonl"
 TOKEN = ""
 
@@ -26,7 +35,9 @@ def read_env_file(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
     values = {}
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -64,6 +75,10 @@ def valid_event(event: object) -> bool:
 
 
 class EventHandler(BaseHTTPRequestHandler):
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(5)
+
     def log_message(self, format: str, *args: object) -> None:
         """Keep the live terminal focused on events rather than access lines."""
 
@@ -79,7 +94,9 @@ class EventHandler(BaseHTTPRequestHandler):
         if self.path != "/events":
             self.send_error(404)
             return
-        if not hmac.compare_digest(self.headers.get("Authorization", ""), f"Bearer {TOKEN}"):
+        if not hmac.compare_digest(
+            self.headers.get("Authorization", ""), f"Bearer {TOKEN}"
+        ):
             self.send_error(401)
             return
         if self.headers.get_content_type() != "application/json":
@@ -119,13 +136,18 @@ def main() -> None:
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     TOKEN = settings.get("GAMEHOST_LOG_TOKEN", "")
-    if not TOKEN:
-        raise SystemExit(f"Set GAMEHOST_LOG_TOKEN in {ENV_FILE} or the shell environment.")
+    if len(TOKEN) < 32:
+        raise SystemExit(
+            f"Set GAMEHOST_LOG_TOKEN to at least 32 characters in {ENV_FILE} or the shell environment."
+        )
     DATA_FILE = Path(settings.get("GAMEHOST_LOG_FILE", DATA_FILE))
     host = settings.get("GAMEHOST_LOG_BIND", "127.0.0.1")
     port = int(settings.get("GAMEHOST_LOG_PORT", "8765"))
     server = ThreadingHTTPServer((host, port), EventHandler)
-    print(f"Listening for PurpleAI events on {host}:{port}; writing to {DATA_FILE}", flush=True)
+    print(
+        f"Listening for PurpleAI events on {host}:{port}; writing to {DATA_FILE}",
+        flush=True,
+    )
     server.serve_forever()
 
 

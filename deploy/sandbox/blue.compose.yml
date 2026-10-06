@@ -32,6 +32,9 @@ services:
       IDUNN_BASE_URL: http://model-gateway:9000/v1
       IDUNN_API_KEY: ${GATEWAY_TOKEN:?Generate a gateway token}
       HOME: /workspace
+      PURPLEAI_RUN_ID: ${PURPLEAI_RUN_ID:-}
+      LOG_COLLECTOR_URL: ${LOG_COLLECTOR_URL:-}
+      LOG_COLLECTOR_TOKEN: ${LOG_COLLECTOR_TOKEN:-}
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001
       - /workspace:rw,nosuid,nodev,size=128m,uid=10001,gid=10001

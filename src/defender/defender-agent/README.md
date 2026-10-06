@@ -25,3 +25,8 @@ sudo python3 deploy/sandbox/start.py blue logs
 Logs show forwarded requests as `[ok]`, detected attacks as `[BLOCKED]`, and model
 failures as `[ERROR]`. LLM classification can make mistakes, so use synthetic lab
 traffic. This proxy detects and blocks requests; it does not patch target code.
+
+Structured events are also sent to the collector when gamehost logging is enabled
+in deployment `.env`. The [gamehost runner](../../gamehost/README.md) assigns a
+shared run ID to the defender and attacker and sends normal traffic. Delivery
+failures do not change defender decisions.

@@ -39,5 +39,6 @@ execute arbitrary commands through this tool.
 
 Actions are printed as JSON events. Optional gamehost delivery uses
 `LOG_COLLECTOR_URL` and `LOG_COLLECTOR_TOKEN` together; see the
-[gamehost guide](../gamehost/README.md). Leave them unset in this sandbox, whose
-firewall does not permit collector connections.
+[gamehost guide](../gamehost/README.md). In this sandbox, configure
+`GAMEHOST_IP` and `LOG_COLLECTOR_TOKEN` in deployment `.env`; Compose supplies the
+collector settings. The gamehost runner supplies a shared `PURPLEAI_RUN_ID`.

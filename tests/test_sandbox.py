@@ -352,4 +352,40 @@ def test_operator_runs_attacker_with_compose_environment(tmp_path, monkeypatch):
     module = operator(tmp_path, monkeypatch, "red", "run")
     with patch.object(module.subprocess, "run") as run:
         module.main()
-        assert run.call_args.args[0][-4:] == ("run", "--rm", "--no-deps", "attacker")
+        assert run.call_args.args[0][-6:] == (
+            "run",
+            "--rm",
+            "--no-deps",
+            "--name",
+            "purpleai-red-attacker-run",
+            "attacker",
+        )
+
+
+def test_gamehost_policy_adds_only_logging_and_normal_traffic():
+    firewall = load("firewall")
+    args = ("192.168.0.130", "192.168.0.120", "129.241.121.16")
+    host = "192.168.0.110"
+    for role, agent in [("red", "172.28.10.10"), ("blue", "172.28.20.10")]:
+        base = set(firewall.policy(role, *args)[0])
+        enabled = set(firewall.policy(role, *args, host)[0])
+        additions = {(agent, host, 8765)}
+        if role == "blue":
+            additions.add((host, agent, 8080))
+        assert enabled - base == additions
+        assert base <= enabled
+
+
+def test_operator_shared_session_checks_firewall_and_preserves_target(
+    tmp_path, monkeypatch
+):
+    from uuid import uuid4
+
+    run_id = str(uuid4())
+    module = operator(tmp_path, monkeypatch, "blue", "session", "--run-id", run_id)
+    with patch.object(module.subprocess, "run") as run:
+        module.main()
+        assert "--check" in run.call_args_list[0].args[0]
+        command = run.call_args.args[0]
+        assert "--no-deps" in command and command[-1] == "defender"
+        assert run.call_args.kwargs["env"]["PURPLEAI_RUN_ID"] == run_id

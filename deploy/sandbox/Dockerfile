@@ -21,7 +21,7 @@ CMD ["python", "main.py"]
 
 FROM base AS defender
 RUN pip install --no-cache-dir 'langchain-openai>=1.0,<2'
-COPY src/defender/defender-agent/defender.py .
+COPY src/defender/defender-agent/defender.py src/defender/defender-agent/events.py ./
 USER 10001:10001
 CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "4", "--timeout", "180", "defender:app"]
 
