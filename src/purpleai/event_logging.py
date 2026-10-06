@@ -29,6 +29,7 @@ class EventSender:
         self.token = token
         run_id = os.environ.get("PURPLEAI_RUN_ID")
         self.run_id = str(UUID(run_id)) if run_id else str(uuid4())
+        self.target_mode = os.environ.get("PURPLEAI_TARGET_MODE", "with_defender")
         self._warning_shown = False
         self._lock = Lock()
 
@@ -41,6 +42,7 @@ class EventSender:
             "source": self.source,
             "actor": self.actor,
             "action": action,
+            "target_mode": self.target_mode,
             **fields,
         }
         payload = json.dumps(event, ensure_ascii=False)

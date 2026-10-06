@@ -582,11 +582,13 @@ def test_direct_overlay_and_fixed_attacker_target(tmp_path, monkeypatch):
         module.main()
     assert "--direct-testing" in run.call_args_list[0].args[0]
     assert run.call_args.kwargs["env"]["TARGET_PORT"] == "8081"
+    assert run.call_args.kwargs["env"]["PURPLEAI_TARGET_MODE"] == "without_defender"
     # The managed gamehost invocation has no --target and still selects 8080.
     monkeypatch.setattr(sys, "argv", ["start.py", "red", "run"])
     with patch.object(module.subprocess, "run") as run:
         module.main()
     assert run.call_args.kwargs["env"]["TARGET_PORT"] == "8080"
+    assert run.call_args.kwargs["env"]["PURPLEAI_TARGET_MODE"] == "with_defender"
     monkeypatch.setattr(sys, "argv", ["start.py", "blue", "check", "--no-collector"])
     with patch.object(module.subprocess, "run") as run:
         module.main()
@@ -599,6 +601,8 @@ def test_direct_overlay_and_fixed_attacker_target(tmp_path, monkeypatch):
     "arguments,setting",
     [
         (("red", "run", "--target", "direct"), "false"),
+        (("red", "check", "--target", "direct"), "false"),
+        (("blue", "check", "--target", "direct"), "false"),
         (("blue", "start", "--target", "direct"), "true"),
         (("red", "shell", "--no-collector"), "true"),
         (("blue", "check"), "typo"),
@@ -639,6 +643,42 @@ def test_manual_checks_skip_only_collector_availability(tmp_path, monkeypatch, r
     assert any(
         "--deny" in command and "192.168.0.1:80" in command for command in probes
     )
+
+
+@pytest.mark.parametrize("role", ["red", "blue"])
+def test_direct_checks_verify_target_and_isolation_without_probing_defender(
+    tmp_path, monkeypatch, role
+):
+    module = operator(tmp_path, monkeypatch, role, "check", "--target", "direct")
+    with (tmp_path / ".env").open("a") as settings:
+        settings.write(
+            "DIRECT_TESTING=true\nGAMEHOST_IP=192.168.0.110\nLOG_COLLECTOR_TOKEN="
+            + "x" * 32
+            + "\n"
+        )
+    with patch.object(module.subprocess, "run") as run:
+        module.main()
+    assert "--check" in run.call_args_list[0].args[0]
+    probes = [
+        call.args[0]
+        for call in run.call_args_list
+        if "/app/check_network.py" in call.args[0]
+    ]
+    assert all(
+        call.kwargs["env"]["PURPLEAI_TARGET_MODE"] == "without_defender"
+        for call in run.call_args_list
+    )
+    if role == "blue":
+        assert [command[command.index("--from") + 1] for command in probes] == [
+            "BlueAI / vulnerable-app",
+            "BlueAI / model-gateway",
+        ]
+        assert any("172.28.20.20:9000" in command for command in probes)
+    else:
+        command = probes[0]
+        assert "192.168.0.120:8081" in command
+        assert "192.168.0.120:8080" not in command
+        assert "192.168.0.110:8765" in command
 
 
 @pytest.mark.parametrize(

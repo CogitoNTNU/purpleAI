@@ -37,7 +37,7 @@ def main():
     parser.add_argument(
         "--target",
         choices=["defender", "direct"],
-        help="Target for red run/shell; defaults to defender",
+        help="Target for red run/shell or either PC's check; defaults to defender",
     )
     parser.add_argument(
         "--no-collector",
@@ -45,8 +45,12 @@ def main():
         help="Skip collector availability/delivery during check",
     )
     args = parser.parse_args()
-    if args.target and (args.role != "red" or args.action not in ("run", "shell")):
-        parser.error("--target applies to red run/shell")
+    if (
+        args.target
+        and args.action != "check"
+        and (args.role != "red" or args.action not in ("run", "shell"))
+    ):
+        parser.error("--target applies to red run/shell or either PC's check")
     if args.no_collector and args.action != "check":
         parser.error("--no-collector applies to check")
     if args.action == "cancel" and args.role != "red":
@@ -82,6 +86,9 @@ def main():
     env = os.environ.copy()
     env.update(settings)  # Compose and the firewall use the same values.
     env["PURPLEAI_RUN_ID"] = args.run_id or ""
+    env["PURPLEAI_TARGET_MODE"] = (
+        "without_defender" if args.target == "direct" else "with_defender"
+    )
     env["TARGET_PORT"] = "8081" if args.target == "direct" else "8080"
     gamehost = settings.get("GAMEHOST_IP", "")
     log_token = settings.get("LOG_COLLECTOR_TOKEN", "")
@@ -236,21 +243,25 @@ def main():
             blocked = [f"{router}:80", f"{idun}:443"]
             check_collector = gamehost and not args.no_collector
             if args.role == "red":
+                ports = [8081] if args.target == "direct" else [8080]
+                if direct_testing and args.target != "direct":
+                    ports.append(8081)
                 probe(
                     "attacker",
-                    ["model-gateway:9000", f"{blue}:8080"]
-                    + ([f"{blue}:8081"] if direct_testing else [])
+                    ["model-gateway:9000"]
+                    + [f"{blue}:{port}" for port in ports]
                     + ([f"{gamehost}:8765"] if check_collector else []),
                     [f"{blue}:22", "172.28.10.1:22", *blocked]
                     + ([] if direct_testing else [f"{blue}:8081"]),
                 )
             else:
-                probe(
-                    "defender",
-                    ["model-gateway:9000", "vulnerable-app:5000"]
-                    + ([f"{gamehost}:8765"] if check_collector else []),
-                    ["172.28.20.1:22", *blocked],
-                )
+                if args.target != "direct":
+                    probe(
+                        "defender",
+                        ["model-gateway:9000", "vulnerable-app:5000"]
+                        + ([f"{gamehost}:8765"] if check_collector else []),
+                        ["172.28.20.1:22", *blocked],
+                    )
                 probe(
                     "vulnerable-app",
                     denied=[

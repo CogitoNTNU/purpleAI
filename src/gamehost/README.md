@@ -25,14 +25,15 @@ The RedAI and BlueAI stacks must also be running. If stopped or updated,
 [start and check them now](../../deploy/sandbox/README.md#start-or-rebuild-the-lab).
 Already running stacks need no restart between experiments.
 
-**Gamehost — repository root:** start one experiment. Do not use sudo.
+**Gamehost — repository root:** start one experiment **with the defender**.
+Do not use sudo.
 
 ```sh
 cd ~/purpleAI
 python3 src/gamehost/run.py
 ```
 
-The runner:
+By default, the runner:
 
 1. Checks collector availability, both sandbox policies and event delivery.
 1. Assigns a shared run ID and recreates the defender for that run.
@@ -50,9 +51,72 @@ completed. Check defender events to assess decisions and model errors; a
 successful workflow does not mean every request returned 200. The collector and
 lab stacks stay running, and VulnShop data is preserved between experiments.
 
+## Run without the defender
+
+Use this mode to test the attacker against VulnShop itself on port 8081.
+**It runs only the attacker: no normal traffic and no defender model checks.**
+The defender container can stay running; the runner bypasses it and does not
+recreate it before or after this run.
+
+First update **gamehost, RedAI and BlueAI** to the same code version. Rebuild the
+[collector](#update-code-or-models), which now separates the two log files.
+On both RedAI and BlueAI, add or update this value in `deploy/sandbox/.env`:
+
+```dotenv
+DIRECT_TESTING=true
+```
+
+Keep the existing gateway and collector settings. `DEV_IP` may stay empty:
+the attacker still runs on RedAI, with gamehost coordinating it over SSH.
+There are no new fields to add to gamehost's `.env` or either agent's `.env`.
+
+**BlueAI — repository root:** edit, apply and check the bypass setting.
+Stopping BlueAI clears VulnShop's temporary database, uploads and reports.
+
+```sh
+cd ~/purpleAI
+nano deploy/sandbox/.env
+sudo python3 deploy/sandbox/start.py blue stop
+sudo python3 deploy/sandbox/start.py blue start
+sudo python3 deploy/sandbox/start.py blue check --target direct
+```
+
+**RedAI — repository root:** edit, apply and check its attacker access to 8081.
+
+```sh
+cd ~/purpleAI
+nano deploy/sandbox/.env
+sudo python3 deploy/sandbox/start.py red stop
+sudo python3 deploy/sandbox/start.py red start
+sudo python3 deploy/sandbox/start.py red check --target direct
+```
+
+All checks should show `PASS`. This check mode skips the defender probe;
+BlueAI's target isolation and RedAI's target/collector access are still checked.
+If either PC has not enabled `DIRECT_TESTING`, preflight refuses the run.
+
+**Gamehost — repository root:** with the collector running, start the attacker
+without the defender.
+
+```sh
+cd ~/purpleAI
+python3 src/gamehost/run.py --without-defender
+```
+
+The runner checks both PCs, assigns a run ID, launches the attacker on RedAI
+against 8081, then cancels any remaining attacker and records completion.
+It does not pull, start or stop a normal-traffic container. The attacker still
+uses its RedAI Idun gateway for its own model calls.
+
+Subsequent runs need no restarts when you switch modes: omit `--without-defender`
+to use the defender and normal traffic again. Both modes use the same VulnShop
+data. For a fresh target, stop/start BlueAI between runs. To close port 8081,
+follow [returning to defended-only testing](../../deploy/sandbox/TESTING.md#return-to-defended-only-testing).
+
 ## View logs and save events
 
-**Gamehost — repository root:** follow live collected events. Ctrl+C stops viewing
+**Gamehost — repository root:** follow live events **with the defender**.
+Events without the defender stay in their separate file below. Ctrl+C stops viewing
 without stopping the collector.
 
 ```sh
@@ -60,16 +124,47 @@ cd ~/purpleAI
 docker compose --env-file src/gamehost/.env -f src/gamehost/docker-compose.yml logs -f --tail 100 collector
 ```
 
-**Gamehost — repository root:** export all saved events to a local JSONL file.
+The collector saves the modes separately in its Docker volume:
+
+| Mode             | Saved file                     | Events                                                                         |
+| ---------------- | ------------------------------ | ------------------------------------------------------------------------------ |
+| With defender    | `/data/with-defender.jsonl`    | Run markers, attacker events and defender decisions, including normal traffic. |
+| Without defender | `/data/without-defender.jsonl` | Run markers and attacker events; no normal traffic or defender decisions.      |
+
+New events include `target_mode: with_defender` or `without_defender`.
+Preflight events follow the selected mode but have their own run IDs.
+The existing `/data/events.jsonl`, if present from an older version, is preserved
+as historical data. New runs use the files above after the collector is rebuilt.
+
+**Gamehost — repository root:** view the latest events **without the defender**
+after its first run. These events are excluded from the collector's live defender
+log stream.
+
+```sh
+cd ~/purpleAI
+docker compose --env-file src/gamehost/.env -f src/gamehost/docker-compose.yml exec -T collector tail -n 100 /data/without-defender.jsonl
+```
+
+**Gamehost — repository root:** export saved events **with the defender** to a
+local JSONL file after at least one run.
 
 ```sh
 cd ~/purpleAI
 mkdir -p src/gamehost/data
-docker compose --env-file src/gamehost/.env -f src/gamehost/docker-compose.yml exec -T collector cat /data/events.jsonl > src/gamehost/data/events.jsonl
+docker compose --env-file src/gamehost/.env -f src/gamehost/docker-compose.yml exec -T collector cat /data/with-defender.jsonl > src/gamehost/data/with-defender.jsonl
 ```
 
-The shared `run_id` groups gamehost markers, attacker actions and defender
-request decisions. Preflight `sandbox-check` events and the defender's separate
+**Gamehost — repository root:** export saved events **without the defender**
+after at least one run in that mode.
+
+```sh
+cd ~/purpleAI
+mkdir -p src/gamehost/data
+docker compose --env-file src/gamehost/.env -f src/gamehost/docker-compose.yml exec -T collector cat /data/without-defender.jsonl > src/gamehost/data/without-defender.jsonl
+```
+
+The shared `run_id` groups gamehost markers, attacker actions and, for defended
+runs, defender request decisions. Preflight `sandbox-check` events and the defender's separate
 session after cleanup have their own IDs. Normal traffic is labelled `normal`;
 other requests are labelled `other`.
 
@@ -90,7 +185,7 @@ and API keys are not included in structured events. Agent events and traffic tag
 are observations, not proof of attack success.
 
 Saved events live in the collector's Docker volume and survive container
-recreation and shutdown. The JSONL file grows until archived or cleared;
+recreation and shutdown. Both JSONL files grow until archived or cleared;
 Docker's separate console logs rotate automatically.
 
 ## Update code or models
@@ -167,8 +262,8 @@ cd ~/purpleAI
 sudo python3 deploy/sandbox/start.py red cancel
 ```
 
-**BlueAI — repository root:** restore a separate defender session while preserving
-target data.
+**BlueAI — repository root, after a defended run:** restore a separate defender
+session while preserving target data. Skip this after a run without the defender.
 
 ```sh
 cd ~/purpleAI

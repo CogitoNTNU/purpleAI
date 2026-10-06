@@ -1,6 +1,7 @@
 """Run one experiment through host SSH; the collector never executes commands."""
 
 import fcntl
+import argparse
 import json
 import os
 import shlex
@@ -15,7 +16,7 @@ from uuid import uuid4
 from log_collector import ENV_FILE, read_env_file
 
 
-def remote(destination, repository, role, action, run_id=None):
+def remote(destination, repository, role, action, run_id=None, target=None):
     if (
         not destination
         or destination.startswith("-")
@@ -25,6 +26,8 @@ def remote(destination, repository, role, action, run_id=None):
     command = [role, action]
     if run_id:
         command += ["--run-id", run_id]
+    if target:
+        command += ["--target", target]
     script = (
         f"cd -- {shlex.quote(repository)} && "
         'sudo -n /usr/bin/python3 "$(pwd)/deploy/sandbox/start.py" '
@@ -46,7 +49,17 @@ def remote(destination, repository, role, action, run_id=None):
     )
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--without-defender",
+        action="store_true",
+        help="Run only the attacker against port 8081, bypassing the defender",
+    )
+    args = parser.parse_args(argv)
+    direct = args.without_defender
+    target = "direct" if direct else "defender"
+    port = "8081" if direct else "8080"
     settings = {**read_env_file(ENV_FILE), **os.environ}
     token = settings.get("GAMEHOST_LOG_TOKEN", "")
     if len(token) < 32:
@@ -73,6 +86,7 @@ def main():
         "-f",
         str(Path(__file__).parent / "docker-compose.yml"),
     ]
+    target_url = f"http://{blue_ip}:{port}"
     # A local lock prevents two gamehost runs from assigning different defender IDs.
     directory = Path(__file__).parent / "data"
     directory.mkdir(exist_ok=True)
@@ -86,6 +100,10 @@ def main():
             pass
         run_id = str(uuid4())
         print(f"Run ID: {run_id}", flush=True)
+        print(
+            f"Target: {target_url} ({'without defender' if direct else 'through defender'})",
+            flush=True,
+        )
 
         def event(action, status):
             payload = {
@@ -99,6 +117,7 @@ def main():
                 "actor": "gamehost",
                 "action": action,
                 "status": status,
+                "target_mode": "without_defender" if direct else "with_defender",
             }
             message = Request(
                 f"{base}/events",
@@ -112,47 +131,56 @@ def main():
             with urlopen(message, timeout=3):
                 pass
 
-        # Pull k6 before the experiment so image download time is excluded.
-        subprocess.run(
-            [*compose, "pull", "traffic"], check=True, env=os.environ | settings
-        )
-        remote(blue, repository, "blue", "check")
-        remote(red, repository, "red", "check")
+        # Direct runs need only the attacker. Pull traffic before defended runs.
+        if not direct:
+            subprocess.run(
+                [*compose, "pull", "traffic"], check=True, env=os.environ | settings
+            )
+        remote(blue, repository, "blue", "check", target=target)
+        remote(red, repository, "red", "check", target=target)
         event("run_start", "started")  # Verify authentication before launching agents.
         status = "error"
         traffic_name = f"purpleai-traffic-{run_id}"
         traffic_started = False
         try:
-            remote(blue, repository, "blue", "session", run_id)
-            # Verify gamehost can reach the defender before launching the attacker.
-            with urlopen(f"http://{blue_ip}:8080/", timeout=150) as response:
-                if response.status != 200:
-                    raise RuntimeError("Normal request failed the defender check")
-            subprocess.run(
-                [
-                    *compose,
-                    "run",
-                    "-d",
-                    "--rm",
-                    "--no-deps",
-                    "--name",
-                    traffic_name,
-                    "traffic",
-                ],
-                check=True,
-                env=os.environ | settings | {"PURPLEAI_RUN_ID": run_id},
-            )
-            traffic_started = True
-            event("traffic_start", "started")
-            remote(red, repository, "red", "run", run_id)
-            running = subprocess.check_output(
-                ["docker", "inspect", "--format", "{{.State.Running}}", traffic_name],
-                text=True,
-            ).strip()
-            if running != "true":
-                raise RuntimeError(
-                    "Normal traffic stopped before the attacker finished"
+            if not direct:
+                remote(blue, repository, "blue", "session", run_id)
+                # Verify defended browsing before launching traffic or the attacker.
+                with urlopen(target_url + "/", timeout=150) as response:
+                    if response.status != 200:
+                        raise RuntimeError("Normal request failed the defender check")
+                subprocess.run(
+                    [
+                        *compose,
+                        "run",
+                        "-d",
+                        "--rm",
+                        "--no-deps",
+                        "--name",
+                        traffic_name,
+                        "traffic",
+                    ],
+                    check=True,
+                    env=os.environ | settings | {"PURPLEAI_RUN_ID": run_id},
                 )
+                traffic_started = True
+                event("traffic_start", "started")
+            remote(red, repository, "red", "run", run_id, target=target)
+            if traffic_started:
+                running = subprocess.check_output(
+                    [
+                        "docker",
+                        "inspect",
+                        "--format",
+                        "{{.State.Running}}",
+                        traffic_name,
+                    ],
+                    text=True,
+                ).strip()
+                if running != "true":
+                    raise RuntimeError(
+                        "Normal traffic stopped before the attacker finished"
+                    )
             status = "success"
         finally:
             # Always stop traffic and any remaining attacker, including on Ctrl+C.
@@ -167,7 +195,8 @@ def main():
                     remote(red, repository, "red", "cancel", run_id)
                 finally:
                     try:
-                        remote(blue, repository, "blue", "session")
+                        if not direct:
+                            remote(blue, repository, "blue", "session")
                     finally:
                         event("run_end", "error" if sys.exc_info()[0] else status)
         print(f"Finished: {run_id}", flush=True)

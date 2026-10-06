@@ -17,7 +17,7 @@ services:
       GAMEHOST_LOG_TOKEN: ${GAMEHOST_LOG_TOKEN:?Set a collector token}
       GAMEHOST_LOG_BIND: 0.0.0.0
       GAMEHOST_LOG_PORT: "8765"
-      GAMEHOST_LOG_FILE: /data/events.jsonl
+      GAMEHOST_LOG_FILE: /data/with-defender.jsonl
     volumes:
       - events:/data
     logging:

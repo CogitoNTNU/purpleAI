@@ -146,8 +146,10 @@ mean either filtering or no service listening.
 
 ## Run and view the app
 
-For shared run IDs, normal traffic and collected events, use the
-[gamehost runner](../../src/gamehost/README.md#run-an-experiment).
+For shared run IDs and collected events, use the
+[gamehost runner](../../src/gamehost/README.md#run-an-experiment). It runs normal
+traffic with the defender by default; `--without-defender` runs only the attacker
+against port 8081, with logs saved separately. See [runs without the defender](../../src/gamehost/README.md#run-without-the-defender).
 
 For a standalone attacker run, first pass both PCs' checks above.
 **RedAI — repository root:**

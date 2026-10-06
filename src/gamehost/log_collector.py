@@ -26,7 +26,7 @@ ENV_KEYS = {
     "REMOTE_REPO",
     "BLUE_IP",
 }
-DATA_FILE = Path(__file__).parent / "data" / "events.jsonl"
+DATA_FILE = Path(__file__).parent / "data" / "with-defender.jsonl"
 TOKEN = ""
 
 
@@ -56,6 +56,11 @@ def read_env_file(path: Path) -> dict[str, str]:
 def valid_event(event: object) -> bool:
     """Check the common event envelope without constraining future sources."""
     if not isinstance(event, dict) or event.get("schema_version") != 1:
+        return False
+    if event.get("target_mode", "with_defender") not in (
+        "with_defender",
+        "without_defender",
+    ):
         return False
     for key in ("event_id", "run_id"):
         try:
@@ -120,11 +125,16 @@ class EventHandler(BaseHTTPRequestHandler):
             return
 
         line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+        direct = event.get("target_mode") == "without_defender"
+        data_file = (
+            DATA_FILE.with_name("without-defender.jsonl") if direct else DATA_FILE
+        )
         with WRITE_LOCK:
-            DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with DATA_FILE.open("a", encoding="utf-8") as output:
+            data_file.parent.mkdir(parents=True, exist_ok=True)
+            with data_file.open("a", encoding="utf-8") as output:
                 output.write(line + "\n")
-            print(line, flush=True)
+            if not direct:
+                print(line, flush=True)
         self.send_response(202)
         self.end_headers()
 
@@ -145,7 +155,7 @@ def main() -> None:
     port = int(settings.get("GAMEHOST_LOG_PORT", "8765"))
     server = ThreadingHTTPServer((host, port), EventHandler)
     print(
-        f"Listening for PurpleAI events on {host}:{port}; writing to {DATA_FILE}",
+        f"Listening for PurpleAI events on {host}:{port}; with defender: {DATA_FILE}; without defender: {DATA_FILE.with_name('without-defender.jsonl')}",
         flush=True,
     )
     server.serve_forever()

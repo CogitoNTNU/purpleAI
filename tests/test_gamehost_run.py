@@ -28,7 +28,7 @@ def load(name, path):
 def collector(tmp_path):
     module = load("collector_run_test", "src/gamehost/log_collector.py")
     module.TOKEN = "x" * 32
-    module.DATA_FILE = tmp_path / "events.jsonl"
+    module.DATA_FILE = tmp_path / "with-defender.jsonl"
     server = ThreadingHTTPServer(("127.0.0.1", 0), module.EventHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -87,9 +87,72 @@ def test_both_agents_deliver_shared_id_and_defender_decisions(collector, monkeyp
     assert decisions[1]["traffic"] == "normal"
 
 
+def test_collector_separates_modes_and_keeps_direct_events_out_of_live_defender_logs(
+    collector, monkeypatch
+):
+    from datetime import datetime, timezone
+    from urllib.request import Request, urlopen
+    from purpleai.event_logging import EventSender
+
+    module, base = collector
+    run_id = str(uuid4())
+    monkeypatch.setenv("PURPLEAI_RUN_ID", run_id)
+    # Agent events must inherit the selected mode, including during failed runs.
+    for mode in ("with_defender", "without_defender"):
+        monkeypatch.setenv("PURPLEAI_TARGET_MODE", mode)
+        sender = EventSender(
+            "nmap-agent", "attacker", url=base + "/events", token="x" * 32
+        )
+        sender.emit("task_start")
+        sender.emit("task_end", status="error")
+    for mode, path in [
+        ("with_defender", module.DATA_FILE),
+        ("without_defender", module.DATA_FILE.with_name("without-defender.jsonl")),
+    ]:
+        saved = [json.loads(line) for line in path.read_text().splitlines()]
+        assert [e["action"] for e in saved] == ["task_start", "task_end"]
+        assert {e["target_mode"] for e in saved} == {mode}
+        assert {e["run_id"] for e in saved} == {run_id}
+
+    event = {
+        "schema_version": 1,
+        "event_id": str(uuid4()),
+        "run_id": run_id,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "source": "gamehost",
+        "actor": "gamehost",
+        "action": "run_start",
+        "target_mode": "without_defender",
+    }
+    output = io.StringIO()
+    with redirect_stdout(output):
+        request = Request(
+            base + "/events",
+            data=json.dumps(event).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + "x" * 32,
+            },
+        )
+        with urlopen(request, timeout=2) as response:
+            assert response.status == 202
+    assert output.getvalue() == ""
+    assert (
+        json.loads(
+            module.DATA_FILE.with_name("without-defender.jsonl")
+            .read_text()
+            .splitlines()[-1]
+        )
+        == event
+    )
+    for invalid in ("typo", "../../file", "direct", None):
+        assert not module.valid_event(event | {"target_mode": invalid})
+
+
 @pytest.mark.parametrize("fails", [False, True])
+@pytest.mark.parametrize("target", ["defender", "direct"])
 def test_runner_starts_traffic_and_cleans_up_on_attacker_failure(
-    tmp_path, monkeypatch, fails
+    tmp_path, monkeypatch, fails, target
 ):
     collector = load("runner_collector", "src/gamehost/log_collector.py")
     monkeypatch.setitem(sys.modules, "log_collector", collector)
@@ -107,17 +170,19 @@ def test_runner_starts_traffic_and_cleans_up_on_attacker_failure(
             "REMOTE_REPO": "purpleAI",
         },
     )
-    calls, events = [], []
+    calls, events, urls = [], [], []
 
-    def remote(*args):
-        calls.append(args)
-        if fails and args[2:4] == ("red", "run"):
+    def remote(destination, repository, role, action, run_id=None, target=None):
+        calls.append((role, action, run_id, target))
+        if fails and (role, action) == ("red", "run"):
             raise RuntimeError("attacker failure")
 
     from unittest.mock import MagicMock
 
     def opened(message, **kwargs):
-        if not isinstance(message, str):
+        if isinstance(message, str):
+            urls.append(message)
+        else:
             events.append(json.loads(message.data))
         context = MagicMock()
         context.__enter__.return_value.status = 200
@@ -131,28 +196,52 @@ def test_runner_starts_traffic_and_cleans_up_on_attacker_failure(
     ):
         if fails:
             with pytest.raises(RuntimeError, match="attacker failure"):
-                runner.main()
+                runner.main([] if target == "defender" else ["--without-defender"])
         else:
-            runner.main()
-    shared = [args[4] for args in calls if len(args) == 5 and args[3] != "cancel"]
-    assert len(set(shared)) == 1 and len(shared) == 2
-    assert calls[-2:] == [
-        ("red", "purpleAI", "red", "cancel", shared[0]),
-        ("blue", "purpleAI", "blue", "session"),
+            runner.main([] if target == "defender" else ["--without-defender"])
+    run_id = next(call[2] for call in calls if call[:2] == ("red", "run"))
+    assert calls[:2] == [
+        ("blue", "check", None, target),
+        ("red", "check", None, target),
     ]
-    assert [e["action"] for e in events] == [
-        "run_start",
-        "traffic_start",
-        "traffic_end",
-        "run_end",
-    ]
-    assert len({e["run_id"] for e in events}) == 1
-    assert events[-1]["status"] == ("error" if fails else "success")
-    assert any(
-        "traffic" in call.args[0] and "-d" in call.args[0]
-        for call in docker.call_args_list
+    assert ("red", "run", run_id, target) in calls
+    sessions = [call for call in calls if call[:2] == ("blue", "session")]
+    if target == "direct":
+        assert sessions == []
+        assert calls[-1] == ("red", "cancel", run_id, None)
+    else:
+        assert sessions == [
+            ("blue", "session", run_id, None),
+            ("blue", "session", None, None),
+        ]
+        assert calls[-2] == ("red", "cancel", run_id, None)
+    expected = (
+        ["run_start", "run_end"]
+        if target == "direct"
+        else ["run_start", "traffic_start", "traffic_end", "run_end"]
     )
-    assert any(call.args[0][:2] == ["docker", "stop"] for call in docker.call_args_list)
+    assert [e["action"] for e in events] == expected
+    assert {e["run_id"] for e in events} == {run_id}
+    mode = "without_defender" if target == "direct" else "with_defender"
+    assert {e["target_mode"] for e in events} == {mode}
+    assert events[-1]["status"] == ("error" if fails else "success")
+    if target == "direct":
+        docker.assert_not_called()
+        assert urls == ["http://192.168.0.110:8765/health"]
+    else:
+        traffic = next(
+            call
+            for call in docker.call_args_list
+            if "traffic" in call.args[0] and "-d" in call.args[0]
+        )
+        assert traffic.kwargs["env"]["PURPLEAI_RUN_ID"] == run_id
+        assert urls == [
+            "http://192.168.0.110:8765/health",
+            "http://192.168.0.120:8080/",
+        ]
+        assert any(
+            call.args[0][:2] == ["docker", "stop"] for call in docker.call_args_list
+        )
 
 
 def test_ssh_quotes_repository_and_keeps_fixed_commands(monkeypatch):
@@ -169,6 +258,55 @@ def test_ssh_quotes_repository_and_keeps_fixed_commands(monkeypatch):
         assert "BatchMode=yes" in command and "StrictHostKeyChecking=yes" in command
         with pytest.raises(ValueError):
             runner.remote("-oProxyCommand=bad", "purpleAI", "blue", "check")
+        runner.remote("red", "purpleAI", "red", "run", str(uuid4()), target="direct")
+        assert ssh.call_args.args[0][-1].endswith("--target direct")
+
+
+@pytest.mark.parametrize("failure", ["blue_check", "red_check"])
+def test_direct_preflight_failure_never_starts_traffic_or_attacker(
+    tmp_path, monkeypatch, failure
+):
+    from unittest.mock import MagicMock
+
+    collector = load("failed_preflight_collector", "src/gamehost/log_collector.py")
+    monkeypatch.setitem(sys.modules, "log_collector", collector)
+    runner = load("failed_preflight_runner", "src/gamehost/run.py")
+    monkeypatch.setattr(runner, "__file__", str(tmp_path / "run.py"))
+    monkeypatch.setattr(
+        runner,
+        "read_env_file",
+        lambda _: {
+            "GAMEHOST_LOG_TOKEN": "x" * 32,
+            "GAMEHOST_LOG_BIND": "192.168.0.110",
+            "BLUE_IP": "192.168.0.120",
+            "RED_SSH": "red",
+            "BLUE_SSH": "blue",
+        },
+    )
+    calls, events = [], []
+
+    def remote(destination, repository, role, action, run_id=None, target=None):
+        calls.append((role, action))
+        if failure == f"{role}_check" and action == "check":
+            raise RuntimeError("direct testing disabled")
+
+    def opened(message, **kwargs):
+        if not isinstance(message, str):
+            events.append(json.loads(message.data))
+        result = MagicMock()
+        result.__enter__.return_value.status = 200
+        return result
+
+    monkeypatch.setattr(runner, "remote", remote)
+    monkeypatch.setattr(runner, "urlopen", opened)
+    with (
+        patch.object(runner.subprocess, "run") as docker,
+        pytest.raises((RuntimeError, OSError)),
+    ):
+        runner.main(["--without-defender"])
+    assert not any(call[1] in ("run", "session") for call in calls)
+    docker.assert_not_called()
+    assert events == []
 
 
 @pytest.mark.parametrize(

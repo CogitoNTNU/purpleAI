@@ -10,7 +10,9 @@ this folder's `.env`. Docker overrides the target, port, API address and API key
 with sandbox settings; the real Idun key stays in the gateway.
 
 Use the [gamehost runner](../gamehost/README.md#run-an-experiment) for coordinated
-runs with normal traffic and a shared run ID. For standalone use, follow
+runs with a shared run ID, with normal traffic in defended mode. Use
+`--without-defender` on gamehost for an attacker-only run against 8081 with
+separate logs. For standalone use, follow
 [manual testing](../../deploy/sandbox/TESTING.md), including running the agent
 [from your own PC](../../deploy/sandbox/TESTING.md#run-the-existing-nmap-agent-on-your-pc).
 

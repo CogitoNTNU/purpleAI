@@ -51,6 +51,7 @@ def main():
             "source": "sandbox-check",
             "actor": "sandbox-check",
             "action": "log_check",
+            "target_mode": os.environ.get("PURPLEAI_TARGET_MODE", "with_defender"),
         }
         message = Request(
             os.environ["LOG_COLLECTOR_URL"],

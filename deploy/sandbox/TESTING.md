@@ -25,7 +25,8 @@ Avoid manual attacks during a managed gamehost run.
 ## Enable direct access on BlueAI
 
 This is optional and disabled by default. It permits RedAI, plus the optional development PC configured below, to
-access 8081. Docker Compose 2.33.1 or newer is required for the
+access 8081. Gamehost can coordinate [runs without the defender](../../src/gamehost/README.md#run-without-the-defender)
+using the RedAI attacker; gamehost itself does not need direct HTTP access. Docker Compose 2.33.1 or newer is required for the
 [direct endpoint's network gateway setting](https://docs.docker.com/reference/compose-file/services/#gw_priority).
 
 **BlueAI — repository root:**
@@ -219,12 +220,14 @@ key and chosen model:
 ```dotenv
 TARGET_URL=http://192.168.0.120:8081
 NMAP_PORT=8081
+PURPLEAI_TARGET_MODE=without_defender
 IDUN_BASE_URL=https://llm.hpc.ntnu.no/v1
 IDUN_API_KEY=your-idun-api-key
 AGENT_MODEL=openai/gpt-oss-120b
 ```
 
-For defended testing, change **both** `TARGET_URL` and `NMAP_PORT` to use 8080.
+For defended testing, change `TARGET_URL` and `NMAP_PORT` to use 8080, and set
+`PURPLEAI_TARGET_MODE=with_defender`. The mode labels any locally printed or sent events.
 Leave `LOG_COLLECTOR_URL` and `LOG_COLLECTOR_TOKEN` unset; events print in the
 terminal. Existing exported environment variables take precedence over `.env`.
 
@@ -270,8 +273,9 @@ sudo python3 deploy/sandbox/start.py red check --no-collector
 ```
 
 BlueAI no longer publishes 8081. RedAI's check should show 8081 `unreachable` as
-a `PASS`. The gamehost runner always uses 8080, including while direct testing is
-enabled. Use its usual checks without `--no-collector` before a managed run.
+a `PASS`. Gamehost runs default to 8080; `--without-defender` selects 8081 and
+runs only the attacker. See [both gamehost modes](../../src/gamehost/README.md).
+Use its usual checks without `--no-collector` before a managed run.
 
 ## Troubleshooting
 
