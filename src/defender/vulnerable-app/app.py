@@ -6,10 +6,9 @@ VIKTIG:
 - IKKE deploy dette på internett eller på en maskin med annen viktig data.
 - Se VULNERABILITIES.md for full oversikt over hva som er plantet og hvorfor.
 
-Kjør:
-    pip install -r requirements.txt
-    python app.py
-Åpne http://127.0.0.1:5000
+Kjør via to-PC-sandkassen fra repository-roten (~/purpleAI):
+    sudo python3 deploy/sandbox/start.py blue start
+Se deploy/sandbox/README.md for oppsett og nettverkskontroller.
 """
 
 import os

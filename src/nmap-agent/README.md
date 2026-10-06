@@ -1,148 +1,43 @@
-# PurpleAI — attacker agent v0
+# Nmap attacker agent
 
-A controlled cybersecurity research lab: a LangChain/LangGraph attacker
-agent that performs basic Nmap reconnaissance against one predefined
-test service. The LLM runs on NTNU's IDUN LLM API — never the public
-OpenAI API.
+A LangChain/LangGraph agent that performs reconnaissance against the configured
+PurpleAI target using one restricted `nmap_scan()` tool. In the two-PC sandbox,
+model calls go through the local Idun gateway and scans target BlueAI port 8080.
 
-## Architecture
+Use the [sandbox guide](../../deploy/sandbox/README.md) for setup, network checks,
+model changes, logs, and shutdown. Choose any Idun model using `AGENT_MODEL` in
+this folder's `.env`. Docker overrides the target, port, API address and API key
+with sandbox settings; the real Idun key stays in the gateway.
 
-```text
-User task
-   ↓
-LangChain/LangGraph attacker agent
-   ↓
-NTNU IDUN LLM API  (https://llm.hpc.ntnu.no/v1)
-   ↓
-LLM decides whether to call tool
-   ↓
-nmap_scan()  (restricted tool, target fixed in config)
-   ↓
-Configured PurpleAI target
-   ↓
-Structured Nmap result
-   ↓
-LLM interprets result
+**RedAI — repository root (`~/purpleAI`):** run the attacker after the gateway is
+started and both PCs pass their connection checks. Replace `~/purpleAI` if your
+checkout is elsewhere.
+
+```sh
+cd ~/purpleAI
+sudo python3 deploy/sandbox/start.py red run
 ```
 
-```text
-LangChain/LangGraph
-       │
-       ▼
-NTNU IDUN LLM API
-       │
-       ▼
-attacker reasoning
-       │
-       ▼
-restricted Nmap tool
-       │
-       ▼
-PurpleAI target
-```
+## Files
 
-## Safety boundary
+| File               | Purpose                                                       |
+| ------------------ | ------------------------------------------------------------- |
+| `main.py`          | Predefined reconnaissance task and entry point                |
+| `agent.py`         | Agent construction, workflow output, and model error messages |
+| `config.py`        | Settings validation and trusted target selection              |
+| `tools/nmap.py`    | Restricted Nmap tool and result parsing                       |
+| `logging_utils.py` | Structured console events and optional gamehost delivery      |
+| `requirements.txt` | Dependencies installed by the sandbox Dockerfile              |
+| `.env.example`     | Agent model setting and optional settings for direct use      |
 
-The agent's only tool is `nmap_scan()`, which takes **no parameters**.
-The scan target is derived from `TARGET_URL` in `.env` by trusted
-application code (`config.py` → `tools/nmap.py`). The LLM can never
-choose or modify the target, and Nmap is invoked as a fixed argument
-list (`nmap -sV -Pn -oX - <host>`, no `shell=True`). There is no
-arbitrary shell execution, no arbitrary targets, and no exploitation.
+## Tool and logs
 
-## Prerequisites
+`nmap_scan()` accepts no parameters. Trusted configuration supplies the target
+and optional `NMAP_PORT`; the sandbox fixes the port to 8080. Nmap runs with an
+argument list and no shell. The agent cannot choose another scan target or
+execute arbitrary commands through this tool.
 
-* Python 3.11+
-* [Nmap](https://nmap.org/) installed locally (`brew install nmap` or `sudo apt install nmap`)
-* NTNU network access or NTNU VPN — IDUN is only reachable from NTNU networks
-* A personal NTNU IDUN API key, requestable at:
-  https://ai.hpc.ntnu.no/request-api-key
-
-IDUN LLM endpoint: `https://llm.hpc.ntnu.no/v1`
-
-## Setup
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-```
-
-Then edit `.env` and insert your own IDUN API key:
-
-```env
-TARGET_URL=http://192.168.50.10:8080
-
-IDUN_BASE_URL=https://llm.hpc.ntnu.no/v1
-IDUN_API_KEY=your-idun-api-key
-AGENT_MODEL=openai/gpt-oss-120b
-```
-
-Optionally set `NMAP_PORT` to a single port (1–65535) to limit reconnaissance.
-The two-PC sandbox sets it to `8080`, the only exposed defender port. If unset,
-Nmap retains its normal default port selection. The value comes from trusted
-configuration, never from the LLM.
-
-## Run
-
-```bash
-python main.py
-```
-
-Choose any model available on Idun by setting `AGENT_MODEL` in this agent's `.env`.
-
-Example output:
-
-```text
-PurpleAI attacker v0
-Target: http://192.168.50.10:8080
-Model: openai/gpt-oss-120b
-LLM API: https://llm.hpc.ntnu.no/v1
-
-[USER TASK]
-Investigate the configured PurpleAI target...
-
-[TOOL CALL]
-nmap_scan()
-
-[TOOL RESULT]
-{"target": "192.168.50.10", "ports": [...]}
-
-[AGENT]
-The target exposes...
-```
-
-Every agent action is logged as a structured JSON line. Events include a
-source, run ID, event ID, UTC timestamp, actor, action, and optional tool,
-target, and status. Set `LOG_COLLECTOR_URL` and `LOG_COLLECTOR_TOKEN` in
-`.env` to send each event to the gamehost as it happens. The agent keeps
-running if the collector is temporarily unavailable; it prints one
-delivery warning per run. Events missed while the collector is offline
-are not replayed.
-
-Start the collector on the gamehost as described in
-[`../gamehost/README.md`](../gamehost/README.md) before running the agent.
-
-## Project structure
-
-```text
-purpleai/
-├── main.py            # CLI entry point
-├── agent.py           # agent construction + workflow printing
-├── config.py          # .env loading, validation, target parsing
-├── logging_utils.py   # structured JSON event logging
-├── tools/
-│   └── nmap.py        # restricted nmap_scan() tool
-├── requirements.txt
-├── .env.example
-└── README.md
-```
-
-## Extending
-
-New restricted tools (e.g. `http_get(path)`, `inspect_headers(path)`)
-follow the same principle: the LLM selects actions, but trusted
-application code enforces the allowed target. Registration happens in
-`agent.py`; the target must always come from `config.py`, never from
-the LLM.
+Actions are printed as JSON events. Optional gamehost delivery uses
+`LOG_COLLECTOR_URL` and `LOG_COLLECTOR_TOKEN` together; see the
+[gamehost guide](../gamehost/README.md). Leave them unset in this sandbox, whose
+firewall does not permit collector connections.
