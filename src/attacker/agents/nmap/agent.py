@@ -25,8 +25,8 @@ from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
-from config import get_config
-from tools.nmap import nmap_scan
+from .config import get_config
+from .tools.nmap import nmap_scan
 
 SYSTEM_PROMPT = """You are the reconnaissance agent in the PurpleAI controlled cybersecurity lab.
 

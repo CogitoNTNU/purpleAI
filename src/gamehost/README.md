@@ -43,7 +43,7 @@ By default, the runner:
 1. Checks collector availability, both sandbox policies and event delivery.
 1. Assigns a shared run ID and recreates the defender for that run.
 1. Verifies a request through the defender, then starts normal browsing traffic.
-1. Runs the Nmap attacker on RedAI against BlueAI port 8080.
+1. Runs the configured attacker workflow on RedAI against BlueAI port 8080.
 1. Stops traffic and recreates the defender in a separate session at the end.
 
 Normal traffic visits `/`, `/search`, `/product/1`, `/login` and `/register`, using
@@ -73,7 +73,7 @@ DIRECT_TESTING=true
 
 Keep the existing gateway and collector settings. `DEV_IP` may stay empty:
 the attacker still runs on RedAI, with gamehost coordinating it over SSH.
-There are no new fields to add to gamehost's `.env` or either agent's `.env`.
+Gamehost's `.env` needs no change for this mode.
 
 **BlueAI — repository root:** edit, apply and check the bypass setting.
 Stopping BlueAI clears VulnShop's temporary database, uploads and reports.
@@ -178,16 +178,11 @@ Defender model failures have `status: model_error`, `http_status: 403`,
 null when there was no HTTP response. A 404 with `status: forwarded` is a target
 response, often from an Nmap probe to an unknown path; it is not a model error.
 
-Both agents print structured JSON and send it directly to the collector.
-Diagnostics use Python `logging` on stderr. The attacker's readable transcript
-and diagnostic messages stay in console output; they are not collector events.
-Use the [sandbox log commands](../../deploy/sandbox/README.md#logs-shell-and-shutdown)
-for stack diagnostics. Attacker run containers are removed after completion.
-
-Delivery is best effort with a 0.5-second send timeout, no queue and no retries.
-Missing events are not replayed. Raw exception messages, request/response bodies
-and API keys are not included in structured events. Agent events and traffic tags
-are observations, not proof of attack success.
+Agents print JSON events and send them to the collector on a best-effort basis.
+Delivery uses a 0.5-second timeout, without a queue or retries; missing events
+are not replayed. Readable attacker output and Python diagnostic logs remain
+in the launching terminal or [sandbox logs](../../deploy/sandbox/README.md#logs-shell-and-shutdown).
+For event fields and interpretation, see [event format](../../docs/event-format.md).
 
 Saved events live in the collector's Docker volume and survive container
 recreation and shutdown. Both JSONL files grow until archived or cleared;
@@ -196,6 +191,8 @@ Docker's separate console logs rotate automatically.
 ## Update code or models
 
 Update all three checkouts to the same code version between experiments.
+For agent selection, dependencies and the migration from the old Nmap folder,
+use [adding or updating agents](../../docs/agents.md).
 For agent, gateway, target or sandbox changes,
 [stop/start both lab stacks](../../deploy/sandbox/README.md#start-or-rebuild-the-lab).
 This rebuilds their images; stopping BlueAI clears temporary target data.

@@ -16,6 +16,7 @@ This page configures and operates the two lab PCs.
 - **New lab with gamehost:** start with [first-time setup](../../src/gamehost/SETUP.md).
 - **Already configured lab:** use the [gamehost run guide](../../src/gamehost/README.md).
 - **Tools, scripts or agents from RedAI or your own PC:** use [manual testing](TESTING.md), with or without defender checks.
+- **New or updated agents:** use the [agent integration guide](../../docs/agents.md).
 
 Every host command below runs from **`~/purpleAI`**, the repository root.
 Replace that path if your checkout is elsewhere. Use the same code version on
@@ -77,15 +78,15 @@ Put only the Idun API key in `secrets/idun_key`. The directory limits host acces
 the key file is mounted read-only into the non-root gateway. Secrets and `.env`
 files are excluded from Git and Docker image builds.
 
-### 3. Choose the agent models
+### 3. Choose agents and models
 
 **RedAI — repository root:**
 
 ```sh
 cd ~/purpleAI
-cp -n src/nmap-agent/.env.example src/nmap-agent/.env
-nano src/nmap-agent/.env
-chmod 600 src/nmap-agent/.env
+cp -n src/attacker/.env.example src/attacker/.env
+nano src/attacker/.env
+chmod 600 src/attacker/.env
 ```
 
 **BlueAI — repository root:**
@@ -97,18 +98,21 @@ nano src/defender/defender-agent/.env
 chmod 600 src/defender/defender-agent/.env
 ```
 
-Set `AGENT_MODEL` to any available Idun model in each agent's `.env`. Both defender
-checks currently use that defender model. The sandbox supplies the target,
-gateway address and gateway token automatically. Agent `.env` files only need
-the model; deployment `.env` holds network and gateway settings.
+The copied examples select `ATTACKER_MODULE=agents.nmap.main` on RedAI and
+`DEFENDER_APP=defender:app` on BlueAI. Set `AGENT_MODEL` to your chosen Idun model
+in each file. The sandbox supplies the target, gateway and collector settings.
+
+For another agent or a coordinator with subagents, follow [adding or updating
+agents](../../docs/agents.md). Existing installations need its
+[one-time migration](../../docs/agents.md#upgrade-an-existing-lab) before rebuilding.
 
 Keep settings in these files; changing a model does not require editing deployment settings:
 
 | PC                           | File                               | Settings                                                                                          |
 | ---------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------- |
 | RedAI and BlueAI, separately | `deploy/sandbox/.env`              | Network addresses, gateway token, collector delivery and optional testing access                  |
-| RedAI                        | `src/nmap-agent/.env`              | Attacker's `AGENT_MODEL`                                                                          |
-| BlueAI                       | `src/defender/defender-agent/.env` | Defender's `AGENT_MODEL`                                                                          |
+| RedAI                        | `src/attacker/.env`                | `ATTACKER_MODULE`, model and workflow settings                                                    |
+| BlueAI                       | `src/defender/defender-agent/.env` | `DEFENDER_APP`, model and application settings                                                    |
 | Gamehost                     | `src/gamehost/.env`                | Collector token/address and SSH destinations; see [first-time setup](../../src/gamehost/SETUP.md) |
 
 ## Start or rebuild the lab
@@ -183,7 +187,7 @@ it is disabled by default.
 
 ```sh
 cd ~/purpleAI
-nano src/nmap-agent/.env
+nano src/attacker/.env
 ```
 
 **BlueAI — repository root:** edit the defender model and recreate only the
@@ -271,8 +275,8 @@ not reset this budget.
 
 Use synthetic lab data: requests reach Idun and may appear in logs. Containers
 share the host kernel; broader tools such as kernel exploits require a stronger
-boundary, such as disposable VMs. The current attacker scans only the selected endpoint port, 8080 by default or
-8081 with `--target direct`.
+boundary, such as disposable VMs. The supplied Nmap example scans only the selected endpoint port, 8080 by default
+or 8081 with `--target direct`. Other workflows still use the same network policy.
 
 If Idun's IPv4 address changes, stop both stacks, update `IDUN_IP` on each PC,
 then start/check both again. To inspect firewall DROP counters:

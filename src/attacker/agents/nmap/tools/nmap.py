@@ -13,8 +13,8 @@ import xml.etree.ElementTree as ET
 
 from langchain_core.tools import tool
 
-from config import get_config
-from logging_utils import log_event
+from ..config import get_config
+from ..logging_utils import log_event
 
 
 def _run_nmap(target_host: str, timeout: int, port: int | None = None) -> str:
@@ -94,7 +94,7 @@ def nmap_scan() -> dict:
     # Errors are returned as a dict (not raised) so the model can read
     # the failure and reason about it, instead of crashing the agent run.
     try:
-        xml_output = _run_nmap(target_host, config.nmap_timeout, config.nmap_port)
+        xml_output = _run_nmap(target_host, config.nmap_timeout, config.target_port)
         ports = _parse_nmap_xml(xml_output)
     except RuntimeError as exc:
         log_event(

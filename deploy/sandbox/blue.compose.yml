@@ -29,8 +29,8 @@ services:
       - "${BLUE_IP:?Set the BlueAI address}:8080:8080"
     environment:
       TARGET: http://vulnerable-app:5000
-      IDUNN_BASE_URL: http://model-gateway:9000/v1
-      IDUNN_API_KEY: ${GATEWAY_TOKEN:?Generate a gateway token}
+      IDUN_BASE_URL: http://model-gateway:9000/v1
+      IDUN_API_KEY: ${GATEWAY_TOKEN:?Generate a gateway token}
       HOME: /workspace
       PURPLEAI_RUN_ID: ${PURPLEAI_RUN_ID:-}
       LOG_COLLECTOR_URL: ${LOG_COLLECTOR_URL:-}

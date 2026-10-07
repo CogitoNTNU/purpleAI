@@ -116,8 +116,9 @@ sudo python3 deploy/sandbox/start.py red check --no-collector
 The check now requires both 8080 and 8081 to be reachable. BlueAI must already
 have direct testing enabled. All check lines should show `PASS`.
 
-**RedAI — repository root:** run the existing Nmap agent through the defender.
-Choose its model in `src/nmap-agent/.env` as usual.
+**RedAI — repository root:** run the configured attacker through the defender.
+Choose its workflow and model in `src/attacker/.env`. The example selects
+`ATTACKER_MODULE=agents.nmap.main`; another module may coordinate several agents.
 
 ```sh
 cd ~/purpleAI
@@ -132,7 +133,8 @@ sudo python3 deploy/sandbox/start.py red run --target direct
 ```
 
 Omitting `--target` selects the defender. The selected endpoint supplies both
-`TARGET_URL` and `NMAP_PORT`; the agent cannot select another host or port.
+`TARGET_URL` and `TARGET_PORT`. The Nmap example scans that URL's port;
+the firewall enforces permitted connections for every workflow.
 The script also sets the event's target mode automatically; do not add
 `PURPLEAI_TARGET_MODE` to the agent's `.env` for sandbox or gamehost runs.
 The agent still needs Idun for its own model calls, even when the target bypasses
@@ -150,7 +152,7 @@ sudo python3 deploy/sandbox/start.py red shell --target direct
 ```sh
 cd /app
 curl --max-time 10 -i "$TARGET_URL/"
-nmap -sT -sV -Pn -p "$NMAP_PORT" 192.168.0.120
+nmap -sT -sV -Pn -p "$TARGET_PORT" 192.168.0.120
 exit
 ```
 
@@ -220,37 +222,38 @@ run those commands from any existing directory if you have no local repository.
 Tools run locally with your PC's permissions. For tools available only on Kali,
 SSH to RedAI and use the [native Kali instructions](#tools-and-scripts-directly-on-redai).
 
-### Run the existing Nmap agent on your PC
+### Run an attacker workflow on your PC
 
-This optional example is for macOS/Linux with Python 3.12 or newer and Nmap on
+This example uses the supplied Nmap workflow on macOS/Linux with Python 3.12 or newer and Nmap on
 `PATH`. Use a local checkout of this branch. The agent calls Idun directly using
 its own API key; BlueAI's model gateway remains private. Your PC therefore also
 needs access to Idun. Raw tools/scripts that do not use a model need no Idun key.
 
 **Development PC — repository root:** create an agent-specific virtual environment.
-This does not change the repository's root virtual environment.
+The workflow dependencies live in the role folder.
 
 ```sh
 cd ~/purpleAI
-python3 -m venv src/nmap-agent/.venv
-src/nmap-agent/.venv/bin/python3 -m pip install -r src/nmap-agent/requirements.txt
-cp -n src/nmap-agent/.env.example src/nmap-agent/.env
-nano src/nmap-agent/.env
-chmod 600 src/nmap-agent/.env
+python3 -m venv src/attacker/.venv
+src/attacker/.venv/bin/python3 -m pip install -r src/attacker/requirements.txt
+cp -n src/attacker/.env.example src/attacker/.env
+nano src/attacker/.env
+chmod 600 src/attacker/.env
 ```
 
-Set these values in `src/nmap-agent/.env` for direct testing, using your own Idun
+Set these values in `src/attacker/.env` for direct testing, using your own Idun
 key and chosen model:
 
 ```dotenv
+ATTACKER_MODULE=agents.nmap.main
 TARGET_URL=http://192.168.0.120:8081
-NMAP_PORT=8081
 IDUN_BASE_URL=https://llm.hpc.ntnu.no/v1
 IDUN_API_KEY=your-idun-api-key
 AGENT_MODEL=openai/gpt-oss-120b
 ```
 
-For defended testing, change `TARGET_URL` and `NMAP_PORT` to use 8080.
+For defended testing, change `TARGET_URL` to use 8080. The Nmap example reads
+its scan port from that URL.
 Leave `LOG_COLLECTOR_URL` and `LOG_COLLECTOR_TOKEN` unset; events print in the
 terminal. Existing exported environment variables take precedence over `.env`.
 
@@ -260,12 +263,12 @@ Local attacks work without it. Printed events default to `with_defender`; add
 tests. If you enable collector delivery, set the matching mode so those events
 go to the correct log file.
 
-**Development PC — `~/purpleAI/src/nmap-agent`:** run the agent. The working
+**Development PC — `~/purpleAI/src/attacker`:** run the agent. The working
 folder lets it read its own `.env`; `PYTHONPATH` makes the shared sender available.
 
 ```sh
-cd ~/purpleAI/src/nmap-agent
-PYTHONPATH="$PWD/.." .venv/bin/python3 "$PWD/main.py"
+cd ~/purpleAI/src/attacker
+PYTHONPATH="$PWD/.." .venv/bin/python3 -m purpleai.agent_runtime attacker
 ```
 
 The same setup works for a native agent run on RedAI. Direct local runs have

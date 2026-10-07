@@ -12,8 +12,12 @@ with sandbox values. The real Idun key is held by the gateway.
 
 Follow the [sandbox guide](../../../deploy/sandbox/README.md) for setup and
 [model changes](../../../deploy/sandbox/README.md#change-a-model-without-rebuilding).
-The shared sandbox Dockerfile builds this agent; no separate Dockerfile
-or dependency export is needed here.
+Select the HTTP application with `DEFENDER_APP` in this folder's `.env`
+(default example: `defender:app`). The image installs this folder's
+`requirements.txt` and includes all its source files. See
+[adding or updating agents](../../../docs/agents.md) for another implementation
+or subagents. The supplied proxy uses `IDUN_BASE_URL` and `IDUN_API_KEY`,
+which Compose sets to its gateway.
 
 **BlueAI — repository root (`~/purpleAI`):** view defender and stack logs.
 Replace `~/purpleAI` if your checkout is elsewhere.

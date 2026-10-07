@@ -1,6 +1,6 @@
 """Nmap event fields; shared code handles console output and delivery."""
 
-from config import get_config
+from .config import get_config
 from purpleai.event_logging import EventSender
 
 _sender = None

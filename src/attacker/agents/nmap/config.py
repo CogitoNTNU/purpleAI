@@ -29,7 +29,7 @@ class Config:
     nmap_timeout: int
     log_collector_url: str | None
     log_collector_token: str | None
-    nmap_port: int | None = None
+    target_port: int
 
 
 def _parse_target_host(target_url: str) -> str:
@@ -78,16 +78,17 @@ def load_config(env_file: str = ".env") -> Config:
 
     target_host = _parse_target_host(required["TARGET_URL"])
 
-    nmap_port = None
-    if os.environ.get("NMAP_PORT"):
-        try:
-            nmap_port = int(os.environ["NMAP_PORT"])
-        except ValueError as exc:
-            raise ConfigError(
-                "NMAP_PORT must be an integer between 1 and 65535"
-            ) from exc
-        if not 1 <= nmap_port <= 65535:
-            raise ConfigError("NMAP_PORT must be between 1 and 65535")
+    try:
+        parsed = urlparse(required["TARGET_URL"])
+        target_port = (
+            parsed.port
+            if parsed.port is not None
+            else (443 if parsed.scheme == "https" else 80)
+        )
+        if not 1 <= target_port <= 65535:
+            raise ValueError("Port out of range")
+    except ValueError as exc:
+        raise ConfigError("TARGET_URL must use a port between 1 and 65535") from exc
 
     log_collector_url = os.environ.get("LOG_COLLECTOR_URL", "").strip() or None
     log_collector_token = os.environ.get("LOG_COLLECTOR_TOKEN", "").strip() or None
@@ -121,7 +122,7 @@ def load_config(env_file: str = ".env") -> Config:
         nmap_timeout=120,
         log_collector_url=log_collector_url,
         log_collector_token=log_collector_token,
-        nmap_port=nmap_port,
+        target_port=target_port,
     )
 
 

@@ -400,25 +400,24 @@ def test_scan_port_is_validated_in_trusted_config(monkeypatch, port):
     dotenv.load_dotenv = lambda _: None
     monkeypatch.setitem(sys.modules, "dotenv", dotenv)
     spec = importlib.util.spec_from_file_location(
-        "test_sandbox_config", ROOT / "src/nmap-agent/config.py"
+        "test_sandbox_config", ROOT / "src/attacker/agents/nmap/config.py"
     )
     config = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, spec.name, config)
     spec.loader.exec_module(config)
     for name, value in {
-        "TARGET_URL": "http://192.168.0.120:8080",
+        "TARGET_URL": f"http://192.168.0.120:{port}",
         "IDUN_BASE_URL": "http://model-gateway:9000/v1",
         "IDUN_API_KEY": "dummy",
         "AGENT_MODEL": "lab-model",
-        "NMAP_PORT": port,
     }.items():
         monkeypatch.setenv(name, value)
     monkeypatch.delenv("LOG_COLLECTOR_URL", raising=False)
     monkeypatch.delenv("LOG_COLLECTOR_TOKEN", raising=False)
     if port == "8080":
-        assert config.load_config().nmap_port == 8080
-        monkeypatch.delenv("NMAP_PORT")
-        assert config.load_config().nmap_port is None
+        assert config.load_config().target_port == 8080
+        monkeypatch.setenv("TARGET_URL", "http://192.168.0.120")
+        assert config.load_config().target_port == 80
         monkeypatch.delenv("AGENT_MODEL")
         with pytest.raises(config.ConfigError, match="AGENT_MODEL"):
             config.load_config()

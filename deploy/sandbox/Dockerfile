@@ -11,21 +11,22 @@ USER 10001:10001
 CMD ["gunicorn", "--bind", "0.0.0.0:9000", "--workers", "1", "--threads", "4", "--timeout", "150", "gateway:create_app()"]
 
 FROM base AS attacker
-RUN apt-get update && apt-get install -y --no-install-recommends nmap curl && rm -rf /var/lib/apt/lists/*
-COPY src/nmap-agent/requirements.txt .
+COPY src/attacker/system-packages.txt /tmp/system-packages.txt
+RUN apt-get update && sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' /tmp/system-packages.txt | xargs -r apt-get install -y --no-install-recommends && rm -rf /var/lib/apt/lists/* /tmp/system-packages.txt
+COPY src/attacker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY src/nmap-agent/*.py ./
-COPY src/nmap-agent/tools ./tools
+COPY src/attacker/ ./
 COPY src/purpleai ./purpleai
 USER 10001:10001
-CMD ["python", "main.py"]
+CMD ["python", "-m", "purpleai.agent_runtime", "attacker"]
 
 FROM base AS defender
-RUN pip install --no-cache-dir 'langchain-openai>=1.0,<2'
-COPY src/defender/defender-agent/defender.py src/defender/defender-agent/events.py ./
+COPY src/defender/defender-agent/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY src/defender/defender-agent/ ./
 COPY src/purpleai ./purpleai
 USER 10001:10001
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "4", "--timeout", "180", "defender:app"]
+CMD ["python", "-m", "purpleai.agent_runtime", "defender"]
 
 FROM base AS target
 COPY src/defender/vulnerable-app/ ./

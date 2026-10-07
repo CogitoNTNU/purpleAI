@@ -1,5 +1,9 @@
 # Shared agent logging
 
+`agent_runtime.py` launches the configured attacker module or defender WSGI
+application, replacing itself so shutdown signals reach that process.
+See [agent integration](../../docs/agents.md) for entry points and dependencies.
+
 `event_logging.py` creates JSON experiment events and sends them to gamehost.
 Both agent Docker images include this package. Agent wrappers supply their
 source, actor and collector settings; the shared sender handles IDs, UTC

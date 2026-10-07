@@ -9,9 +9,9 @@ from __future__ import annotations
 import logging
 import sys
 
-from agent import describe_llm_error, run_agent
-from config import ConfigError, get_config
-from logging_utils import log_event
+from .agent import describe_llm_error, run_agent
+from .config import ConfigError, get_config
+from .logging_utils import log_event
 from purpleai.event_logging import configure_logging
 
 logger = logging.getLogger(__name__)

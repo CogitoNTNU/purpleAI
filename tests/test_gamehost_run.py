@@ -46,19 +46,21 @@ def test_both_agents_deliver_shared_id_and_defender_decisions(collector, monkeyp
     monkeypatch.setenv("PURPLEAI_RUN_ID", run_id)
     monkeypatch.setenv("LOG_COLLECTOR_URL", base + "/events")
     monkeypatch.setenv("LOG_COLLECTOR_TOKEN", "x" * 32)
-    fake_config = types.ModuleType("config")
+    fake_config = types.ModuleType("agents.nmap.config")
     fake_config.get_config = lambda: types.SimpleNamespace(
         log_collector_url=base + "/events", log_collector_token="x" * 32
     )
-    monkeypatch.setitem(sys.modules, "config", fake_config)
-    attacker = load("attacker_run_events", "src/nmap-agent/logging_utils.py")
+    monkeypatch.setitem(sys.modules, "agents.nmap.config", fake_config)
+    attacker = load(
+        "agents.nmap.attacker_run_events", "src/attacker/agents/nmap/logging_utils.py"
+    )
     defender_events = load(
         "defender_run_events", "src/defender/defender-agent/events.py"
     )
     monkeypatch.setitem(sys.modules, "events", defender_events)
     monkeypatch.setenv("AGENT_MODEL", "lab-model")
-    monkeypatch.setenv("IDUNN_BASE_URL", "http://unused/v1")
-    monkeypatch.setenv("IDUNN_API_KEY", "dummy")
+    monkeypatch.setenv("IDUN_BASE_URL", "http://unused/v1")
+    monkeypatch.setenv("IDUN_API_KEY", "dummy")
     defender = load("defender_run_test", "src/defender/defender-agent/defender.py")
     with redirect_stdout(io.StringIO()):
         attacker.log_event("attacker", "task_start")
@@ -334,8 +336,8 @@ def test_model_failure_details_reach_collector_without_secrets(
     monkeypatch.setenv("LOG_COLLECTOR_URL", base + "/events")
     monkeypatch.setenv("LOG_COLLECTOR_TOKEN", "x" * 32)
     monkeypatch.setenv("AGENT_MODEL", "lab-model")
-    monkeypatch.setenv("IDUNN_BASE_URL", "http://unused/v1")
-    monkeypatch.setenv("IDUNN_API_KEY", "dummy")
+    monkeypatch.setenv("IDUN_BASE_URL", "http://unused/v1")
+    monkeypatch.setenv("IDUN_API_KEY", "dummy")
     events = load("error_detail_events", "src/defender/defender-agent/events.py")
     monkeypatch.setitem(sys.modules, "events", events)
     defender = load("error_detail_defender", "src/defender/defender-agent/defender.py")

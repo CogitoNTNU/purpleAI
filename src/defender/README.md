@@ -7,7 +7,8 @@ The working two-PC lab contains:
 
 Use the [sandbox guide](../../deploy/sandbox/README.md) for configuration,
 startup, checks, model changes, logs and shutdown. For coordinated experiments,
-use the [gamehost run guide](../gamehost/README.md). Docker builds and dependencies
+use the [gamehost run guide](../gamehost/README.md). To add or replace agents,
+follow [agent integration](../../docs/agents.md). Docker builds and dependencies
 are defined in `deploy/sandbox/Dockerfile`; services are defined in
 `deploy/sandbox/blue.compose.yml`.
 

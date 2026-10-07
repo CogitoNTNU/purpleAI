@@ -47,11 +47,12 @@ class EventDeliveryTest(unittest.TestCase):
         collector = load_module(
             "test_collector", ROOT / "src/gamehost/log_collector.py"
         )
-        fake_config = types.ModuleType("config")
+        fake_config = types.ModuleType("agents.nmap.config")
         fake_config.get_config = lambda: None
-        with patch.dict(sys.modules, {"config": fake_config}):
+        with patch.dict(sys.modules, {"agents.nmap.config": fake_config}):
             logging = load_module(
-                "test_nmap_logging", ROOT / "src/nmap-agent/logging_utils.py"
+                "agents.nmap.test_nmap_logging",
+                ROOT / "src/attacker/agents/nmap/logging_utils.py",
             )
 
         with tempfile.TemporaryDirectory() as directory:
@@ -86,11 +87,12 @@ class EventDeliveryTest(unittest.TestCase):
                 thread.join()
 
     def test_unavailable_collector_does_not_stop_logging(self):
-        fake_config = types.ModuleType("config")
+        fake_config = types.ModuleType("agents.nmap.config")
         fake_config.get_config = lambda: None
-        with patch.dict(sys.modules, {"config": fake_config}):
+        with patch.dict(sys.modules, {"agents.nmap.config": fake_config}):
             logging = load_module(
-                "test_nmap_logging_offline", ROOT / "src/nmap-agent/logging_utils.py"
+                "agents.nmap.test_nmap_logging_offline",
+                ROOT / "src/attacker/agents/nmap/logging_utils.py",
             )
         logging.get_config = lambda: types.SimpleNamespace(
             log_collector_url="http://127.0.0.1:1/events",
