@@ -18,7 +18,7 @@ Every event is a single JSON object with these fields:
 | ---------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `schema_version` | integer | yes      | Always `1`. Bump only for breaking changes.                                                                                    |
 | `event_id`       | string  | yes      | UUID string, unique per event; the sender generates UUID v4.                                                                   |
-| `run_id`         | string  | yes      | UUID string grouping events for one run or session. Gamehost supplies one ID to both agents for a defended run.                |
+| `run_id`         | string  | yes      | UUID string grouping events for one run or session. Gamehost supplies it to participating agents.                              |
 | `timestamp`      | string  | yes      | ISO 8601 in UTC (offset must be `+00:00`/`Z`), e.g. `2026-10-01T12:34:56.789+00:00`.                                           |
 | `source`         | string  | yes      | Sending component, e.g. `nmap-agent`, `defender` or `gamehost`.                                                                |
 | `actor`          | string  | yes      | Who acted, e.g. `attacker`, `defender`, `analyst`.                                                                             |
@@ -94,27 +94,17 @@ One event per HTTP request:
 - Responses: `202` accepted, `401` bad token, `422` invalid envelope,
   `413` too large
 
-`GET /health` returns `ok` for connectivity checks. Delivery failures must
-not stop the agent; log to the console and continue.
+`GET /health` returns `ok` for connectivity checks.
 
-## Collector-side validation
-
-The collector (`src/gamehost/log_collector.py`) rejects events that:
-
-- have `schema_version` other than `1`
-- have an `event_id` or `run_id` that is not a valid UUID
-- have a missing, empty, or non-string `timestamp`, `source`, `actor`, or
-  `action`
-- have a `timestamp` that is not ISO 8601 or is not UTC
-- include a `target_mode` other than `with_defender` or `without_defender`
-
-Other source-specific fields are not validated beyond the size limit, so new
-agents can add fields without collector changes.
+The collector validates the required envelope fields, UUIDs, UTC timestamp
+and allowed target modes. Extra fields are accepted within the size limit, so
+new agents can add fields without collector changes.
 
 ## Delivery and storage
 
 The shared sender attempts delivery once, with a 0.5-second timeout and no queue
-or retries. Failures warn once per agent process; events still print locally.
+or retries. Failures warn once per agent process; events still print locally
+and the agent continues.
 The collector does not replay missed events or deduplicate repeated deliveries.
 
 In Docker, the collector writes defended events to `/data/with-defender.jsonl`

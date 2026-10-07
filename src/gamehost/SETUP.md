@@ -1,19 +1,14 @@
 # First-time gamehost setup
 
-Do this once for a new installation. Existing hosts with working Docker, SSH and
-sudo permissions can skip those sections. Revisit them only if host accounts,
-SSH keys or repository paths change. Permission changes take effect immediately;
-a reboot is not required. Docker group changes require a new login session.
+Follow this guide once for a new three-PC lab, then use the [run guide](README.md).
+Existing hosts can skip working Docker, SSH and sudo setup. Revisit permissions
+only when accounts, keys or checkout paths change.
 
-After setup, follow the [run guide](README.md). It contains the everyday commands.
-Every command block identifies the PC and working directory. Apart from the
-initial clone, commands run from **`~/purpleAI`**, the repository root. Replace
-that path if needed. All three PCs must use the same code version.
-
-Follow the sections in order: prepare the checkouts, configure the sandbox and
-collector, set up management access, then start collector → BlueAI → RedAI.
-For a new installation, keep `DIRECT_TESTING=false` and `DEV_IP` empty.
-Optional access for tests is covered in the [manual testing guide](../../deploy/sandbox/TESTING.md).
+Work in order: configure hosts and delivery, establish management access, then
+start **collector → BlueAI → RedAI**. Keep `DIRECT_TESTING=false` and `DEV_IP`
+empty initially; [manual testing](../../deploy/sandbox/TESTING.md) covers optional access.
+Commands name the PC and start from **`~/purpleAI`**, except the initial clone.
+Replace paths as needed and use the same code version on all PCs.
 
 ## 1. Prepare the hosts
 
@@ -28,9 +23,9 @@ cd ~
 git clone --branch two-pc-sandbox https://github.com/CogitoNTNU/purpleAI.git purpleAI
 ```
 
-RedAI and BlueAI need Docker Engine, Docker Compose and Python 3. Complete the
-[sandbox's first-time configuration](../../deploy/sandbox/README.md#first-time-configuration)
-on both PCs; leave them stopped until collector delivery is configured below.
+Complete the [sandbox configuration](../../deploy/sandbox/README.md#first-time-configuration)
+on RedAI and BlueAI, including its prerequisites. Leave both stacks stopped
+until delivery is configured below.
 
 Gamehost needs Docker Engine, Docker Compose, Python 3, Git, OpenSSL, curl and SSH.
 Run the gamehost script as your normal management user so it uses your SSH keys
@@ -52,8 +47,9 @@ cd ~/purpleAI
 sudo usermod -aG docker "$USER"
 ```
 
-Log out and back in, then repeat `docker ps` from the first block. Docker access
-grants host administration privileges; keep it outside agent containers.
+Log out and back in, then repeat the Docker checks above. Group membership
+requires that new login; no reboot is needed. Docker access grants host
+administration privileges, so keep it outside agent containers.
 
 ## 2. Configure the collector and agent delivery
 
@@ -178,6 +174,4 @@ ssh -o BatchMode=yes -o StrictHostKeyChecking=yes blueai 'sudo -n /usr/bin/pytho
 ssh -o BatchMode=yes -o StrictHostKeyChecking=yes redai 'sudo -n /usr/bin/python3 /home/purpleai/purpleAI/deploy/sandbox/start.py red check'
 ```
 
-Once both commands pass, setup is complete. Continue with
-[running an experiment](README.md#run-an-experiment). Future runs require no
-SSH, sudo or token setup changes.
+Once both commands pass, [run an experiment](README.md#run-an-experiment).
