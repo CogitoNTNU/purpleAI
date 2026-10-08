@@ -1,11 +1,21 @@
 from deepagents import create_deep_agent
+from attools import tools
+from subagents_attack import execution_agent
+import os
+from langchain_openai import ChatOpenAI
 
-from subagents_attack import subagents
+model = ChatOpenAI(
+    model="moonshotai/Kimi-K2.6", 
+    api_key= "",
+    base_url= "https://llm.hpc.ntnu.no/v1"
+    )
 
-agent = create_deep_agent(
-    model="openai:gpt-6-astra",
-    tools=[my_custom_tool],
-    system_prompt="You are a research assistant.",
-    subagents=subagents,
+
+BossAgent = create_deep_agent(
+    model=model,
+    tools= tools,
+    system_prompt="You are a planner in a pen testing environment. You job is to plan a penetration on the given url",
+    name="Boss Agent",
+    subagents=[execution_agent] 
 )
-result = agent.invoke({"messages": "Research LangGraph and write a summary"})
+result = BossAgent.invoke({"messages": "Research LangGraph and write a summary"})
