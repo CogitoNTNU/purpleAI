@@ -19,7 +19,11 @@
     - [Technologies](#technologies)
   - [🛠️ Prerequisites](#️-prerequisites)
   - [Getting started](#getting-started)
-  - [Usage](#usage)
+  - [Usage Docker](#usage-docker)
+    - [Running the Vulnerable App Only](#running-the-vulnerable-app-only)
+    - [Running the Vulnerable App and Defender agent](#running-the-vulnerable-app-and-defender-agent)
+    - [View logs](#view-logs)
+    - [Stop the containers](#stop-the-containers)
     - [📖 Generate Documentation Site](#-generate-documentation-site)
   - [Testing](#testing)
   - [Team](#team)
@@ -60,26 +64,43 @@
    uv sync
    ```
 
-<!--
-1. **Configure environment variables**:
-    This project uses environment variables for configuration. Copy the example environment file to create your own:
-    ```sh
-    cp .env.example .env
-    ```
-    Then edit the `.env` file to include your specific configuration settings.
--->
+3. Configure environment variables:
+This project uses environment variables for configuration. Edit the environment file (`.env`) to create your own:
+```sh
+    IDUNN_BASE_URL="https://llm.hpc.ntnu.no/v1"
+    IDUNN_API_KEY="your-api-key"
+```
 
-1. **Set up pre commit** (only for development):
-   ```sh
-   uv run pre-commit install
-   ```
 
-## Usage
+## Usage Docker 
 
-To run the project, run the following command from the root directory of the project:
+### Running the Vulnerable App Only
 
 ```bash
+cd src/defender
+docker compose -f docker-compose.app.yml up --build -d
+```
+The app will be available at http://localhost:8080. 
 
+### Running the Vulnerable App and Defender agent
+
+```bash
+cd src/defender
+docker compose -f docker-compose.full.yml up --build -d
+```
+
+### View logs 
+
+```bash
+docker logs vulnerable-app
+docker logs defender 
+```
+
+### Stop the containers 
+
+```bash
+docker compose -f docker-compose.app.yml down
+docker compose -f docker-compose.full.yml down
 ```
 
 <!-- TODO: Instructions on how to run the project and use its features. -->
