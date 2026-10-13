@@ -20,8 +20,8 @@
   - [Prerequisites](#prerequisites)
   - [Getting started](#getting-started)
   - [Usage Docker](#usage-docker)
-    - [Running the Vulnerable App only](#running-the-vulnerable-app-only)
-    - [Running the Vulnerable App and Defender agent](#running-the-vulnerable-app-and-defender-agent)
+    - [Running the Vulnerablea app only](#running-the-vulnerablea-app-only)
+    - [Running the Vulnerable app and Defender agent](#running-the-vulnerable-app-and-defender-agent)
     - [View logs](#view-logs)
     - [Stop the containers](#stop-the-containers)
     - [📖 Generate Documentation Site](#-generate-documentation-site)
@@ -74,7 +74,7 @@ This project uses environment variables for configuration. Edit the environment 
 
 ## Usage Docker 
 
-### Running the Vulnerable App only
+### Running the Vulnerablea app only
 
 ```bash
 cd src/defender
@@ -82,7 +82,7 @@ docker compose -f docker-compose.app.yml up --build -d
 ```
 The app will be available at http://localhost:8080. But, if you are using the blueteam computer exchange `localhost` with the IP-address. 
 
-### Running the Vulnerable App and Defender agent
+### Running the Vulnerable app and Defender agent
 
 ```bash
 cd src/defender
