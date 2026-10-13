@@ -17,10 +17,10 @@
 - [PurpleAI](#purpleai)
   - [Project description](#project-description)
     - [Technologies](#technologies)
-  - [🛠️ Prerequisites](#️-prerequisites)
+  - [Prerequisites](#prerequisites)
   - [Getting started](#getting-started)
   - [Usage Docker](#usage-docker)
-    - [Running the Vulnerable App Only](#running-the-vulnerable-app-only)
+    - [Running the Vulnerable App only](#running-the-vulnerable-app-only)
     - [Running the Vulnerable App and Defender agent](#running-the-vulnerable-app-and-defender-agent)
     - [View logs](#view-logs)
     - [Stop the containers](#stop-the-containers)
@@ -40,7 +40,7 @@
 - **Large Language Models**: Different models fron IDUN NTNU for natural language understanding and reasoning. 
 
 
-## 🛠️ Prerequisites
+## Prerequisites
 
 - **Git**: Ensure that git is installed on your machine. [Download Git](https://git-scm.com/downloads)
 - **Python 3.12**: Required for the backend. [Download Python](https://www.python.org/downloads/)
@@ -74,13 +74,13 @@ This project uses environment variables for configuration. Edit the environment 
 
 ## Usage Docker 
 
-### Running the Vulnerable App Only
+### Running the Vulnerable App only
 
 ```bash
 cd src/defender
 docker compose -f docker-compose.app.yml up --build -d
 ```
-The app will be available at http://localhost:8080. 
+The app will be available at http://localhost:8080. But, if you are using the blueteam computer exchange `localhost` with the IP-address. 
 
 ### Running the Vulnerable App and Defender agent
 
