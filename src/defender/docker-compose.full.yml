@@ -12,9 +12,9 @@ services:
     container_name: defender
     ports:
       - "8080:8080"
+    env_file:
+      - ../.env
     environment:
-      - IDUNN_BASE_URL
-      - IDUNN_API_KEY
       - TARGET=http://vulnerable-app:5000
     networks:
       - proxy-network
