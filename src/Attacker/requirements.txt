@@ -1,0 +1,9 @@
+# Python dependencies for the Attacker agents.
+# Install with:  pip install -r requirements.txt
+#
+# System tools used by the sqlmap/nmap tools (NOT pip-installable) must also
+# be on PATH. On Kali they are preinstalled; otherwise:
+#   sudo apt install sqlmap nmap
+deepagents==0.7.19
+langchain-openai==1.6.6
+langchain-core==1.6.5
