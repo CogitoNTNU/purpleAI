@@ -3,7 +3,7 @@ import subprocess
 from langchain_core.tools import tool
 
 @tool
-def sqlmap(url: str, depth: int, timeout: float = 10.0) -> str:
+def sqlmap(url: str, depth: int, timeout: float = 30.0) -> str:
     """Map vulnerable SQL injection points in a web app via sqlmap.
 
     Args:
@@ -25,11 +25,11 @@ def sqlmap(url: str, depth: int, timeout: float = 10.0) -> str:
         "--batch",
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
     except FileNotFoundError:
         return "sqlmap is not installed or not on PATH."
     except subprocess.TimeoutExpired:
-        return "sqlmap scan timed out after 600 seconds."
+        return "sqlmap scan timed out after 1800 seconds."
 
     # TODO: NEED TO GRAB CSV FILE CREATED BY SQLMAP AND FEED IT AS THE RESULT (?)
     return result.stdout or result.stderr
