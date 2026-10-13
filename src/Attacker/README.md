@@ -17,22 +17,27 @@ Kali (Debian) blocks installing into the system Python — you'll see
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source ~/.bashrc        # or open a new terminal so `uv` is on PATH
 
-# 2. From this folder (purpleAI/src/Attacker), create the env + install deps
+# 2. From this folder (purpleAI/src/Attacker), create a LOCAL env + install deps
 cd purpleAI/src/Attacker
 uv venv
-uv pip install -r requirements.txt
+uv pip install --python .venv/bin/python -r requirements.txt
 
-# 3. Provide the LLM API key and run
+# 3. Provide the LLM API key and run with the LOCAL env's python
 export LLM_API_KEY="your-key"
-uv run python redagent.py
+.venv/bin/python redagent.py
 ```
 
-`uv run` uses the project's `.venv` automatically, so you don't need to activate
-it. If you prefer activating it yourself:
+> **Do not use `uv run` here.** The repo root is itself a uv project (it has
+> its own `pyproject.toml` / `.venv`), so `uv run` binds to the *root* env —
+> which lacks `deepagents` — and you get `ModuleNotFoundError: No module named
+> 'deepagents'`. The `--python .venv/bin/python` flag and calling
+> `.venv/bin/python` directly keep everything in this folder's own env.
+
+Verify the install landed in the local env:
 
 ```bash
-source .venv/bin/activate
-python redagent.py
+.venv/bin/python -c "import deepagents; print(deepagents.__file__)"
+# should print a path under src/Attacker/.venv/
 ```
 
 ## System tools
