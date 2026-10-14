@@ -360,9 +360,9 @@ jsonpatch==1.33 \
     --hash=sha256:0ae28c0cd062bbd8b8ecc26d7d164fbbea9652a1a3693f3b956c1eae5145dade \
     --hash=sha256:9fcd4009c41e6d12348b4a0ff2563ba56a2923a7dfee731d004e212e1ee5030c
     # via langchain-core
-jsonpointer==3.1.1 \
-    --hash=sha256:0b801c7db33a904024f6004d526dcc53bbb8a4a0f4e32bfd10beadf60adf1900 \
-    --hash=sha256:8ff8b95779d071ba472cf5bc913028df06031797532f08a7d5b602d8b2a488ca
+jsonpointer==3.2.1 \
+    --hash=sha256:47c846513b3a4ec46eecef1105207fba075e2a3659048e362bd7daff0fc33342 \
+    --hash=sha256:b19ee68644e9ffb51440448d8f7811af2b7406eea1db90603e93f5849323119a
     # via jsonpatch
 langchain-core==1.6.5 \
     --hash=sha256:54c7b0e9314b9084fb04405bb33dc5d32986d512d92b7b8863899cd5f6267556 \
