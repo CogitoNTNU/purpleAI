@@ -9,10 +9,20 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from deepagents import create_deep_agent
+from langgraph.checkpoint.memory import InMemorySaver
 
 from config import Target_url
 from llm import get_model
 from prompts import BOSS_PROMPT
+
+# Seconds to wait between autonomous iterations, so the loop monitors running
+# scans without busy-spinning (and without burning tokens non-stop).
+POLL_INTERVAL = 30.0
+
+# Fixed thread id: with the checkpointer below, every loop iteration resumes
+# the SAME conversation, so the Boss remembers which tasks it launched and can
+# keep monitoring them across iterations instead of starting fresh each time.
+SESSION_THREAD_ID = "attacker-session"
 
 # URL of the Agent Protocol server that hosts the subagent graphs.
 # `langgraph dev` serves here by default; override if you deploy elsewhere.
@@ -34,11 +44,15 @@ subagents = [
     },
 ]
 
+# Checkpointer persists the conversation across loop iterations (in memory,
+# for the life of this process). It is what makes the autonomous loop coherent
+# rather than a series of amnesiac one-shots.
 BossAgent = create_deep_agent(
     model=get_model(),
     system_prompt=BOSS_PROMPT,
     name="Boss Agent",
     subagents=subagents,
+    checkpointer=InMemorySaver(),
 )
 
 
@@ -59,15 +73,52 @@ def _print_trace_pointer() -> None:
     )
 
 
-async def main() -> None:
-    result = await BossAgent.ainvoke(
-        {"messages": f"Scan {Target_url} for SQL injection."}
-    )
-    # The rich reasoning is in LangSmith; keep the terminal to the final answer.
+# First iteration states the objective; every later iteration nudges the Boss
+# to pick up where it left off — check running tasks, act on finished ones, and
+# decide the next move — so the engagement advances on its own.
+INITIAL_OBJECTIVE = (
+    f"Begin a penetration test of {Target_url}, starting with SQL injection. "
+    "Delegate the scan to the execution agent."
+)
+CONTINUE_NUDGE = (
+    "Continue the engagement. First check the status of every task you have "
+    "launched. For any that finished, read and analyze the result, then decide "
+    "and launch the next step. For any still running, leave them and report "
+    "their status. If you are waiting on tasks and have nothing new to launch, "
+    "say so briefly. Do not re-launch a scan that is already running or already "
+    "answered."
+)
+
+
+async def _run_once(message: str, iteration: int) -> None:
+    """Advance the engagement by one turn and print the Boss's latest message."""
+    config = {"configurable": {"thread_id": SESSION_THREAD_ID}}
+    result = await BossAgent.ainvoke({"messages": message}, config=config)
     final = result["messages"][-1]
+    print(f"\n===== iteration {iteration} =====")
     print(getattr(final, "content", final))
+
+
+async def main() -> None:
+    """Run the Boss autonomously until interrupted (Ctrl+C)."""
+    print("Autonomous attacker running. Press Ctrl+C to stop.")
     _print_trace_pointer()
+    iteration = 0
+    try:
+        while True:
+            message = INITIAL_OBJECTIVE if iteration == 0 else CONTINUE_NUDGE
+            await _run_once(message, iteration)
+            iteration += 1
+            # Pause between turns so we monitor running scans rather than
+            # hammering the model and the target back-to-back.
+            await asyncio.sleep(POLL_INTERVAL)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        print("\nStopping autonomous attacker (interrupted). Goodbye.")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        # Ctrl+C during startup/teardown, before the loop's handler is active.
+        print("\nStopped.")

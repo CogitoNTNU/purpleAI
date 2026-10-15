@@ -52,6 +52,22 @@ two terminals in `purpleAI/src/Attacker`:
 > `redagent.py`). If you serve the subagents somewhere other than
 > `localhost:2024`, update `SUBAGENT_SERVER_URL` in `redagent.py`.
 
+### Autonomous mode
+
+The Boss runs **autonomously in a loop**: it launches scans, then on each
+iteration checks running tasks, analyzes finished results, and decides the next
+step — advancing the engagement on its own until you stop it.
+
+- **Stop it** with `Ctrl+C`.
+- **Pace** between iterations is `POLL_INTERVAL` (seconds) in `redagent.py`;
+  raise it to scan less aggressively, lower it to react faster.
+- A fixed `SESSION_THREAD_ID` + in-memory checkpointer let the Boss remember
+  which tasks it launched across iterations. State lives only for the life of
+  the process — stopping and restarting starts a fresh engagement.
+
+> It drives itself and will keep scanning unattended, so point it only at a
+> target you are authorized to test and keep an eye on token usage.
+
 ## Observability (reasoning traces)
 
 Full step-by-step reasoning — the Boss's planning **and** each subagent's
