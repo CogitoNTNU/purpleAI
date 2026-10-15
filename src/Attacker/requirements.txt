@@ -12,3 +12,6 @@ langchain-core==1.6.5
 #   uv pip freeze | grep -i langgraph
 langgraph-sdk>=0.2
 langgraph-cli[inmem]>=0.4
+# Load .env so the Boss process gets the LLM key and LangSmith tracing vars.
+# (langsmith itself is already pulled in transitively by deepagents.)
+python-dotenv>=1.0

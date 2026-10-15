@@ -1,4 +1,12 @@
 import asyncio
+import os
+
+from dotenv import load_dotenv
+
+# Load .env before anything reads the environment: this one file feeds both
+# the LLM key (llm.get_model) and the LangSmith tracing vars below. The
+# langgraph dev server reads the same .env via langgraph.json's "env".
+load_dotenv()
 
 from deepagents import create_deep_agent
 
@@ -34,11 +42,31 @@ BossAgent = create_deep_agent(
 )
 
 
+def _print_trace_pointer() -> None:
+    """Point the user at the LangSmith UI where the full reasoning lives.
+
+    Per-run URLs vary by langsmith version, so we print a stable project
+    pointer instead of a fragile deep link. Never let this break the run.
+    """
+    if os.getenv("LANGSMITH_TRACING", "").lower() != "true":
+        return
+    project = os.getenv("LANGSMITH_PROJECT", "default")
+    host = os.getenv("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
+    web = "https://eu.smith.langchain.com" if "eu." in host else "https://smith.langchain.com"
+    print(
+        f"\nFull Boss + subagent reasoning traced to LangSmith "
+        f"project '{project}': {web}"
+    )
+
+
 async def main() -> None:
     result = await BossAgent.ainvoke(
         {"messages": f"Scan {Target_url} for SQL injection."}
     )
-    print(result)
+    # The rich reasoning is in LangSmith; keep the terminal to the final answer.
+    final = result["messages"][-1]
+    print(getattr(final, "content", final))
+    _print_trace_pointer()
 
 
 if __name__ == "__main__":

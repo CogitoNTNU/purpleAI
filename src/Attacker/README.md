@@ -28,26 +28,52 @@ cd purpleAI/src/Attacker
 uv venv
 uv pip install --python .venv/bin/python -r requirements.txt
 
-# 3. Provide the LLM API key (the server and the Boss both read it)
-export LLM_API_KEY="your-key"
+# 3. Put your keys in one .env file (gitignored). Both the server and the
+#    Boss read it, so you set keys in a single place.
+cp .env.example .env
+nano .env                      # fill in LLM_API_KEY and the LangSmith keys
 ```
 
 Because subagents now run on a server, this is a **two-process** setup. Open
-two terminals in `purpleAI/src/Attacker`, both with `LLM_API_KEY` exported:
+two terminals in `purpleAI/src/Attacker`:
 
 ```bash
 # Terminal 1 — start the Agent Protocol server that hosts the subagents.
-# It reads langgraph.json and serves each graph at http://localhost:2024.
+# It reads langgraph.json (and the .env next to it) and serves each graph
+# at http://localhost:2024.
 .venv/bin/langgraph dev
 
 # Terminal 2 — run the Boss once the server above is up.
 .venv/bin/python redagent.py
 ```
 
-> The server picks up `LLM_API_KEY` from a `.env` file in this folder too
-> (see `env` in `langgraph.json`); exporting it in the shell works as well.
-> If you serve the subagents somewhere other than `localhost:2024`, update
-> `SUBAGENT_SERVER_URL` in `redagent.py`.
+> Both processes load the same `.env`: the server via `langgraph.json`'s
+> `env` field, the Boss via `python-dotenv` (loaded at the top of
+> `redagent.py`). If you serve the subagents somewhere other than
+> `localhost:2024`, update `SUBAGENT_SERVER_URL` in `redagent.py`.
+
+## Observability (reasoning traces)
+
+Full step-by-step reasoning — the Boss's planning **and** each subagent's
+internal steps, tool calls, inputs/outputs, tokens and timing — is sent to
+[LangSmith](https://smith.langchain.com) and viewed in its web UI. Nothing to
+run locally; it is driven entirely by the env vars in `.env`:
+
+| Variable | Purpose |
+| --- | --- |
+| `LANGSMITH_TRACING=true` | Turns tracing on. |
+| `LANGSMITH_API_KEY` | Your LangSmith key (`lsv2_...`); the only credential needed. |
+| `LANGSMITH_PROJECT` | Label that groups all runs together in the UI. |
+| `LANGSMITH_ENDPOINT` | Only for EU-region accounts (see `.env.example`). |
+
+When the Boss finishes it prints a pointer to the LangSmith project. Because
+the Boss and subagents are **separate processes** talking over HTTP, their
+traces land in the same project but may appear as two linked traces rather
+than one nested tree — both carry full reasoning either way.
+
+> Trace data (prompts, tool output, target details) is stored on LangSmith's
+> cloud. For a private lab that is usually fine; disable by setting
+> `LANGSMITH_TRACING=false`.
 
 > **Do not use `uv run` here.** The repo root is itself a uv project (it has
 > its own `pyproject.toml` / `.venv`), so `uv run` binds to the *root* env —
@@ -74,11 +100,13 @@ sudo apt install sqlmap nmap
 ## Configuration
 
 - **Target** — edit `Target_url` in `config.py`.
-- **API key** — read from the `LLM_API_KEY` environment variable (never commit it).
+- **Keys** — copy `.env.example` to `.env` and fill in `LLM_API_KEY` and the
+  LangSmith keys. `.env` is gitignored; both processes read it.
 - **Model / endpoint** — set in `llm.py` (`get_model()`), shared by the Boss and
   every served subagent.
 - **Prompts** — all agent system prompts live in `prompts.py`.
 - **Subagent server URL** — `SUBAGENT_SERVER_URL` in `redagent.py`.
+- **Tracing** — LangSmith vars in `.env` (see Observability above).
 
 ## Layout
 
@@ -92,6 +120,7 @@ sudo apt install sqlmap nmap
 | `attools.py` | Tools exposed to the subagents (`sqlmap`, async). |
 | `redfunction.py` | Helper functions (nmap run/parse) — not yet wired as tools. |
 | `config.py` | Target URL. |
+| `.env.example` | Template for keys/tracing; copy to `.env`. |
 | `requirements.txt` | Python deps for the attacker framework only. |
 
 ## Adding a subagent
