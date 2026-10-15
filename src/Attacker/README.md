@@ -56,7 +56,10 @@ two terminals in `purpleAI/src/Attacker`:
 
 The Boss runs **autonomously in a loop**: it launches scans, then on each
 iteration checks running tasks, analyzes finished results, and decides the next
-step — advancing the engagement on its own until you stop it.
+step — advancing the engagement on its own until you stop it. Each step streams
+live to the terminal as it happens (the Boss's own reasoning, its tool/subagent
+calls, and the results coming back). Subagents' *internal* steps run on the
+server, so watch those live in LangSmith/Studio (see Observability).
 
 - **Stop it** with `Ctrl+C`.
 - **Pace** between iterations is `POLL_INTERVAL` (seconds) in `redagent.py`;

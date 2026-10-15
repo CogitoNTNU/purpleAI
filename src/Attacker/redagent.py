@@ -90,13 +90,55 @@ CONTINUE_NUDGE = (
 )
 
 
+def _text(content) -> str:
+    """Flatten message content (str, or a list of content blocks) to text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                parts.append(block.get("text") or block.get("content") or "")
+            else:
+                parts.append(str(block))
+        return "".join(parts)
+    return str(content)
+
+
+def _short(value, limit: int = 200) -> str:
+    """One-line, length-capped repr for tool args/results."""
+    text = " ".join(str(value).split())
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def _render_messages(node: str, update) -> None:
+    """Print the Boss's reasoning for one streamed step as it arrives."""
+    messages = update.get("messages") if isinstance(update, dict) else None
+    if not messages:
+        return
+    for msg in messages:
+        kind = getattr(msg, "type", "")
+        if kind == "tool":  # a tool/subagent result coming back
+            name = getattr(msg, "name", "tool")
+            print(f"  ← {name}: {_short(getattr(msg, 'content', ''))}")
+            continue
+        text = _text(getattr(msg, "content", ""))
+        if text.strip():
+            print(f"  [{node}] {text.strip()}")
+        for call in getattr(msg, "tool_calls", None) or []:
+            print(f"  → {call.get('name')}({_short(call.get('args'))})")
+
+
 async def _run_once(message: str, iteration: int) -> None:
-    """Advance the engagement by one turn and print the Boss's latest message."""
+    """Advance the engagement by one turn, streaming each step live."""
     config = {"configurable": {"thread_id": SESSION_THREAD_ID}}
-    result = await BossAgent.ainvoke({"messages": message}, config=config)
-    final = result["messages"][-1]
     print(f"\n===== iteration {iteration} =====")
-    print(getattr(final, "content", final))
+    async for chunk in BossAgent.astream(
+        {"messages": message}, config=config, stream_mode="updates"
+    ):
+        # Each chunk maps node name -> that node's state update.
+        for node, update in chunk.items():
+            _render_messages(node, update)
 
 
 async def main() -> None:
