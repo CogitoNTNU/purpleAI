@@ -1,4 +1,4 @@
-import subprocess
+import asyncio
 
 from langchain_core.tools import tool
 
@@ -10,7 +10,7 @@ _ALLOWED_TECHNIQUES = set("BEUSTQ")
 
 
 @tool
-def sqlmap(
+async def sqlmap(
     level: int = 1,
     risk: int = 1,
     crawl: int = 0,
@@ -70,12 +70,25 @@ def sqlmap(
         # Pass as one argument; sqlmap validates the value itself.
         cmd.append(f"--dbms={dbms}")
 
+    # Non-blocking subprocess so the event loop stays free while sqlmap runs;
+    # this is what lets several async subagents/tools make progress at once.
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
     except FileNotFoundError:
         return "sqlmap is not installed or not on PATH."
-    except subprocess.TimeoutExpired:
+
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=1800)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
         return "sqlmap scan timed out after 1800 seconds."
 
     # TODO: NEED TO GRAB CSV FILE CREATED BY SQLMAP AND FEED IT AS THE RESULT (?)
-    return result.stdout or result.stderr
+    out = stdout.decode(errors="replace")
+    err = stderr.decode(errors="replace")
+    return out or err
