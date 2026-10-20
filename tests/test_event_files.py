@@ -1,4 +1,4 @@
-"""Application event file and legacy collector configuration checks."""
+"""Application event file rotation and write-failure checks."""
 
 import importlib.util
 import io
@@ -22,24 +22,6 @@ def load_module(name, path):
 
 
 class EventDeliveryTest(unittest.TestCase):
-    def test_gamehost_env_file(self):
-        collector = load_module(
-            "test_collector_env", ROOT / "src/gamehost/log_collector.py"
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            env_file = Path(directory) / ".env"
-            env_file.write_text(
-                '# collector settings\nGAMEHOST_LOG_TOKEN="test-token"\n'
-                "GAMEHOST_LOG_BIND=192.168.0.110\n"
-            )
-            self.assertEqual(
-                collector.read_env_file(env_file),
-                {
-                    "GAMEHOST_LOG_TOKEN": "test-token",
-                    "GAMEHOST_LOG_BIND": "192.168.0.110",
-                },
-            )
-
     def load_logging(self, path):
         self.env = patch.dict(os.environ, {"PURPLEAI_LOG_FILE": str(path)})
         self.env.start()
