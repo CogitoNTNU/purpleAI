@@ -152,6 +152,10 @@ Then rebuild with `docker compose up -d --build`. The proxy, logging and blockin
 ## Central logging
 
 The defender prints JSON events and appends them to `logs/events.jsonl`.
+`event_logging.py` only configures the shared `src/purpleai_logging.py`
+implementation, also used by the attacker. Agent code uses
+`log_event("action", **fields)`; no logging environment variables are
+required for the default paths.
 Both Compose configurations mount that file under `src/defender/logs/`
 on the host. Create the directory before starting Compose and rebuild
 the defender image. Set `PURPLEAI_LOG_FILE` to override the application

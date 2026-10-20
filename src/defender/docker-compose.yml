@@ -7,8 +7,8 @@ services:
 
   defender:
     build:
-      context: .
-      dockerfile: ./defender-agent/Dockerfile
+      context: ..
+      dockerfile: defender/defender-agent/Dockerfile
     container_name: defender
     ports:
       - "8080:8080"

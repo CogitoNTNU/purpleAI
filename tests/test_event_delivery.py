@@ -3,9 +3,8 @@
 import importlib.util
 import io
 import json
-import sys
+import os
 import tempfile
-import types
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -42,23 +41,23 @@ class EventDeliveryTest(unittest.TestCase):
             )
 
     def load_logging(self, path):
-        fake_config = types.ModuleType("config")
-        fake_config.get_config = lambda: types.SimpleNamespace(log_file=path)
-        with patch.dict(sys.modules, {"config": fake_config}):
-            return load_module(
-                "test_nmap_logging", ROOT / "src/nmap-agent/logging_utils.py"
-            )
+        self.env = patch.dict(os.environ, {"PURPLEAI_LOG_FILE": str(path)})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        return load_module(
+            "test_nmap_logging", ROOT / "src/nmap-agent/logging_utils.py"
+        )
 
     def test_events_are_available_before_the_run_ends(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "logs/events.jsonl"
             logging = self.load_logging(path)
             with redirect_stdout(io.StringIO()):
-                logging.log_event("attacker", "task_start", status="started")
+                logging.log_event("task_start", status="started")
                 self.assertEqual(json.loads(path.read_text())["action"], "task_start")
                 # External rename/create rotation must work without restarting.
                 path.rename(path.with_suffix(".old"))
-                logging.log_event("attacker", "task_end", status="success")
+                logging.log_event("task_end", status="success")
             first = json.loads(path.with_suffix(".old").read_text())
             last = json.loads(path.read_text())
             self.assertEqual(first["run_id"], last["run_id"])
@@ -72,7 +71,7 @@ class EventDeliveryTest(unittest.TestCase):
             logging = self.load_logging(path / "events.jsonl")
             output, errors = io.StringIO(), io.StringIO()
             with redirect_stdout(output), redirect_stderr(errors):
-                logging.log_event("attacker", "task_start")
+                logging.log_event("task_start")
             self.assertEqual(json.loads(output.getvalue())["action"], "task_start")
             self.assertIn("Local event log write failed", errors.getvalue())
 

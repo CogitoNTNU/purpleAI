@@ -110,6 +110,8 @@ Every agent action is printed and appended as one JSON line to
 `logs/events.jsonl` beside the agent code. Set `PURPLEAI_LOG_FILE` in
 `.env` to choose another path. Events include source, run ID, event ID,
 UTC timestamp, actor, action, and optional tool, target, and status.
+`logging_utils.py` only configures the shared `src/purpleai_logging.py`
+implementation. Agent and tool code use `log_event("action", **fields)`.
 The application makes no network logging calls; host Vector tails the
 file and forwards events to gamehost. File write failures are reported
 on stderr without stopping the agent.

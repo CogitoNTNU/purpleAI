@@ -32,17 +32,17 @@ def main() -> int:
     print(f"Model: {config.idun_model}")
     print(f"LLM API: {config.idun_base_url}")
 
-    log_event("attacker", "task_start", target=config.target_host, status="started")
+    log_event("task_start", target=config.target_host, status="started")
 
     try:
         run_agent(TASK)
     except Exception as exc:
         message = describe_llm_error(exc)
         print(f"\nError: {message}")
-        log_event("attacker", "task_end", target=config.target_host, status="error")
+        log_event("task_end", target=config.target_host, status="error")
         return 1
 
-    log_event("attacker", "task_end", target=config.target_host, status="success")
+    log_event("task_end", target=config.target_host, status="success")
     return 0
 
 

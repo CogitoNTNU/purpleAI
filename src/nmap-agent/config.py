@@ -2,15 +2,14 @@
 
 Loads .env once, checks that every required value is present and
 sensible, and extracts the scan host from the target URL. All other
-modules read configuration through get_config(); environment variables
-are never read anywhere else.
+modules read agent configuration through get_config(). The shared event
+logger handles its optional file-path override separately.
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -28,7 +27,6 @@ class Config:
     idun_api_key: str
     idun_model: str
     nmap_timeout: int
-    log_file: Path = Path(__file__).resolve().parent / "logs/events.jsonl"
 
 
 def _parse_target_host(target_url: str) -> str:
@@ -84,10 +82,6 @@ def load_config(env_file: str = ".env") -> Config:
         idun_api_key=required["IDUN_API_KEY"],
         idun_model=required["IDUN_MODEL"],
         nmap_timeout=120,
-        log_file=Path(
-            os.environ.get("PURPLEAI_LOG_FILE")
-            or Path(__file__).resolve().parent / "logs/events.jsonl"
-        ),
     )
 
 

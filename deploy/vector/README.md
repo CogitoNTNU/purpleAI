@@ -33,6 +33,19 @@ excluded; URL paths are recorded.
 File output uses Python's built-in `logging.handlers.WatchedFileHandler`;
 no additional logging dependency is required.
 
+Both agents use the same implementation in `src/purpleai_logging.py`.
+Their local `logging_utils.py` / `event_logging.py` files only select the
+source, actor, and default file path. Agent code just calls
+`log_event("action", status="...", ...)`; it does not manage files,
+JSON serialization, timestamps, IDs, or delivery. Both loggers create
+their parent directory and use the same optional `PURPLEAI_LOG_FILE`
+override. No logging variables are required in either application's `.env`.
+
+After updating the code, restart the attacker and rebuild/recreate the
+defender. Existing host log paths and Vector configurations still apply.
+The defender Docker build context is now `src/` so the image can include
+the shared logger; both Compose files already specify this context.
+
 Remove old `LOG_COLLECTOR_URL` and `LOG_COLLECTOR_TOKEN` settings from the
 attacker environment. The attacker now writes files only.
 
