@@ -1,71 +1,42 @@
-# PurpleAI Dashboard Guide
+# Gamehost dashboard
 
-## What is this?
+The Streamlit dashboard reads the JSONL archives produced by gamehost
+Vector at `/var/log/purpleai/collected/events-*.jsonl`. `event_store.py`
+loads the archives, sorts events by timestamp, and removes duplicates
+with the same `event_id`. Invalid JSON and partial lines are skipped;
+completed lines are picked up on the next refresh.
 
-A simple real-time dashboard that shows what your attacker and defender agents are doing.
+## Run
 
-## Where to run it?
+Use the same account as the gamehost Vector service so the dashboard can
+read its archives. From the repository root:
 
-**Run this on the GAMEHOST PC** (the machine that collects logs at `192.168.0.110`)
+```bash
+uv sync --locked
+bash src/gamehost/dashboard/run_dashboard.sh
+```
 
-## Setup (One-time)
+Open `http://GAMEHOST_IP:8501` in a browser. The script starts Streamlit
+with network access on its default port 8501. The theme is defined in
+`.streamlit/config.toml`. Refresh runs every five seconds while the browser
+session is active, including while the archive is empty.
 
-1. Make sure you have Streamlit installed:
-   ```bash
-   pip install streamlit pandas
-   ```
+The page shows event-based attacker/defender metrics and the most recent
+20 events across the available archives. Its metrics count logged event
+statuses; they are not independently verified attack outcomes.
 
-## How to run
+## Diagnostics
 
-1. Navigate to the dashboard directory:
-   ```bash
-   cd src/gamehost/dashboard
-   ```
+```bash
+sudo systemctl status vector --no-pager
+sudo journalctl -u vector -n 40 --no-pager
+ls -l /var/log/purpleai/collected/
+```
 
-2. Start the dashboard:
-   ```bash
-   ./run_dashboard.sh
-   ```
+If the dashboard is empty, check the Vector services and source file
+paths. The account running the dashboard needs read access to the archive
+files and search access to their parent directories. Sample files under
+`dashboard/data/` are examples; the live dashboard reads Vector's archives.
 
-   Or manually:
-   ```bash
-   streamlit run dashboard.py --server.address 0.0.0.0
-   ```
-
-3. The dashboard will open in your browser at:
-   - Local: `http://localhost:8501`
-   - Network: `http://192.168.0.110:8501` (accessible from other machines)
-
-## What you'll see
-
-- **Total Events**: How many things have happened
-- **Agent Runs**: How many times agents have run
-- **Events by Source**: Which agents (nmap-agent, etc.) are active
-- **Events by Actor**: Attacker vs. Defender activity
-- **Actions**: What actions are being taken (task_start, tool_call, etc.)
-- **Status**: Success/failure rates
-- **Recent Events**: Live feed of the latest 20 events
-
-## Troubleshooting
-
-**"No events found yet"**
-- Make sure `log_collector.py` is running
-- Check that `data/events.jsonl` exists
-- Verify agents are configured to send events to the collector
-
-**Dashboard won't start**
-- Install streamlit: `pip install streamlit pandas`
-- Make sure you're in the `src/gamehost/dashboard` directory
-
-**Can't access from other machines**
-- Streamlit might be binding to localhost only
-- Run with: `streamlit run dashboard.py --server.address 0.0.0.0`
-
-## Next Steps
-
-Once this works, you can:
-- Add custom metrics
-- Create charts for specific attack types
-- Add gameification (animated agents, house visualization, etc.)
-- Filter events by time period
-- Export reports
+See [Vector setup](../../../deploy/vector/README.md) for the pipeline and
+[event format](../../../docs/event-format.md) for the event envelope.

@@ -1,9 +1,9 @@
 # PurpleAI event log format
 
-All PurpleAI agents log every action as one JSON event. Events are printed
-to the agent's console and POSTed to the gamehost collector, which appends
-them to a shared JSON Lines file. This page is the reference for anyone
-writing a new agent or reading the collected logs.
+The attacker and defender use `src/purpleai_logging.py` to print each event
+and append it to a local JSON Lines file. Host Vector agents tail these
+files and forward events to gamehost Vector, which writes daily JSONL
+archives. This page describes the shared event format.
 
 ## Envelope
 
@@ -25,10 +25,12 @@ Every event is a single JSON object with these fields:
 Rules:
 
 - Omit optional fields rather than sending `null` or empty strings.
-- Do not add top-level fields with other names; put source-specific detail
-  inside `tool`, `target`, or `status`.
-- One event per action. The collector does not deduplicate, so never retry
-  a delivery that already succeeded.
+- Source-specific fields may be added alongside the envelope. Defender
+  events include `request_id`, `method`, `path`, `decision`, `http_status`,
+  and `error_type` when applicable.
+- The shared logger supplies the envelope; agent fields cannot override it.
+- Vector can retry delivery. Consumers should use `event_id` to identify
+  duplicates in the archive.
 
 ## Standard actions
 
@@ -40,6 +42,8 @@ Use this vocabulary so logs are comparable across agents:
 | `task_end` | Agent run ends | `status: success` or `failure` |
 | `tool_call` | Agent invokes a tool | `tool`, `target` |
 | `tool_result` | Tool returned output | `tool`, `target`, `status` |
+| `request_decision` | Defender allows or blocks a request | `request_id`, `decision`, `status` |
+| `request_result` | Upstream response or forwarding error | `request_id`, `http_status` or `error_type`, `status` |
 
 New actions are fine when the existing ones do not fit; keep them
 snake_case and descriptive.
@@ -50,30 +54,22 @@ snake_case and descriptive.
 {"schema_version": 1, "event_id": "0b8df5e2-9f4a-4f6f-8b1e-2f3d5a6b7c8d", "run_id": "e1a2b3c4-5d6e-4f70-8a9b-0c1d2e3f4a5b", "timestamp": "2026-10-01T12:34:56.789+00:00", "source": "nmap-agent", "actor": "attacker", "action": "tool_call", "tool": "nmap", "target": "192.168.50.10:8080"}
 ```
 
-## Delivery to the gamehost collector
+## File output and delivery
 
-One event per HTTP request:
+Both agents use `log_event("action", status="...", **fields)`. Their small
+logging adapters configure the source, actor, and default file path; the
+shared logger handles serialization, IDs, UTC timestamps, and file output
+through Python's `WatchedFileHandler`.
 
-- `POST /events` on TCP port `8765` (default)
-- `Content-Type: application/json`
-- `Authorization: Bearer <GAMEHOST_LOG_TOKEN>` (shared token from the
-  gamehost's `src/gamehost/.env`)
-- Body: exactly one event, at most 16 KiB
-- Responses: `202` accepted, `401` bad token, `422` invalid envelope,
-  `413` too large
+Host Vector reads the JSONL file, parses the JSON, and preserves the event
+fields while adding the sending `host`, `file`, and `source_type`. The
+gamehost receives Vector transport on TCP 6000 and archives events at
+`/var/log/purpleai/collected/events-%Y-%m-%d.jsonl`.
 
-`GET /health` returns `ok` for connectivity checks. Delivery failures must
-not stop the agent; log to the console and continue.
+The Vector pipeline parses JSON objects; it does not validate every
+envelope field. The shared logger supplies the standard envelope.
+File errors are reported without stopping the agent. Host Vector handles
+delivery retries and buffering separately from application execution.
 
-## Collector-side validation
-
-The collector (`src/gamehost/log_collector.py`) rejects events that:
-
-- have `schema_version` other than `1`
-- have an `event_id` or `run_id` that is not a valid UUID
-- have a missing, empty, or non-string `timestamp`, `source`, `actor`, or
-  `action`
-- have a `timestamp` that is not ISO 8601 or is not UTC
-
-Optional fields are not validated beyond the size limit, so new agents can
-start sending events without collector changes.
+See `deploy/vector/README.md` in the repository for host
+configuration, permissions, buffering, and retention.

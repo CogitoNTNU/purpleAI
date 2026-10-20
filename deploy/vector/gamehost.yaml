@@ -1,0 +1,20 @@
+data_dir: /var/lib/vector
+
+sources:
+  agents:
+    type: vector
+    address: 192.168.0.110:6000
+
+sinks:
+  archive:
+    type: file
+    inputs: [agents]
+    path: /var/log/purpleai/collected/events-%Y-%m-%d.jsonl
+    encoding:
+      codec: json
+    acknowledgements:
+      enabled: true
+    buffer:
+      type: disk
+      max_size: 268435488
+      when_full: block

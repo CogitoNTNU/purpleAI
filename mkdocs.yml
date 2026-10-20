@@ -1,4 +1,4 @@
-site_name: PROJECT-TEMPLATE
+site_name: PurpleAI
 
 theme:
   name: material
@@ -57,34 +57,3 @@ nav:
 
 plugins:
   - search
-  - awesome-nav
-  - autorefs
-  - mkdocstrings:
-      handlers:
-        python:
-          import:
-            - https://docs.python.org/3/objects.inv
-          options:
-            docstring_section_style: list
-            docstring_style: "google"
-            filters: ["!^_"]
-            heading_level: 1
-            merge_init_into_class: true
-            parameter_headings: true
-            separate_signature: true
-            show_root_heading: true
-            show_signature_annotations: true
-            show_symbol_type_heading: true
-            show_symbol_type_toc: true
-            summary: true
-  - api-autonav:
-      modules: ['src/']
-      module_options:
-        package.submodule:
-          docstring_style: google
-      nav_section_title: "API Reference"
-      api_root_uri: "reference"
-      nav_item_prefix: "<code class='doc-symbol doc-symbol-nav doc-symbol-module'></code>"
-      exclude_private: true
-      on_implicit_namespace_package: "warn"
-

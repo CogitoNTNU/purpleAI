@@ -1,76 +1,50 @@
-# Gamehost - Event Collection & Dashboard
+# Gamehost
 
-This folder contains the PurpleAI event collection and monitoring system.
+## Event collection
 
-## What's inside
+Gamehost runs Vector as a systemd service. Host Vector agents on RedAI
+and BlueAI tail application JSONL files and forward them to TCP 6000.
+Gamehost writes daily archives under `/var/log/purpleai/collected/`.
 
-- **dashboard/** - Log collector service and web dashboard
-  - `log_collector.py` - Receives events from agents via HTTP
-  - `dashboard.py` - Streamlit web dashboard for monitoring
-  - `data/` - Stores all events in `events.jsonl`
-
-## Quick Start
-
-### 1. Start the Log Collector
-
-The log collector receives PurpleAI events and stores them. From the repository root:
+Configuration is `/etc/vector/vector.yaml`. See
+[Vector setup](../../deploy/vector/README.md) and the
+[event format](../../docs/event-format.md).
 
 ```bash
-cd src/gamehost/dashboard
-cp .env.example .env
-chmod 600 .env
-python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+sudo systemctl status vector --no-pager
+sudo journalctl -u vector -n 40 --no-pager
+tail -F /var/log/purpleai/collected/events-$(date -u +%F).jsonl
 ```
 
-Paste the generated token into `GAMEHOST_LOG_TOKEN` in `.env`, then start the collector:
+## Dashboard
+
+`dashboard/dashboard.py` reads the same daily archives and refreshes every
+five seconds while the browser session is active. The dashboard account
+needs read access to the archive files and search access to their parent
+directories. Run it as the account used by the gamehost Vector service.
+
+From the repository root:
 
 ```bash
-python3 log_collector.py
+uv sync --locked
+bash src/gamehost/dashboard/run_dashboard.sh
 ```
 
-The collector listens on TCP port `8765` by default on `192.168.0.110`.
+Open `http://GAMEHOST_IP:8501`. The dashboard reads all matching daily
+archives, orders events by timestamp, and counts repeated `event_id`
+values once. See [dashboard guide](dashboard/DASHBOARD.md).
 
-### 2. Start the Dashboard
+## Normal traffic
 
-In another terminal:
+`docker-compose.yml` runs `traffic/normal-traffic.js` with k6. Its scenarios
+exercise VulnShop login, browsing, and purchases. From the repository root,
+set the defender address reachable from the traffic container:
 
 ```bash
-cd src/gamehost/dashboard
-./run_dashboard.sh
+TARGET=http://BLUEAI_IP:8080 docker compose -f src/gamehost/docker-compose.yml run --rm traffic
 ```
 
-Open `http://192.168.0.110:8501` in your browser.
-
-## Agent Configuration
-
-On machines running agents (nmap-agent, attacker, defender), set these values in their `.env`:
-
-```env
-LOG_COLLECTOR_URL=http://192.168.0.110:8765/events
-LOG_COLLECTOR_TOKEN=the-same-shared-token
-```
-
-## Monitor Events
-
-Watch events in real-time:
-
-```bash
-tail -f src/gamehost/dashboard/data/events.jsonl
-```
-
-## Event Schema
-
-Every event has:
-- `schema_version: 1`
-- `event_id` - Unique ID for this event
-- `run_id` - Shared by one agent run
-- `timestamp` - UTC timestamp
-- `source` - Which agent sent it (e.g., "nmap-agent")
-- `actor` - Role (e.g., "attacker", "defender")
-- `action` - What happened (e.g., "task_start", "tool_call")
-- Optional: `tool`, `target`, `status`
-
-## Security Note
-
-The shared token is sent over HTTP. Keep this on a controlled lab network.
-For untrusted networks, use HTTPS.
+Replace `BLUEAI_IP` with BlueAI's lab address. The Compose default is
+`http://localhost:8080`, which refers to the traffic container's loopback
+address. An explicit target is needed when the defender runs on another
+host. Scenario durations and concurrency are defined in the script.

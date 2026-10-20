@@ -1,67 +1,45 @@
-# Running Vulnerable-App with Defender
+# VulnShop with the defender
 
-This setup runs the vulnerable Flask app behind the defender agent, which protects it from SQL injection attacks using an LLM.
-
-## Architecture
-
-```
-Client → Defender (port 8080) → Vulnerable-App (port 5000, internal only)
-           │
-           └─ asks IDUN LLM: "Is this SQL injection?"
-                YES → 403 Forbidden
-                NO  → 200 Forward to vulnerable-app
+```text
+Client → defender:8080 → vulnerable-app:5000 (internal Docker network)
 ```
 
-## Prerequisites
+The defender uses IDUN classifiers for SQL injection and XSS. A positive
+classification or classifier exception produces HTTP 403. Otherwise,
+the proxy forwards the request and returns the app's response.
 
-- Docker Desktop
-- NTNU VPN connection (to reach IDUN LLM API)
-- IDUN API key from https://ai.hpc.ntnu.no/request-api-key
+## Start
 
-## Running
+With Docker/Compose installed and network access to IDUN, create `src/.env` with `IDUNN_BASE_URL` and `IDUNN_API_KEY` for the
+Compose `env_file`. Then run from the repository root:
 
-1. **Connect to NTNU VPN**
+```bash
+mkdir -p src/defender/logs
+docker compose -f src/defender/docker-compose.full.yml up -d --build
+```
 
-2. **Set environment variables:**
-   ```bash
-   export IDUNN_BASE_URL="https://llm.hpc.ntnu.no/v1"
-   export IDUNN_API_KEY="your-api-key-here"
-   ```
+The defender publishes port 8080. The backend has no published host port.
 
-3. **Start the services:**
-   ```bash
-   cd src
-   docker compose up --build
-   ```
+## Requests and events
 
-4. **Access the app:**
-   - Through defender (protected): http://localhost:8080
-   - The vulnerable-app is NOT exposed directly - defender is the only way in
-
-## Testing
-
-**Normal request (should pass):**
 ```bash
 curl http://localhost:8080/
+curl -G http://localhost:8080/search --data-urlencode "q=' OR 1=1--"
+docker compose -f src/defender/docker-compose.full.yml logs -f defender
 ```
 
-**SQL injection (should be blocked with 403):**
-```bash
-curl "http://localhost:8080/search?q=' OR 1=1--"
-curl "http://localhost:8080/search?q=1%20OR%201%3D1"
-```
+Inspect `request_decision` events for `allowed`, `blocked`, or `error`.
+Forwarded requests also produce `request_result` events. Classification
+results depend on the model response.
 
-You should see "Blocked by defender agent" on the web
+The shared logger writes `src/defender/logs/events.jsonl` on the host.
+Host Vector forwards these events according to
+[Vector setup](../../../deploy/vector/README.md).
 
-**Check logs:**
-```bash
-docker logs -f defender
-```
+## Stop
 
-You should see `[ok]` for normal requests and `[BLOCKED]` for attacks.
-
-## Stopping
+From the repository root:
 
 ```bash
-docker compose down
+docker compose -f src/defender/docker-compose.full.yml down
 ```

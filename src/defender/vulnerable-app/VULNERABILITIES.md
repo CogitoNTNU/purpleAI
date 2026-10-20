@@ -22,10 +22,11 @@ Kun til bruk i isolert lab-/øvingsmiljø.
 | 15 | Debug-modus på | `app.run(debug=True)` | A05: Security Misconfiguration | Gir Werkzeug-debugger og stack traces ved feil (i verste fall RCE via debugger-pin hvis eksponert) |
 | 16 | `/admin` i `robots.txt` | – | A05 | "Disallow" er ikke tilgangskontroll, kun et hint til søkemotorer – god læring for angripere om rekognosering |
 
-## Forslag til bruk i øvingen
-- Gi angrepslaget kun `FLAG{...}`-formatet og et scoreboard, ikke denne fila.
-- Forsvarslaget kan bruke denne fila som sjekkliste når de skal patche.
-- Reset databasen mellom runder ved å slette `vulnshop.db` og starte appen på nytt (den lages automatisk med `init_db()`).
+## Database
+
+Databasen er `vulnshop.db` ved siden av `app.py`. `init_db()` oppretter
+og fyller databasen ved første oppstart. Stopp appen, slett denne filen
+og start appen igjen for å opprette en ny database.
 
 ## Oppsett
 ```bash

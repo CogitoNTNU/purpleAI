@@ -2,8 +2,8 @@
 
 Loads .env once, checks that every required value is present and
 sensible, and extracts the scan host from the target URL. All other
-modules read configuration through get_config(); environment variables
-are never read anywhere else.
+modules read agent configuration through get_config(). The shared event
+logger handles its optional file-path override separately.
 """
 
 from __future__ import annotations
@@ -27,8 +27,6 @@ class Config:
     idun_api_key: str
     idun_model: str
     nmap_timeout: int
-    log_collector_url: str | None
-    log_collector_token: str | None
 
 
 def _parse_target_host(target_url: str) -> str:
@@ -64,7 +62,9 @@ def load_config(env_file: str = ".env") -> Config:
     for name in ("TARGET_URL", "IDUN_BASE_URL", "IDUN_API_KEY", "IDUN_MODEL"):
         value = os.environ.get(name, "").strip()
         if not value:
-            raise ConfigError(f"Missing '{name}' in .env. Copy .env.example to .env and fill it in.")
+            raise ConfigError(
+                f"Missing '{name}' in .env. Copy .env.example to .env and fill it in."
+            )
         required[name] = value
 
     if not required["IDUN_BASE_URL"].startswith(("http://", "https://")):
@@ -75,27 +75,6 @@ def load_config(env_file: str = ".env") -> Config:
 
     target_host = _parse_target_host(required["TARGET_URL"])
 
-    log_collector_url = os.environ.get("LOG_COLLECTOR_URL", "").strip() or None
-    log_collector_token = os.environ.get("LOG_COLLECTOR_TOKEN", "").strip() or None
-    if bool(log_collector_url) != bool(log_collector_token):
-        raise ConfigError("LOG_COLLECTOR_URL and LOG_COLLECTOR_TOKEN must be set together.")
-    if log_collector_url:
-        parsed = urlparse(log_collector_url)
-        if (
-            parsed.scheme not in ("http", "https")
-            or not parsed.hostname
-            or parsed.path != "/events"
-            or parsed.params
-            or parsed.query
-            or parsed.fragment
-            or parsed.username
-            or parsed.password
-        ):
-            raise ConfigError(
-                "LOG_COLLECTOR_URL must be an HTTP(S) URL ending in /events, "
-                "without credentials or query parameters."
-            )
-
     return Config(
         target_url=required["TARGET_URL"],
         target_host=target_host,
@@ -103,8 +82,6 @@ def load_config(env_file: str = ".env") -> Config:
         idun_api_key=required["IDUN_API_KEY"],
         idun_model=required["IDUN_MODEL"],
         nmap_timeout=120,
-        log_collector_url=log_collector_url,
-        log_collector_token=log_collector_token,
     )
 
 
