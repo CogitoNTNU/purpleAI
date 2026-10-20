@@ -34,13 +34,18 @@ services:
       - backend
 
   defender:
-    build: ../defender-agent
+    build:
+      context: ..
+      dockerfile: defender-agent/Dockerfile
     ports:
       - "8080:8080"
     environment:
       - IDUNN_BASE_URL
       - IDUNN_API_KEY
       - TARGET=http://backend:8000
+      - PURPLEAI_LOG_FILE=/var/log/purpleai/events.jsonl
+    volumes:
+      - ../logs:/var/log/purpleai
     networks:
       - app_network
     depends_on:

@@ -76,7 +76,7 @@ All commands are run from the `vulnerable-web` folder.
    docker logs -f vulnerable-web-defender-1
    ```
 
-   Each request is logged as `[ok]` (forwarded) or `[BLOCKED]` (stopped).
+   Each request produces structured JSON events for allow/block decisions and upstream results.
 
 ## Testing
 
@@ -104,7 +104,7 @@ Expected result: `Couldn't connect to server`.
 
 **False positives.** Innocent inputs that look slightly suspicious should still get `200`. Try values like `O'Brien`, `rock and roll` or `fish or chips` in place of `pizza`. A defender that blocks normal users is not useful, so this is as important as catching attacks.
 
-**Automated attack.** For a realistic test, run `sqlmap` against the defender and watch the log fill with `[BLOCKED]` entries:
+**Automated attack.** For a realistic test, run `sqlmap` against the defender and watch the log fill with `"status": "blocked"` entries:
 
 ```bash
 sqlmap -u "http://localhost:8080/api/businesses/?search=test" --batch
@@ -135,7 +135,7 @@ Then rebuild with `docker compose up -d --build`. The proxy, logging and blockin
 
 | Problem | Likely cause and fix |
 | --- | --- |
-| Every request gets `403` and the log shows `[ERROR]` | The defender can't reach the IDUN API. Check the VPN, run the `export` commands again, and restart with `docker compose up -d --build`. |
+| Every request gets `403` and the log shows `"status": "error"` | The defender can't reach the IDUN API. Check the VPN, run the `export` commands again, and restart with `docker compose up -d --build`. |
 | Normal requests get `400` | Django rejected the forwarded `Host` header. Check `ALLOWED_HOSTS` in the backend settings. |
 | `docker compose` reports an error in the file | Usually YAML indentation. `defender:` must be indented at the same level as `backend:` under `services:`. |
 | `Couldn't connect` on port 8080 | The defender container isn't running. Check `docker ps` and `docker logs vulnerable-web-defender-1`. |
@@ -148,3 +148,12 @@ Then rebuild with `docker compose up -d --build`. The proxy, logging and blockin
 - **Other entry points:** the `nginx` service on port 80 routes to the backend directly and does not go through the defender. It should be pointed at the defender before testing from another machine.
 - **HTTPS:** the defender handles plain HTTP only.
 - **Development server:** the defender uses Flask's built-in server, which is fine for this test setup but not for production.
+
+## Central logging
+
+The defender prints JSON events and appends them to `logs/events.jsonl`.
+Both Compose configurations mount that file under `src/defender/logs/`
+on the host. Create the directory before starting Compose and rebuild
+the defender image. Set `PURPLEAI_LOG_FILE` to override the application
+path. See [Vector setup](../../../deploy/vector/README.md) to forward
+events from the host to gamehost.

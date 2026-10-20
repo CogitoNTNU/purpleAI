@@ -106,16 +106,17 @@ nmap_scan()
 The target exposes...
 ```
 
-Every agent action is logged as a structured JSON line. Events include a
-source, run ID, event ID, UTC timestamp, actor, action, and optional tool,
-target, and status. Set `LOG_COLLECTOR_URL` and `LOG_COLLECTOR_TOKEN` in
-`.env` to send each event to the gamehost as it happens. The agent keeps
-running if the collector is temporarily unavailable; it prints one
-delivery warning per run. Events missed while the collector is offline
-are not replayed.
+Every agent action is printed and appended as one JSON line to
+`logs/events.jsonl` beside the agent code. Set `PURPLEAI_LOG_FILE` in
+`.env` to choose another path. Events include source, run ID, event ID,
+UTC timestamp, actor, action, and optional tool, target, and status.
+The application makes no network logging calls; host Vector tails the
+file and forwards events to gamehost. File write failures are reported
+on stderr without stopping the agent.
 
-Start the collector on the gamehost as described in
-[`../gamehost/README.md`](../gamehost/README.md) before running the agent.
+See [Vector setup](../../deploy/vector/README.md) for both sending hosts
+and gamehost. Old `LOG_COLLECTOR_URL` and `LOG_COLLECTOR_TOKEN` settings
+are no longer used.
 
 ## Project structure
 
