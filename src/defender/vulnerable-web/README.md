@@ -1,37 +1,43 @@
 # SecureReview
 
-SevureReview is an application for reviewing and exploring different businesses and experiences.
+SecureReview is a business and review application with a Django REST
+backend, React/TypeScript frontend, SQLite database, and JWT authentication.
+Its Compose stack includes the HTTP defender.
 
-## Prerequisites
+## Run
 
-Before you start, make sure the following tools are installed on your system:
-
-- **Git:** Version control system to clone the project repository [Download Git](https://git-scm.com/downloads)
-- **Docker:** To containerize the application and ensure it runs consistently across different environments [Download Docker](https://www.docker.com/products/docker-desktop)
-
-<!---
-## Setup
-
-Insert eventual instructions about environment variables etc. here
--->
-
-## Usage
-
-To run the project, execute the following command in the root folder:
+From the repository root:
 
 ```bash
-docker compose up --build -d
+export IDUNN_BASE_URL=https://llm.hpc.ntnu.no/v1
+export IDUNN_API_KEY=your-idun-api-key
+mkdir -p src/defender/logs
+docker compose -f src/defender/vulnerable-web/docker-compose.yml up -d --build
 ```
 
-This will build the Docker images (if necessary) and run the containers in the background. You can access the application at [http://localhost](http://localhost) and the Django backend at [http://localhost/api](http://localhost/api).
-The Admin interface for the Django backend is available at [http://localhost/admin](http://localhost/admin).
+| Host endpoint | Route |
+| --- | --- |
+| `http://localhost/` | Nginx to frontend |
+| `http://localhost/api/` | Nginx directly to Django |
+| `http://localhost/admin/` | Nginx directly to Django admin |
+| `http://localhost:8080/` | Defender to Django |
 
-To stop the containers, you can use the following command:
+Port 80 routes bypass the defender. The frontend/backend containers have
+no directly published host ports. The backend entrypoint applies migrations
+and seeds data when there are no users, then starts Django on port 8000.
+
+## Events and services
+
+The defender's events are saved to `src/defender/logs/events.jsonl` on the
+host. See [defender documentation](../defender-agent/README.md) and
+[Vector setup](../../../deploy/vector/README.md).
+
+From the repository root:
 
 ```bash
-docker compose down
+docker compose -f src/defender/vulnerable-web/docker-compose.yml logs -f defender
+docker compose -f src/defender/vulnerable-web/docker-compose.yml down
 ```
 
-## Documentation
-
-For more information on how the application is structured, and how to run it without Docker for development, see the [Developer Guide](docs/developer-guide.md).
+See the [developer guide](docs/developer-guide.md) for local backend and
+frontend commands.

@@ -1,83 +1,130 @@
 # Vector logging
 
 ```text
-attacker JSONL → host Vector ─┐
-                             ├→ gamehost Vector → daily JSONL files
-defender JSONL → host Vector ─┘
+RedAI JSONL  → host Vector ─┐
+                           ├→ gamehost Vector → daily JSONL files
+BlueAI JSONL → host Vector ─┘
 ```
 
-Use `agent.yaml` on both sending hosts and `gamehost.yaml` on gamehost.
-The examples use gamehost `192.168.0.110:6000`; change both configs if needed.
-No custom Python collector or shared HTTP token is needed.
+## Application files
 
-## 1. Write the files
+Both agents use `src/purpleai_logging.py`. Python's `WatchedFileHandler`
+handles file output and detects rename/create rotation. Each event is
+also printed to stdout. Agent code calls `log_event("action", **fields)`.
 
-The attacker writes `src/nmap-agent/logs/events.jsonl` by default.
-The defender Compose setups bind-mount `src/defender/logs/` and write
-`src/defender/logs/events.jsonl` on the host. Create that directory before
-starting Compose. Rebuild the defender image to include the logger.
+| Component | Configuration adapter | Default host log file |
+| --- | --- | --- |
+| Attacker | `src/nmap-agent/logging_utils.py` | `src/nmap-agent/logs/events.jsonl` |
+| Defender in Compose | `src/defender/defender-agent/event_logging.py` | `src/defender/logs/events.jsonl` |
 
-On each sending host, change `include` in `agent.yaml` to the **absolute
-host path** of its `events.jsonl`. This avoids moving files or changing
-application permissions. Alternatively, set `PURPLEAI_LOG_FILE` for an
-application to write at a different path. It must be writable by the
-application and readable by the `vector` service user; Vector also needs
-search permission on every parent directory.
+Paths in this table are relative to the repository root. Running the
+Defender directly writes beside its adapter at
+`src/defender/defender-agent/logs/events.jsonl`. Compose sets the container's
+`PURPLEAI_LOG_FILE` and bind-mounts its log directory onto the host.
 
-Events retain their IDs, timestamps, source, actor, and action. Vector
-adds the sending hostname and input file path. Defender events include
-allow/block decisions, classifier errors, and upstream results linked by
-`request_id`. Bodies, query strings, headers, and exception messages are
-excluded; URL paths are recorded.
+The adapters select the source, actor, and default path. The shared logger
+supplies schema version, event/run IDs, and UTC timestamps. The optional
+`PURPLEAI_LOG_FILE` overrides the application path; defaults require no
+logging variables in application `.env` files.
 
-File output uses Python's built-in `logging.handlers.WatchedFileHandler`;
-no additional logging dependency is required.
+Defender events record allow/block decisions, classifier errors, and
+upstream results linked by `request_id`. They include method and URL path;
+request bodies, query strings, headers, and exception messages are omitted.
 
-Both agents use the same implementation in `src/purpleai_logging.py`.
-Their local `logging_utils.py` / `event_logging.py` files only select the
-source, actor, and default file path. Agent code just calls
-`log_event("action", status="...", ...)`; it does not manage files,
-JSON serialization, timestamps, IDs, or delivery. Both loggers create
-their parent directory and use the same optional `PURPLEAI_LOG_FILE`
-override. No logging variables are required in either application's `.env`.
+See [event format](../../docs/event-format.md) for the envelope and actions.
 
-After updating the code, restart the attacker and rebuild/recreate the
-defender. Existing host log paths and Vector configurations still apply.
-The defender Docker build context is now `src/` so the image can include
-the shared logger; both Compose files already specify this context.
+## Host configuration
 
-Remove old `LOG_COLLECTOR_URL` and `LOG_COLLECTOR_TOKEN` settings from the
-attacker environment. The attacker now writes files only.
+Vector runs as a systemd service under the host's normal login account.
+Run setup commands as that account, using `sudo` only where shown.
 
-## 2. Configure the installed Vector services
-
-On gamehost, prepare its output directory:
+Confirm the installed binary is available:
 
 ```bash
-sudo install -d -o vector -g vector -m 0750 /var/log/purpleai/collected
+vector --version
 ```
 
-Copy `gamehost.yaml` to `/etc/vector/vector.yaml` on gamehost, and your
-edited `agent.yaml` to `/etc/vector/vector.yaml` on attacker and defender.
-Back up any existing configuration first. These instructions assume the
-standard Linux package's `vector` user, state directory `/var/lib/vector`,
-and systemd unit. Keep that state directory writable by Vector.
-
-Validate and restart on each host, starting with gamehost:
+On every host:
 
 ```bash
-sudo -u vector vector validate /etc/vector/vector.yaml
-sudo systemctl restart vector
-sudo journalctl -u vector -n 30 --no-pager
+sudo mkdir -p /etc/vector
+sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 0750 /var/lib/vector
 ```
 
-Permit TCP `6000` on gamehost only from the two sending hosts. These
-minimal configs use unencrypted Vector transport on the controlled lab
-network. Containers need no access to the gamehost: only the host Vector
-processes send logs. For an untrusted network, add TLS with client
-certificates using Vector's native TLS settings.
+On gamehost, also create the archive directory:
 
-## 3. Check delivery
+```bash
+sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 0750 /var/log/purpleai/collected
+```
+
+From the repository root, copy the receiver config on gamehost:
+
+```bash
+sudo cp deploy/vector/gamehost.yaml /etc/vector/vector.yaml
+```
+
+On RedAI and BlueAI, copy the sender config:
+
+```bash
+sudo cp deploy/vector/agent.yaml /etc/vector/vector.yaml
+```
+
+Edit `/etc/vector/vector.yaml` for that host:
+
+- Sender `include`: absolute host path from the application-files table.
+- Sender `address`: `http://GAMEHOST_IP:6000`.
+- Receiver `address`: gamehost's listening IP and port, or `0.0.0.0:6000`.
+
+The checked-in examples use `192.168.0.110:6000`. The sender service account
+needs read access to the log and search access to its parent directories.
+The application needs write access. Create the host log directory before
+starting the defender's Compose service.
+
+Validate with the same account that will run Vector:
+
+```bash
+vector validate /etc/vector/vector.yaml
+```
+
+## Service
+
+Run this on each host after validation. It embeds the current username
+and the absolute installed Vector binary path in the service file.
+
+```bash
+sudo tee /etc/systemd/system/vector.service >/dev/null <<UNIT
+[Unit]
+Description=PurpleAI Vector logging
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=$(id -un)
+ExecStart=$(command -v vector) --config /etc/vector/vector.yaml
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=90
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now vector
+sudo systemctl status vector --no-pager
+```
+
+Start gamehost before the senders. Stop any foreground Vector process
+using this configuration before starting its service. After editing an
+existing service's configuration, validate and run
+`sudo systemctl restart vector`.
+
+TCP 6000 carries unencrypted Vector transport on the lab network. Permit
+it on gamehost from the sending hosts. Container applications write files;
+the host Vector processes make the connection to gamehost.
+
+## Check delivery
 
 Run an attacker task and send a request through the defender. On gamehost:
 
@@ -85,29 +132,22 @@ Run an attacker task and send a request through the defender. On gamehost:
 tail -F /var/log/purpleai/collected/events-$(date -u +%F).jsonl
 ```
 
-Check for both `nmap-agent` and `defender-agent` source values. Stop
-gamehost Vector, produce more events, restart it, and confirm the pending
-events arrive. Restart a sender's Vector and confirm it resumes from its
-checkpoint. This verifies actual host paths, permissions, and connectivity.
+Check for `nmap-agent` and `defender-agent` source values. Service diagnostics:
+
+```bash
+sudo journalctl -u vector -n 40 --no-pager
+```
 
 ## Storage
 
 Vector keeps file checkpoints and a roughly 256 MiB disk buffer per sink
-under `/var/lib/vector`. A full buffer applies backpressure; unread events
-remain in the source files. Keep those files and the state directory across
-restarts. Delivery can produce duplicates, identified by `event_id`; this
-is not an exactly-once archive or a power-loss-proof audit store.
+under `/var/lib/vector`. Full buffers apply backpressure. Delivery retries
+can produce duplicates; `event_id` identifies an event across retries.
 
-The file handler checks for rotation before each event. For rotation, use
-rename/create (not copytruncate), keep rotated files uncompressed until
-Vector has read them, and set retention longer than the longest expected
-outage. If rotating, extend `include` to `events.jsonl*` and exclude `*.gz`
-so unread rotated files are discovered even after a Vector restart.
-Daily gamehost files also need a retention policy. Neither source
-files nor daily archives are automatically deleted by these configs.
-
-Configs validated and delivery/restart recovery tested locally with Vector
-0.60.0. Run validation with the version installed on each host before use.
+The configs do not delete source logs or daily archives. For file rotation,
+use rename/create, retain files through expected outages, and include
+rotated files in the source's `include` pattern. Keep them uncompressed
+until read. Preserve Vector's state directory across restarts.
 
 References: [file source](https://vector.dev/docs/reference/configuration/sources/file/),
 [Vector sink](https://vector.dev/docs/reference/configuration/sinks/vector/),
