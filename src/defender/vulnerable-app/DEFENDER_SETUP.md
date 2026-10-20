@@ -10,14 +10,12 @@ the proxy forwards the request and returns the app's response.
 
 ## Start
 
-From the repository root, with Docker/Compose installed and network access
-to IDUN:
+With Docker/Compose installed and network access to IDUN, create `src/.env` with `IDUNN_BASE_URL` and `IDUNN_API_KEY` for the
+Compose `env_file`. Then run from the repository root:
 
 ```bash
-export IDUNN_BASE_URL=https://llm.hpc.ntnu.no/v1
-export IDUNN_API_KEY=your-idun-api-key
 mkdir -p src/defender/logs
-docker compose -f src/defender/docker-compose.yml up -d --build
+docker compose -f src/defender/docker-compose.full.yml up -d --build
 ```
 
 The defender publishes port 8080. The backend has no published host port.
@@ -27,7 +25,7 @@ The defender publishes port 8080. The backend has no published host port.
 ```bash
 curl http://localhost:8080/
 curl -G http://localhost:8080/search --data-urlencode "q=' OR 1=1--"
-docker compose -f src/defender/docker-compose.yml logs -f defender
+docker compose -f src/defender/docker-compose.full.yml logs -f defender
 ```
 
 Inspect `request_decision` events for `allowed`, `blocked`, or `error`.
@@ -43,5 +41,5 @@ Host Vector forwards these events according to
 From the repository root:
 
 ```bash
-docker compose -f src/defender/docker-compose.yml down
+docker compose -f src/defender/docker-compose.full.yml down
 ```

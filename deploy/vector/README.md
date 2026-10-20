@@ -19,7 +19,7 @@ also printed to stdout. Agent code calls `log_event("action", **fields)`.
 
 Paths in this table are relative to the repository root. Running the
 Defender directly writes beside its adapter at
-`src/defender/defender-agent/logs/events.jsonl`. Compose sets the container's
+`src/defender/defender-agent/logs/events.jsonl`. The full Compose setup sets the container's
 `PURPLEAI_LOG_FILE` and bind-mounts its log directory onto the host.
 
 The adapters select the source, actor, and default path. The shared logger
@@ -152,3 +152,9 @@ until read. Preserve Vector's state directory across restarts.
 References: [file source](https://vector.dev/docs/reference/configuration/sources/file/),
 [Vector sink](https://vector.dev/docs/reference/configuration/sinks/vector/),
 [Vector source](https://vector.dev/docs/reference/configuration/sources/vector/).
+
+## Dashboard
+
+The gamehost dashboard in `src/gamehost/dashboard/` reads these same daily
+archives. Run it as the gamehost Vector account so it can read the archive
+files. See [dashboard guide](../../src/gamehost/dashboard/DASHBOARD.md).

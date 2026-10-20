@@ -1,0 +1,12 @@
+services:
+  vulnerable-app:
+    build: ./vulnerable-app
+    container_name: vulnerable-app
+    ports:
+      - "8080:5000"  # might change this for security reasons.
+    networks:
+      - backend-network
+
+networks:
+  backend-network:
+    driver: bridge

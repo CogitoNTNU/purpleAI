@@ -16,6 +16,24 @@ sudo journalctl -u vector -n 40 --no-pager
 tail -F /var/log/purpleai/collected/events-$(date -u +%F).jsonl
 ```
 
+## Dashboard
+
+`dashboard/dashboard.py` reads the same daily archives and refreshes every
+five seconds while the browser session is active. The dashboard account
+needs read access to the archive files and search access to their parent
+directories. Run it as the account used by the gamehost Vector service.
+
+From the repository root:
+
+```bash
+uv sync --locked
+bash src/gamehost/dashboard/run_dashboard.sh
+```
+
+Open `http://GAMEHOST_IP:8501`. The dashboard reads all matching daily
+archives, orders events by timestamp, and counts repeated `event_id`
+values once. See [dashboard guide](dashboard/DASHBOARD.md).
+
 ## Normal traffic
 
 `docker-compose.yml` runs `traffic/normal-traffic.js` with k6. Its scenarios

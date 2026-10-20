@@ -11,44 +11,31 @@ to `TARGET` and the upstream response is returned.
 when a classifier reports an attack. The configured model is
 `openai/gpt-oss-120b`.
 
-## Compose setups
+## Compose setup
 
-Run commands from the repository root. Export IDUN credentials first:
+`src/defender/docker-compose.full.yml` runs VulnShop and the defender.
+Create `src/.env` with the IDUN credentials read by that Compose file:
+
+```env
+IDUNN_BASE_URL=https://llm.hpc.ntnu.no/v1
+IDUNN_API_KEY=your-idun-api-key
+```
+
+From the repository root:
 
 ```bash
-export IDUNN_BASE_URL=https://llm.hpc.ntnu.no/v1
-export IDUNN_API_KEY=your-idun-api-key
 mkdir -p src/defender/logs
+docker compose -f src/defender/docker-compose.full.yml up -d --build
+docker compose -f src/defender/docker-compose.full.yml logs -f defender
 ```
 
-Choose the application's Compose file:
+This publishes the defender on host port 8080 and keeps VulnShop's port
+5000 inside the backend network. The defender target is
+`http://vulnerable-app:5000`. The Docker build context is `src/`, including
+the shared logger.
 
-| Application | Compose file | Defender target |
-| --- | --- | --- |
-| VulnShop | `src/defender/docker-compose.yml` | `http://vulnerable-app:5000` |
-| SecureReview | `src/defender/vulnerable-web/docker-compose.yml` | `http://backend:8000` |
-
-For VulnShop:
-
-```bash
-docker compose -f src/defender/docker-compose.yml up -d --build
-docker compose -f src/defender/docker-compose.yml logs -f defender
-```
-
-For SecureReview:
-
-```bash
-docker compose -f src/defender/vulnerable-web/docker-compose.yml up -d --build
-docker compose -f src/defender/vulnerable-web/docker-compose.yml logs -f defender
-```
-
-Both publish the defender on host port 8080. Start one setup at a time.
-Their Docker build context is `src/`, including the shared logger.
-
-SecureReview also publishes Nginx on port 80. Its API and admin routes
-connect directly to the Django backend, bypassing the defender. Use port
-8080 to exercise defender classification. VulnShop's Compose setup only
-publishes the defender and keeps its backend on an internal Docker network.
+`docker-compose.app.yml` is the app-only alternative: it publishes VulnShop
+directly on host port 8080. Run one setup at a time.
 
 ## Events
 
@@ -61,8 +48,8 @@ publishes the defender and keeps its backend on an internal Docker network.
 - `request_id`: links a decision with its upstream result.
 
 Events include HTTP method and URL path. They are printed to stdout and
-appended as JSONL. Both Compose setups mount the host directory
-`src/defender/logs/` at `/var/log/purpleai` in the container and set
+appended as JSONL. The full Compose setup mounts the host directory
+`src/defender/logs/` at `/var/log/purpleai` in the container and sets
 `PURPLEAI_LOG_FILE=/var/log/purpleai/events.jsonl`. Direct Python execution
 uses `logs/events.jsonl` beside the adapter unless that variable is set.
 
@@ -71,18 +58,9 @@ and forwarding, and [event format](../../../docs/event-format.md) for fields.
 
 ## Request checks
 
-For VulnShop:
-
 ```bash
 curl http://localhost:8080/
 curl -G http://localhost:8080/search --data-urlencode "q=' OR 1=1--"
-```
-
-For SecureReview:
-
-```bash
-curl -G http://localhost:8080/api/businesses/ --data-urlencode 'search=pizza'
-curl -G http://localhost:8080/api/businesses/ --data-urlencode "search=' OR 1=1--"
 ```
 
 Inspect both the response and the corresponding events. The classifications

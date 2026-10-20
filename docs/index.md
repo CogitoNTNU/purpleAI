@@ -9,11 +9,10 @@ web applications, and centralized Vector logging.
 - `src/nmap-agent/`: attacker CLI, target configuration, and restricted Nmap tool.
 - `src/defender/defender-agent/`: Flask reverse proxy and request classifiers.
 - `src/defender/vulnerable-app/`: VulnShop Flask/SQLite application.
-- `src/defender/vulnerable-web/`: SecureReview Django/React/Nginx stack.
 - `src/purpleai_logging.py`: shared JSON event logger.
 - `deploy/vector/`: sender and gamehost receiver configurations and host setup guide.
 - `src/gamehost/traffic/`: k6 scenarios targeting VulnShop routes.
-- `src/defender/dashboard/`: Streamlit dashboard reading a local sample file.
+- `src/gamehost/dashboard/`: Streamlit dashboard reading Vector archives.
 
 The component READMEs contain startup commands and configuration.
 
