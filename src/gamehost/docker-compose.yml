@@ -1,8 +1,9 @@
 services:
   traffic:
-    image: grafana/k6
+    image: grafana/k6:2.3.0
     command: run /traffic/normal-traffic.js
+    restart: unless-stopped
     volumes:
       - ./traffic:/traffic:ro
-    environment:
-      - TARGET=${TARGET:-http://localhost:8080}
+    env_file:
+      - .env

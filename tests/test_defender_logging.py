@@ -50,6 +50,7 @@ def test_decisions_and_results(defender, outcome):
         agent.side_effect = RuntimeError("secret classifier data")
     module.AGENTS = [agent]
     upstream = Mock(status_code=200, content=b"ok", headers={})
+    upstream.raw.headers.getlist.return_value = []
     with patch.object(module.requests, "request", return_value=upstream) as send:
         if outcome == "upstream_error":
             send.side_effect = requests.ConnectionError("secret upstream data")
@@ -79,6 +80,19 @@ def test_decisions_and_results(defender, outcome):
             "error" if outcome == "upstream_error" else "returned"
         )
     assert "secret" not in path.read_text()
+
+
+def test_proxy_preserves_separate_session_cookies(defender):
+    module, _, _ = defender
+    module.AGENTS = [lambda _: False]
+    cookies = ["role=user; Path=/", "session=test-session; HttpOnly; Path=/"]
+    upstream = Mock(
+        status_code=302, content=b"", headers={"Set-Cookie": ", ".join(cookies)}
+    )
+    upstream.raw.headers.getlist.return_value = cookies
+    with patch.object(module.requests, "request", return_value=upstream):
+        response = module.app.test_client().post("/login")
+    assert response.headers.getlist("Set-Cookie") == cookies
 
 
 def test_concurrent_decisions_are_complete_json_lines(defender):

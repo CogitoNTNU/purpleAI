@@ -125,12 +125,22 @@ def proxy(path):
         http_status=upstream.status_code,
         **event_fields,
     )
-    skip = {"content-encoding", "transfer-encoding", "content-length", "connection"}
-    return Response(
+    skip = {
+        "content-encoding",
+        "transfer-encoding",
+        "content-length",
+        "connection",
+        "set-cookie",
+    }
+    response = Response(
         upstream.content,
         status=upstream.status_code,
         headers=[(k, v) for k, v in upstream.headers.items() if k.lower() not in skip],
     )
+    # requests combines repeated headers; browsers need each cookie separately.
+    for cookie in upstream.raw.headers.getlist("Set-Cookie"):
+        response.headers.add("Set-Cookie", cookie)
+    return response
 
 
 if __name__ == "__main__":
