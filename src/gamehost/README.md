@@ -36,15 +36,43 @@ values once. See [dashboard guide](dashboard/DASHBOARD.md).
 
 ## Normal traffic
 
-`docker-compose.yml` runs `traffic/normal-traffic.js` with k6. Its scenarios
-exercise VulnShop login, browsing, and purchases. From the repository root,
-set the defender address reachable from the traffic container:
+The gamehost Compose service uses k6 to send ordinary browsing, login,
+and purchase requests through BlueAI's defender. It uses the app's seeded
+`alice` and `bob` accounts and the products defined in VulnShop.
+
+From the repository root on gamehost, start it with BlueAI's lab address:
 
 ```bash
-TARGET=http://BLUEAI_IP:8080 docker compose -f src/gamehost/docker-compose.yml run --rm traffic
+export TARGET=http://192.168.0.120:8080
+docker compose -f src/gamehost/docker-compose.yml up -d traffic
 ```
 
-Replace `BLUEAI_IP` with BlueAI's lab address. The Compose default is
-`http://localhost:8080`, which refers to the traffic container's loopback
-address. An explicit target is needed when the defender runs on another
-host. Scenario durations and concurrency are defined in the script.
+The address is an example; use your BlueAI defender's reachable IP and
+port. `TARGET` is required, so the service cannot silently target the
+traffic container's loopback address.
+
+The default is one virtual user, with three seconds between activities.
+Each k6 run lasts ten minutes; Compose restarts it for continuing background
+traffic. `K6_VUS` and `K6_DURATION` can override the defaults when starting
+the service. Requests also wait for defender classification, so actual
+request rate depends on IDUN latency.
+
+Inspect or stop it, keeping `TARGET` exported in that terminal:
+
+```bash
+docker compose -f src/gamehost/docker-compose.yml logs -f traffic
+docker compose -f src/gamehost/docker-compose.yml down
+```
+
+For a single foreground run that exits after one minute:
+
+```bash
+K6_DURATION=1m docker compose -f src/gamehost/docker-compose.yml run --rm traffic
+```
+
+Every HTTP request goes through the existing defender, which produces
+`request_decision` and, when forwarded, `request_result` events. BlueAI's
+Vector sends those events to gamehost, where they appear in the archive
+and dashboard. k6's checks report HTTP outcomes in its own output; the
+dashboard does not label these requests as normal traffic or calculate a
+false-positive rate.

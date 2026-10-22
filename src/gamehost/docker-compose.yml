@@ -1,8 +1,11 @@
 services:
   traffic:
-    image: grafana/k6
+    image: grafana/k6:2.3.0
     command: run /traffic/normal-traffic.js
+    restart: unless-stopped
     volumes:
       - ./traffic:/traffic:ro
     environment:
-      - TARGET=${TARGET:-http://localhost:8080}
+      TARGET: ${TARGET:?Set TARGET to the BlueAI defender URL, for example http://192.168.0.120:8080}
+      K6_VUS: ${K6_VUS:-1}
+      K6_DURATION: ${K6_DURATION:-10m}
