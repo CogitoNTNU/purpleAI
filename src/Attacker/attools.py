@@ -91,4 +91,7 @@ async def sqlmap(
     # TODO: NEED TO GRAB CSV FILE CREATED BY SQLMAP AND FEED IT AS THE RESULT (?)
     out = stdout.decode(errors="replace")
     err = stderr.decode(errors="replace")
+    if proc.returncode != 0:
+        message = err or out or f"process exited with status {proc.returncode}"
+        return f"sqlmap failed: {message}"
     return out or err
