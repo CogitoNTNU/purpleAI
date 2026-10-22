@@ -40,24 +40,30 @@ The gamehost Compose service uses k6 to send ordinary browsing, login,
 and purchase requests through BlueAI's defender. It uses the app's seeded
 `alice` and `bob` accounts and the products defined in VulnShop.
 
-From the repository root on gamehost, start it with BlueAI's lab address:
+From the repository root on gamehost, create its configuration once:
 
 ```bash
-export TARGET=http://192.168.0.120:8080
+cp src/gamehost/.env.example src/gamehost/.env
+nano src/gamehost/.env
+```
+
+Set `TARGET` to your BlueAI defender's reachable IP and port. The example
+uses `http://192.168.0.120:8080`. The `.env` file is ignored by Git and
+loaded directly by the traffic service; no shell exports are needed.
+
+Start it from the repository root:
+
+```bash
 docker compose -f src/gamehost/docker-compose.yml up -d traffic
 ```
 
-The address is an example; use your BlueAI defender's reachable IP and
-port. `TARGET` is required, so the service cannot silently target the
-traffic container's loopback address.
-
 The default is one virtual user, with three seconds between activities.
 Each k6 run lasts ten minutes; Compose restarts it for continuing background
-traffic. `K6_VUS` and `K6_DURATION` can override the defaults when starting
-the service. Requests also wait for defender classification, so actual
+traffic. `K6_VUS` and `K6_DURATION` in `src/gamehost/.env` control these
+settings. Requests also wait for defender classification, so actual
 request rate depends on IDUN latency.
 
-Inspect or stop it, keeping `TARGET` exported in that terminal:
+Inspect or stop it:
 
 ```bash
 docker compose -f src/gamehost/docker-compose.yml logs -f traffic
@@ -67,7 +73,7 @@ docker compose -f src/gamehost/docker-compose.yml down
 For a single foreground run that exits after one minute:
 
 ```bash
-K6_DURATION=1m docker compose -f src/gamehost/docker-compose.yml run --rm traffic
+docker compose -f src/gamehost/docker-compose.yml run --rm -e K6_DURATION=1m traffic
 ```
 
 Every HTTP request goes through the existing defender, which produces

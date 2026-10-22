@@ -5,7 +5,5 @@ services:
     restart: unless-stopped
     volumes:
       - ./traffic:/traffic:ro
-    environment:
-      TARGET: ${TARGET:?Set TARGET to the BlueAI defender URL, for example http://192.168.0.120:8080}
-      K6_VUS: ${K6_VUS:-1}
-      K6_DURATION: ${K6_DURATION:-10m}
+    env_file:
+      - .env
