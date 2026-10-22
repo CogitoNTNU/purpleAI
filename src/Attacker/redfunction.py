@@ -24,7 +24,9 @@ def _run_nmap(target_host: str, timeout: int) -> str:
         raise RuntimeError(f"Nmap scan timed out after {timeout} seconds.")
 
     if result.returncode != 0:
-        first_error_line = (result.stderr or "").strip().splitlines()[0]
+        first_error_line = next(
+            iter((result.stderr or "").strip().splitlines()), "unknown error"
+        )
         raise RuntimeError(f"Nmap failed: {first_error_line}")
     return result.stdout
 
