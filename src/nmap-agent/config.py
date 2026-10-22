@@ -2,8 +2,8 @@
 
 Loads .env once, checks that every required value is present and
 sensible, and extracts the scan host from the target URL. All other
-modules read configuration through get_config(); environment variables
-are never read anywhere else.
+modules read agent configuration through get_config(). The shared event
+logger handles its optional file-path override separately.
 """
 
 from __future__ import annotations
@@ -62,7 +62,9 @@ def load_config(env_file: str = ".env") -> Config:
     for name in ("TARGET_URL", "IDUN_BASE_URL", "IDUN_API_KEY", "IDUN_MODEL"):
         value = os.environ.get(name, "").strip()
         if not value:
-            raise ConfigError(f"Missing '{name}' in .env. Copy .env.example to .env and fill it in.")
+            raise ConfigError(
+                f"Missing '{name}' in .env. Copy .env.example to .env and fill it in."
+            )
         required[name] = value
 
     if not required["IDUN_BASE_URL"].startswith(("http://", "https://")):

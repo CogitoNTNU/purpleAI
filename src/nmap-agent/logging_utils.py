@@ -1,31 +1,14 @@
-"""Structured console logging for PurpleAI agent actions.
+"""Attacker logging configuration. Event handling lives in purpleai_logging.py."""
 
-Each agent action is logged as one JSON line with a timestamp, actor,
-action, tool, target, and status. Empty fields are left out.
-"""
+import sys
+from pathlib import Path
 
-from __future__ import annotations
+# Support running main.py directly, without installing a Python package.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from purpleai_logging import EventLogger  # noqa: E402
 
-import json
-from datetime import datetime, timezone
-
-
-def log_event(
-    actor: str,
-    action: str,
-    *,
-    tool: str | None = None,
-    target: str | None = None,
-    status: str | None = None,
-) -> None:
-    """Print one JSON log line describing an agent action."""
-    event = {
-        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "actor": actor,
-        "action": action,
-        "tool": tool,
-        "target": target,
-        "status": status,
-    }
-    event = {key: value for key, value in event.items() if value is not None}
-    print(json.dumps(event, ensure_ascii=False))
+log_event = EventLogger(
+    source="nmap-agent",
+    actor="attacker",
+    default_path=Path(__file__).resolve().parent / "logs/events.jsonl",
+).log_event

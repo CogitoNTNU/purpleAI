@@ -1,0 +1,30 @@
+# Same config on attacker and defender. Use absolute paths on that host.
+data_dir: /var/lib/vector
+
+sources:
+  events:
+    type: file
+    include:
+      - /var/log/purpleai/events.jsonl
+    read_from: beginning
+
+transforms:
+  parse_events:
+    type: remap
+    inputs: [events]
+    source: |
+      event = object!(parse_json!(.message))
+      . = merge(., event)
+      del(.message)
+
+sinks:
+  gamehost:
+    type: vector
+    inputs: [parse_events]
+    address: http://192.168.0.110:6000
+    acknowledgements:
+      enabled: true
+    buffer:
+      type: disk
+      max_size: 268435488
+      when_full: block

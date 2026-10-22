@@ -1,0 +1,8 @@
+services:
+  traffic:
+    image: grafana/k6
+    command: run /traffic/normal-traffic.js
+    volumes:
+      - ./traffic:/traffic:ro
+    environment:
+      - TARGET=${TARGET:-http://localhost:8080}
