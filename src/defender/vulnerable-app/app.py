@@ -82,13 +82,19 @@ def init_db():
         product_name TEXT,
         price REAL
     );
+
+    CREATE TABLE IF NOT EXISTS flags (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        flag_name TEXT,
+        flag_value TEXT
+    );
     """)
 
     if first_time:
         db.execute(
             "INSERT INTO users (username, password, email, bio, address, role) VALUES (?,?,?,?,?,?)",
-            ("admin", "S3cr3tAdminPW!", "admin@vulnshop.local",
-             "Systemadministrator. FLAG{idor_admin_profile_found}", "Serverrom 1", "admin"),
+            ("admin", "S3cr3tAdminPW!", "FLAG{sql_login_bypass_success}",
+             "Systemadministrator", "Serverrom 1", "admin"),
         )
         db.execute(
             "INSERT INTO users (username, password, email, bio, address, role) VALUES (?,?,?,?,?,?)",
@@ -108,6 +114,13 @@ def init_db():
         db.executemany(
             "INSERT INTO products (name, description, price) VALUES (?,?,?)", products
         )
+
+        # Insert SQL injection flag into secret table
+        db.execute(
+            "INSERT INTO flags (flag_name, flag_value) VALUES (?,?)",
+            ("search_injection", "FLAG{sql_union_injection_found}")
+        )
+
         db.commit()
     db.close()
 
