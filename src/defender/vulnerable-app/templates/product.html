@@ -5,6 +5,9 @@
 <p>{{ product['description'] }}</p>
 <p class="price">{{ product['price'] }} kr</p>
 
+<!-- Hidden admin data only visible via XSS -->
+<div id="admin-secret" style="display:none;" data-token="FLAG{stored_xss_dom}"></div>
+
 <form method="post" action="{{ url_for('checkout') }}" class="form-inline">
     <input type="hidden" name="product_name" value="{{ product['name'] }}">
     <!-- VULN: prisen ligger i et skjult felt klienten kan endre før innsending -->

@@ -7,8 +7,8 @@ Kun til bruk i isolert lab-/øvingsmiljø.
 |---|-----------|------|-----------------|----------------|
 | 1 | SQL-injection i login | `POST /login` | A03: Injection | Logg inn som `admin' --` uten passord. Admin sin e-post inneholder `FLAG{sql_login_bypass_success}` |
 | 2 | SQL-injection i søk | `GET /search?q=` | A03: Injection | `' UNION SELECT id, flag_value, null FROM flags --` gir `FLAG{sql_union_injection_found}` |
-| 3 | Reflektert XSS | `GET /search?q=` | A03: Injection (XSS) | `<script>alert(1)</script>` som søk |
-| 4 | Stored XSS | Kommentarfelt på `/product/<id>` | A03: Injection (XSS) | Post en `<script>` som kommentar, se den kjøre for andre besøkende |
+| 3 | Reflektert XSS | `GET /search?q=` | A03: Injection (XSS) | `<script>alert(document.cookie)</script>` som søk gir cookie flag `FLAG{reflected_xss}` |
+| 4 | Stored XSS | Kommentarfelt på `/product/<id>` | A03: Injection (XSS) | Kjør `<script>alert(document.getElementById('admin-secret').dataset.token)</script>` i kommentar feltet, som gir DOM flag |
 | 5 | IDOR | `GET /profile/<id>` | A01: Broken Access Control | `/profile/1` viser admin sin e-post/adresse uten autorisasjon |
 | 6 | Prismanipulering | `POST /checkout` (skjult felt `price`) | A04: Insecure Design | Endre `price` i devtools før innsending, betaler f.eks. 1 kr for VIP-pakke |
 | 7 | Usikker filopplasting | `POST /upload` | A04/A05 | Ingen filtype-/størrelsesbegrensning, filer havner direkte i `/static/uploads/` |
