@@ -34,14 +34,23 @@ SUBAGENT_SERVER_URL = "http://localhost:2024"
 # subagents here as new graphs are registered on the server.
 subagents = [
     {
-        "name": "execution_agent",
+        "name": "sql_agent",
         "description": (
             "Execute the tasks and implement solutions delegated by the Boss "
             "Agent. Runs sqlmap against the configured target."
         ),
-        "graph_id": "execution_agent",
+        "graph_id": "sql_agent",
         "url": SUBAGENT_SERVER_URL,
     },
+    {
+            "name": "xss_agent",
+            "description": (
+                "Execute the tasks and implement solutions delegated by the Boss "
+                "Agent. Runs xsser against the configured target."
+            ),
+            "graph_id": "xss_agent",
+            "url": SUBAGENT_SERVER_URL,
+        },
 ]
 
 # Checkpointer persists the conversation across loop iterations (in memory,
