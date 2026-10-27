@@ -1,13 +1,7 @@
 [theme]
-
-# General color setup
-primaryColor="#f7f2fa"
-backgroundColor="#3D1F4A"
-secondaryBackgroundColor="#744189"
-textColor="#FFFFFF"
-
-# Base text
-font = "'Space Grotesk':https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&display=swap"
-baseFontWeight = 300
-baseFontSize = 14
-
+base = "dark"
+primaryColor = "#a78bfa"
+backgroundColor = "#0e1118"
+secondaryBackgroundColor = "#191e2b"
+textColor = "#e6e9f0"
+font = "sans serif"

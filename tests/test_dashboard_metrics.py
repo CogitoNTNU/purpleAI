@@ -24,15 +24,90 @@ def test_dashboard_counts_calls_errors_and_defender_blocks(tmp_path, monkeypatch
         {"actor": "defender", "action": "request_decision", "status": "allowed"},
     ]
     (tmp_path / "events-2026-10-27.jsonl").write_text(
-        "".join(json.dumps(record) + "\n" for record in records)
+        "".join(
+            json.dumps({**record, "timestamp": "2026-10-27T12:00:00Z"}) + "\n"
+            for record in records
+        )
     )
     app = AppTest.from_file(str(ROOT / "src/gamehost/dashboard/dashboard.py")).run(
         timeout=20
     )
     assert not app.exception
+    app.selectbox[0].select("Latest hour of logs").run()
+    assert not app.exception
     assert {metric.label: metric.value for metric in app.metric} == {
-        "Attacker Tool Calls": "2",
-        "Tool Errors / Timeouts": "1",
-        "Defender Requests Blocked": "1",
-        "Total Events": "8",
+        "Tool executions started": "2",
+        "Requests inspected": "2",
+        "Requests blocked": "1",
+        "Classifier errors": "0",
     }
+
+
+def test_dashboard_empty_then_new_events_and_filters(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / "src/gamehost/dashboard"))
+    monkeypatch.setenv("PURPLEAI_EVENTS_DIR", str(tmp_path))
+    app = AppTest.from_file(str(ROOT / "src/gamehost/dashboard/dashboard.py")).run()
+    assert not app.exception
+    assert "Waiting for Vector" in app.info[0].value
+    records = [
+        {
+            "timestamp": "2026-10-26T10:00:00Z",
+            "actor": "defender",
+            "action": "request_decision",
+            "status": "blocked",
+            "path": "/old",
+        },
+        {
+            "timestamp": "2026-10-27T12:00:00Z",
+            "actor": "defender",
+            "action": "request_decision",
+            "status": "error",
+            "path": "/new",
+        },
+        {
+            "timestamp": "not-a-date",
+            "actor": "defender",
+            "action": "request_decision",
+            "status": "blocked",
+        },
+    ]
+    (tmp_path / "events-test.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in records)
+    )
+    app.run()
+    assert not app.exception
+    assert app.selectbox[0].value == "Live · last 15 minutes"
+    app.selectbox[0].select("Latest hour of logs").run()
+    assert not app.exception
+    assert {metric.label: metric.value for metric in app.metric}[
+        "Requests inspected"
+    ] == "1"
+    assert "invalid timestamps" in app.warning[0].value
+    app.selectbox[0].select("All logs").run()
+    assert not app.exception
+    assert {metric.label: metric.value for metric in app.metric}[
+        "Requests inspected"
+    ] == "2"
+    next(radio for radio in app.radio if radio.label == "View").set_value(
+        "Event investigation"
+    ).run()
+    app.selectbox[1].select("attacker").run()
+    assert not app.exception
+    assert app.dataframe[-1].value.empty
+
+
+def test_refresh_controls_keep_updates_optional(tmp_path, monkeypatch):
+    monkeypatch.setenv("PURPLEAI_EVENTS_DIR", str(tmp_path))
+    app = AppTest.from_file(str(ROOT / "src/gamehost/dashboard/dashboard.py")).run()
+    app.toggle[0].set_value(False).run()
+    assert not app.exception
+    (tmp_path / "events-new.jsonl").write_text(
+        '{"event_id":"one","actor":"defender","action":"request_decision","status":"allowed","timestamp":"2026-10-27T12:00:00Z"}\n'
+    )
+    app.button[0].click().run()
+    app.selectbox[0].select("Latest hour of logs").run()
+    assert not app.exception
+    assert {metric.label: metric.value for metric in app.metric}[
+        "Requests inspected"
+    ] == "1"
+    assert any("Live updates paused" in caption.value for caption in app.caption)
