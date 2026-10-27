@@ -15,9 +15,11 @@ def traffic_chart(data, share=False):
         decision=data.status.map(LABELS),
     )
     base = alt.Chart(data)
-    chart = base.mark_bar() if share else base.mark_line(strokeWidth=2.5)
-    if share:
-        chart = chart.encode(x2="bucket_end:T")
+    chart = (
+        base.mark_area(interpolate="step-after")
+        if share
+        else base.mark_line(strokeWidth=2.5)
+    )
     return chart.encode(
         x=alt.X(
             "bucket:T",

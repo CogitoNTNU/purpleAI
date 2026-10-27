@@ -55,7 +55,6 @@ def traffic(frame, start, end, frequency):
     )
     index = pd.MultiIndex.from_product([buckets, DECISIONS], names=["bucket", "status"])
     result = counts.reindex(index, fill_value=0).rename("requests").reset_index()
-    result["bucket_end"] = result.bucket + pd.tseries.frequencies.to_offset(frequency)
     return result
 
 
