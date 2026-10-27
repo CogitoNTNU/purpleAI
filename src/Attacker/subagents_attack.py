@@ -20,7 +20,7 @@ sql_agent = create_deep_agent(
     system_prompt=EXECUTION_PROMPT,
     name="sql_agent",
 )
-sql_agent = create_deep_agent(
+xss_agent = create_deep_agent(
     model=get_model(),
     tools=[xsser],
     system_prompt=EXECUTION_PROMPT,
