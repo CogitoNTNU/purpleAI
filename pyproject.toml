@@ -9,7 +9,7 @@ dependencies = [
     "flask>=3.1.0",
     "requests>=2.34.2",
     "langchain-openai>=0.3.6",
-    "streamlit>=1.40.0",
+    "streamlit>=1.66.1",
     "pandas>=2.2.0",
     "altair>=5.5,<7",
 ]
