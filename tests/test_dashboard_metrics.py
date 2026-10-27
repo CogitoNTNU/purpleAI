@@ -88,6 +88,26 @@ def test_dashboard_empty_then_new_events_and_filters(tmp_path, monkeypatch):
     assert {metric.label: metric.value for metric in app.metric}[
         "Requests inspected"
     ] == "2"
+    next(radio for radio in app.radio if radio.label == "View").set_value(
+        "Event investigation"
+    ).run()
     app.selectbox[1].select("attacker").run()
     assert not app.exception
     assert app.dataframe[-1].value.empty
+
+
+def test_refresh_controls_keep_updates_optional(tmp_path, monkeypatch):
+    monkeypatch.setenv("PURPLEAI_EVENTS_DIR", str(tmp_path))
+    app = AppTest.from_file(str(ROOT / "src/gamehost/dashboard/dashboard.py")).run()
+    app.toggle[0].set_value(False).run()
+    assert not app.exception
+    (tmp_path / "events-new.jsonl").write_text(
+        '{"event_id":"one","actor":"defender","action":"request_decision","status":"allowed","timestamp":"2026-10-27T12:00:00Z"}\n'
+    )
+    app.button[0].click().run()
+    app.selectbox[0].select("Latest hour of logs").run()
+    assert not app.exception
+    assert {metric.label: metric.value for metric in app.metric}[
+        "Requests inspected"
+    ] == "1"
+    assert any("Live updates paused" in caption.value for caption in app.caption)

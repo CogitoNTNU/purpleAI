@@ -10,13 +10,13 @@ from activity import (
     age_label,
     decisions,
     endpoint_counts,
-    event_frame,
     event_summary,
     executions,
     traffic,
 )
 from charts import defense_timeline, execution_chart, heatmap_chart, traffic_chart
-from event_store import EVENTS_DIR, load_events
+from event_store import EVENTS_DIR
+from live_data import LiveData
 
 st.set_page_config(
     page_title="PurpleAI · Activity", layout="wide", page_icon=":material/monitoring:"
@@ -24,11 +24,42 @@ st.set_page_config(
 st.markdown(
     """<style>
 [data-testid="stMainBlockContainer"] {padding-top: 2rem; padding-bottom: 3rem;}
+/* Keep the last rendered charts readable during a background poll. */
+[data-testid="stMain"] [data-stale="true"] {opacity: 1 !important;}
 </style>""",
     unsafe_allow_html=True,
 )
 st.title("PurpleAI")
 st.caption("Live attacker activity and defender decisions")
+
+
+controls = st.columns([3, 1, 1], vertical_alignment="bottom")
+with controls[0]:
+    period = st.selectbox(
+        "Time range",
+        [
+            "Live · last 15 minutes",
+            "Live · last hour",
+            "Latest hour of logs",
+            "Latest 24 hours of logs",
+            "All logs",
+        ],
+    )
+with controls[1]:
+    automatic = st.toggle("Live updates", value=True)
+with controls[2]:
+    st.button("Refresh now")
+view = st.radio(
+    "View",
+    ["Activity", "Event investigation"],
+    horizontal=True,
+    label_visibility="collapsed",
+)
+
+
+@st.cache_resource(show_spinner=False, max_entries=4)
+def live_data(directory):
+    return LiveData(directory)
 
 
 def render_inspector(runs, frame, picked):
@@ -82,13 +113,13 @@ def render_inspector(runs, frame, picked):
         st.dataframe(related.drop(columns="time").tail(100), hide_index=True)
 
 
-@st.fragment(run_every=5)
+@st.fragment(run_every=10 if automatic else None)
 def render_events():
     directory = Path(os.environ.get("PURPLEAI_EVENTS_DIR", str(EVENTS_DIR)))
-    frame = event_frame(load_events(directory))
+    frame = live_data(str(directory)).refresh()
     if frame.empty:
         st.info(
-            f"Waiting for Vector events in {directory}. Refreshing every 5 seconds."
+            f"Waiting for Vector events in {directory}. Use Live updates or Refresh now to check for events."
         )
         return
     now = pd.Timestamp.now(tz="UTC")
@@ -102,16 +133,6 @@ def render_events():
         st.dataframe(frame.drop(columns="time").tail(500), hide_index=True)
         return
 
-    period = st.selectbox(
-        "Time range",
-        [
-            "Live · last 15 minutes",
-            "Live · last hour",
-            "Latest hour of logs",
-            "Latest 24 hours of logs",
-            "All logs",
-        ],
-    )
     live = period.startswith("Live")
     end = now if live else dated.time.max()
     span = (
@@ -128,7 +149,10 @@ def render_events():
         if live
         else "History · ends at the latest logged event"
     )
-    st.caption(f"{start:%d %b %H:%M}–{end:%H:%M} UTC · {anchor} · Refreshes every 5s")
+    refresh_label = "Updates every 10s" if automatic else "Live updates paused"
+    st.caption(
+        f"{start:%d %b %H:%M}–{end:%H:%M} UTC · {anchor} · {refresh_label} · Checked {now:%H:%M:%S} UTC"
+    )
 
     # Latest action is global and explicitly dated, even when reviewing history.
     for column, actor in zip(st.columns(2, gap="large"), ["attacker", "defender"]):
@@ -181,8 +205,7 @@ def render_events():
             "No dated events in this window. The latest actions above show when logging last recorded activity; select a history range to review older events."
         )
 
-    overview, investigation = st.tabs(["Activity", "Event investigation"])
-    with overview:
+    if view == "Activity":
         st.subheader("Recent attack & defense activity")
         st.caption(
             "Red: tool execution · Blue: allowed · Pink: blocked · Amber: errors/timeouts · Purple diamond: start without an end event. Shared timing does not link a request to an attack."
@@ -282,7 +305,7 @@ def render_events():
                     hide_index=True,
                 )
 
-    with investigation:
+    else:
         actor = st.selectbox("Actor", ["All", "attacker", "defender"])
         records = scope if actor == "All" else scope[scope.actor == actor]
         st.caption(f"Latest 500 of {len(records):,} events in this time window")

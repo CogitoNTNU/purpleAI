@@ -18,8 +18,9 @@ bash src/gamehost/dashboard/run_dashboard.sh
 
 Open `http://GAMEHOST_IP:8501` in a browser. The script starts Streamlit
 with network access on its default port 8501. The theme is defined in
-`.streamlit/config.toml`. Refresh runs every five seconds while the browser
-session is active, including while the archive is empty.
+`.streamlit/config.toml`. Live updates poll every ten seconds while enabled. Turn off **Live updates**
+to pause polling; **Refresh now** checks immediately. Time/view controls stay
+outside the timed fragment so background polls do not redraw them.
 
 ## Activity views
 
@@ -45,7 +46,7 @@ session is active, including while the archive is empty.
   and related attacker events joined by exact task/tool IDs. IDs and raw
   related events are collapsed by default. Related events may
   extend beyond the selected window; the latest 100 are displayed.
-- **Event investigation:** the latest 500 events in the selected window, with
+- **Event investigation:** a separate view, rendered only when selected, showing the latest 500 events in the selected window, with
   an actor filter. Streamlit tables provide CSV download and search.
 
 The default **Live - last 15 minutes** window follows the current clock;
@@ -81,6 +82,24 @@ PURPLEAI_EVENTS_DIR=/path/to/archives bash src/gamehost/dashboard/run_dashboard.
 This reads only that directory; example files are never mixed into live data.
 The tracked sample fixture illustrates the envelope and older action names;
 traffic charts use the current `request_decision` vocabulary.
+
+## Refresh performance
+
+The running dashboard shares a `LiveData` resource per archive directory.
+`EventArchive` tracks each file's identity, size, modification time, consumed
+byte offset and a small checkpoint. Unchanged files are not opened; appended
+records are read from the previous offset. The normalized dataframe is reused
+when no new events arrive, and only new records are normalized on append.
+
+Partial final lines wait for a newline. Replacements, truncation, in-place
+rewrites and archive removal rebuild the snapshot and its deduplication state.
+A lock serializes shared-resource updates; published dataframes are not mutated
+in place. The original `load_events` helper remains available for one-shot reads.
+
+Existing chart content remains opaque during a poll. The displayed "Checked"
+time shows when the last update completed; pausing polling is explicit. Polling
+still redraws the selected chart view, but does not reread historical JSONL or
+render the unselected investigation view each time.
 
 ## Diagnostics
 
