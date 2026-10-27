@@ -36,8 +36,10 @@ ls -l /var/log/purpleai/collected/
 
 If the dashboard is empty, check the Vector services and source file
 paths. The account running the dashboard needs read access to the archive
-files and search access to their parent directories. Sample files under
-`dashboard/data/` are examples; the live dashboard reads Vector's archives.
+files and search access to their parent directories. The tracked
+`dashboard/data/sample_events.jsonl` is an example; the live dashboard
+reads Vector's archives. The legacy local `dashboard/data/events.jsonl`
+is ignored by Git.
 
 See [Vector setup](../../../deploy/vector/README.md) for the pipeline and
 [event format](../../../docs/event-format.md) for the event envelope.
