@@ -118,6 +118,8 @@ sudo apt install sqlmap nmap
 
 ## Event logging
 
+When adding a tool, agent, or action, follow the [quick logging guide](LOGGING.md).
+
 The Boss and execution server use `event_logging.py` and the shared
 `src/purpleai_logging.py`. Events are printed and appended to
 `src/Attacker/logs/events.jsonl`, independent of the working directory.
