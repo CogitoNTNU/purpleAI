@@ -9,13 +9,21 @@ lets subagents run asynchronously and finish on their own clocks.
 from deepagents import create_deep_agent
 
 from attools import sqlmap
+from attools import xsser
 from llm import get_model
 from prompts import EXECUTION_PROMPT
 
 # Registered in langgraph.json as the "execution_agent" graph.
-execution_agent = create_deep_agent(
+sql_agent = create_deep_agent(
     model=get_model(),
     tools=[sqlmap],
     system_prompt=EXECUTION_PROMPT,
-    name="execution_agent",
+    name="sql_agent",
 )
+sql_agent = create_deep_agent(
+    model=get_model(),
+    tools=[xsser],
+    system_prompt=EXECUTION_PROMPT,
+    name="xss_agent",
+)
+
