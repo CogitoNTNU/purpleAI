@@ -36,12 +36,14 @@ SUBAGENT_SERVER_URL = "http://localhost:2024"
 # subagents here as new graphs are registered on the server.
 subagents = [
     {
-        "name": "execution_agent",
+        "name": "sql_injection_agent",
         "description": (
-            "Execute the tasks and implement solutions delegated by the Boss "
-            "Agent. Runs sqlmap against the configured target."
+            "SQL injection specialist. Runs sqlmap against the authorized "
+            "target. Give it a focused task describing which attack surface, "
+            "techniques, or recon hints to use so it can target its scan "
+            "rather than sweeping the whole site."
         ),
-        "graph_id": "execution_agent",
+        "graph_id": "sql_injection_agent",
         "url": SUBAGENT_SERVER_URL,
     },
 ]
@@ -80,7 +82,7 @@ def _print_trace_pointer() -> None:
 # decide the next move — so the engagement advances on its own.
 INITIAL_OBJECTIVE = (
     f"Begin a penetration test of {Target_url}, starting with SQL injection. "
-    "Delegate the scan to the execution agent."
+    "Delegate a focused scan to the sql_injection_agent."
 )
 CONTINUE_NUDGE = (
     "Continue the engagement. First check the status of every task you have "

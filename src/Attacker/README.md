@@ -173,9 +173,9 @@ events to the existing gamehost archive and dashboard. See
 | File | Purpose |
 | --- | --- |
 | `redagent.py` | Boss Agent (planner); entry point. Launches subagents as async background tasks by `graph_id`. |
-| `subagents_attack.py` | Execution subagent, compiled as a graph the server hosts. |
+| `subagents_attack.py` | SQL injection subagent, compiled as a graph the server hosts. |
 | `langgraph.json` | Registers subagent graphs for the Agent Protocol server (`langgraph dev`). |
-| `prompts.py` | System prompts for all agents (`BOSS_PROMPT`, `EXECUTION_PROMPT`). |
+| `prompts.py` | System prompts for all agents (`BOSS_PROMPT`, `SQL_INJECTION_PROMPT`). |
 | `llm.py` | Shared chat model (`get_model()`). |
 | `attools.py` | Tools exposed to the subagents (`sqlmap`, async). |
 | `event_logging.py` | Shared-logger adapter, lifecycle events, and logged subprocess execution. |
@@ -186,7 +186,7 @@ events to the existing gamehost archive and dashboard. See
 
 ## Adding a subagent
 
-1. Build it as a compiled graph (like `execution_agent` in `subagents_attack.py`),
+1. Build it as a compiled graph (like `sql_injection_agent` in `subagents_attack.py`),
    with its prompt in `prompts.py`. It can live in its own module.
 2. Register it in `langgraph.json` under `graphs` with a unique `graph_id`.
 3. Add an entry to the `subagents` list in `redagent.py` with a matching
