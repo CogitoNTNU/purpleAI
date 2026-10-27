@@ -92,6 +92,15 @@ CONTINUE_NUDGE = (
     "say so briefly. Do not re-launch a scan that is already running or already "
     "answered."
 )
+# Sent once as the loop exits (any reason) to get a final findings report. The
+# Boss still has the whole engagement in memory, so it can summarise from it.
+SUMMARY_PROMPT = (
+    "The engagement is ending. Write a concise final penetration-test summary "
+    "from everything you did this session: which attack surfaces and parameters "
+    "were tested, which SQL injections were confirmed or ruled out (with the "
+    "supporting evidence), anything still inconclusive, and your recommended "
+    "next steps. Do NOT launch any new tasks - just report."
+)
 
 
 def _text(content) -> str:
@@ -185,6 +194,21 @@ async def _wait_for_any(client, running: list[dict]) -> None:
         print(f"  ← subagent task {task['task_id']} finished; waking the Boss.")
 
 
+async def _summarize(config: dict) -> None:
+    """Run one final Boss turn that reports the engagement's findings.
+
+    Reuses the same thread, so the Boss summarises from its full memory of the
+    scans it launched and the results it read.
+    """
+    print("\n===== ENGAGEMENT SUMMARY =====")
+    with log_span("summary", target=Target_url):
+        async for chunk in BossAgent.astream(
+            {"messages": SUMMARY_PROMPT}, config=config, stream_mode="updates"
+        ):
+            for node, update in chunk.items():
+                _render_messages(node, update)
+
+
 @log_engagement
 async def main() -> None:
     """Run the Boss autonomously, waking on subagent feedback (Ctrl+C to stop)."""
@@ -213,11 +237,17 @@ async def main() -> None:
             # Event-driven: block here until a subagent reports back, then loop
             # and nudge the Boss to act on it.
             await _wait_for_any(client, running)
+        if iteration >= MAX_ITERATIONS:
+            print(f"\nReached max iterations ({MAX_ITERATIONS}); stopping.")
     except (KeyboardInterrupt, asyncio.CancelledError):
-        print("\nStopping autonomous attacker (interrupted). Goodbye.")
-        return
-    if iteration >= MAX_ITERATIONS:
-        print(f"\nReached max iterations ({MAX_ITERATIONS}); stopping.")
+        print("\nStopping autonomous attacker (interrupted).")
+    finally:
+        # Always end with a findings report, even on Ctrl+C. A second Ctrl+C
+        # during the summary skips it so the user can still bail out.
+        try:
+            await _summarize(config)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            print("\nSummary interrupted; exiting.")
 
 
 if __name__ == "__main__":
