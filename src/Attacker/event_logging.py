@@ -1,6 +1,7 @@
 """Attacker events and execution helpers; Vector handles delivery."""
 
 import asyncio
+import re
 import sys
 from contextlib import contextmanager
 from functools import wraps
@@ -16,6 +17,23 @@ log_event = EventLogger(
     actor="attacker",
     default_path=Path(__file__).resolve().parent / "logs/events.jsonl",
 ).log_event
+
+# finds FLAG{...} patterns and logs them 
+FLAG_PATTERN = re.compile(r'FLAG\{[^}]+\}')
+
+def scan_for_flags(output: str, tool: str, target: str):
+    """Scan tool output for flags and log them immediately."""
+    if not output:
+        return
+
+    flags = FLAG_PATTERN.findall(output)
+    for flag in flags:
+        log_event(
+            "flag_captured",
+            flag=flag,
+            tool=tool,
+            target=target,
+        )
 
 
 @contextmanager
@@ -117,6 +135,10 @@ async def run_logged_tool(cmd, *, target, timeout=1800):
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         out, err = stdout.decode(errors="replace"), stderr.decode(errors="replace")
+
+        # Scan output for flags after the agents are running, and logs them immediately
+        await asyncio.to_thread(scan_for_flags, out or err, tool, target)
+
         if proc.returncode != 0:
             message = err or out or f"process exited with status {proc.returncode}"
             return f"{tool} failed: {message}"

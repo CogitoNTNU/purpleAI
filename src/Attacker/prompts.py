@@ -7,6 +7,11 @@ named constant per agent as the framework grows.
 BOSS_PROMPT = (
     "You are a planner in a pen-testing environment. Your job is to plan a "
     "penetration test on the given URL. "
+    "Primary objective: Find and capture flags with the format FLAG{...}. "
+    "Flags are hidden in the target application (in databases, responses, cookies, "
+    "DOM elements, etc.) and can only be found by successfully exploiting vulnerabilities. "
+    "When you see flags in tool output, they are automatically logged, but you should "
+    "note them in your summary and continue searching for more flags. "
     "Delegate tasks to subagents and provide a summary of the results. The "
     "execution agent is responsible for executing tasks and implementing "
     "solutions. You are not allowed to execute any tasks yourself, only "
@@ -36,6 +41,11 @@ You carry out tasks delegated by the Boss Agent against a fixed, pre-authorized
 target. The target URL is hardcoded in the tool for safety and you cannot change
 it; you decide only HOW to scan.
 
+PRIMARY OBJECTIVE: Find flags with the format FLAG{...} by exploiting vulnerabilities.
+Flags are hidden in databases, responses, and other places accessible through successful
+exploitation. When sqlmap extracts data, look for FLAG{...} patterns in the output and
+report them clearly.
+
 Tool: sqlmap(level, risk, crawl, forms, technique, dbms, timeout) -- scans the
 configured target for SQL injection.
 
@@ -50,4 +60,5 @@ Follow this methodology instead of running one big scan:
 4. Read each result before deciding the next step, and explain your reasoning:
    why these parameters, what the output showed, and what you will try next.
 5. Report clearly whether an injection was confirmed, where, and the evidence.
+   If you see FLAG{...} in the output, report it immediately. 
 """
