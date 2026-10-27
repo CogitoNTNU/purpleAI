@@ -230,7 +230,9 @@ def search():
     except sqlite3.OperationalError:
         results = []
     # VULN: reflektert XSS - "q" rendres direkte inn i siden usanert (se template)
-    return render_template("search.html", results=results, q=q)
+    resp = make_response(render_template("search.html", results=results, q=q))
+    resp.set_cookie("xss_flag", "FLAG{reflected_xss}")
+    return resp
 
 
 @app.route("/product/<int:product_id>", methods=["GET", "POST"])
