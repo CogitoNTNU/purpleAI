@@ -54,13 +54,20 @@ def traffic(frame, start, end, frequency):
         start.floor(frequency), end.floor(frequency), freq=frequency
     )
     index = pd.MultiIndex.from_product([buckets, DECISIONS], names=["bucket", "status"])
-    return counts.reindex(index, fill_value=0).rename("requests").reset_index()
+    result = counts.reindex(index, fill_value=0).rename("requests").reset_index()
+    result["bucket_end"] = result.bucket + pd.tseries.frequencies.to_offset(frequency)
+    return result
 
 
 def endpoint_counts(frame):
     rows = decisions(frame)
     rows["path"] = rows.path.replace("", "(unrecorded path)")
-    return rows.groupby(["path", "status"]).size().rename("requests").reset_index()
+    counts = rows.groupby(["path", "status"]).size()
+    index = pd.MultiIndex.from_product(
+        [rows.path.unique(), DECISIONS], names=["path", "status"]
+    )
+    result = counts.reindex(index, fill_value=0).rename("requests").reset_index()
+    return result
 
 
 def executions(frame, start, end):
@@ -71,7 +78,7 @@ def executions(frame, start, end):
         & frame.time.notna()
     ].sort_values("time")
     paired = {}
-    for position, (_, row) in enumerate(rows.iterrows()):
+    for position, (source_index, row) in enumerate(rows.iterrows()):
         # Missing IDs cannot be safely paired with another event.
         key = (
             f"{row.run_id}:{row.tool_call_id}"
@@ -88,12 +95,15 @@ def executions(frame, start, end):
                 "run_id": row.run_id,
                 "task_id": row.task_id,
                 "target": row.target,
+                "tool_call_id": row.tool_call_id,
+                "event_indices": [],
                 "status": "No result logged",
                 "duration_ms": None,
                 "exit_code": None,
                 "error_type": "",
             },
         )
+        item["event_indices"].append(source_index)
         if row.action == "tool_call":
             item["start"] = row.time
         else:
@@ -113,12 +123,66 @@ def executions(frame, start, end):
                 )
                 item["status"] += " (start not logged)"
     result = []
-    for item in paired.values():
+    for number, item in enumerate(paired.values(), 1):
         finish = item["end"] if item["end"] is not None else end
-        if item["start"] is None or item["start"] > end or finish < start:
+        if (
+            item["start"] is None
+            or item["start"] > end
+            or finish < start
+            or (item["end"] is None and item["start"] < start)
+        ):
             continue
         item["plot_start"] = max(item["start"], start)
-        item["plot_end"] = max(item["plot_start"], min(finish, end))
+        # Missing end events are observations, not evidence of continuous execution.
+        item["plot_end"] = (
+            max(item["plot_start"], min(finish, end))
+            if item["end"] is not None
+            else item["plot_start"]
+        )
+        item["result"] = execution_result(item["status"])
+        item["label"] = (
+            f"{item['tool']} #{number} · {item['start']:%H:%M:%S} · {item['result']}"
+        )
         item["lane"] = f"{item['tool']} · {item['execution'][-8:]}"
         result.append(item)
     return pd.DataFrame(result)
+
+
+def execution_result(status):
+    """Human labels describe execution, never exploitation."""
+    return {
+        "completed": "Completed",
+        "error": "Error",
+        "timeout": "Timed out",
+        "cancelled": "Cancelled",
+        "No result logged": "No end event",
+    }.get(status, "Start missing" if "start not logged" in status else "Unknown")
+
+
+def age_label(timestamp, now):
+    if pd.isna(timestamp):
+        return "No dated events"
+    seconds = max(0, int((now - timestamp).total_seconds()))
+    if seconds < 60:
+        return f"{seconds}s ago"
+    if seconds < 3600:
+        return f"{seconds // 60}m ago"
+    if seconds < 86400:
+        return f"{seconds // 3600}h ago"
+    return f"{seconds // 86400}d ago"
+
+
+def event_summary(row):
+    action, status = row.action, row.status
+    if action == "tool_call":
+        return f"{row.tool or 'Tool'} started"
+    if action == "tool_result":
+        return f"{row.tool or 'Tool'} · {execution_result(status).lower()}"
+    if action == "request_decision":
+        label = {
+            "allowed": "Allowed",
+            "blocked": "Blocked",
+            "error": "Classifier error",
+        }.get(status, status)
+        return f"{label} · {row.get('method', '')} {row.path}".strip()
+    return f"{action.replace('_', ' ').capitalize()} · {status}"

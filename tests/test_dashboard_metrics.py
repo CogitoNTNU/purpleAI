@@ -33,9 +33,12 @@ def test_dashboard_counts_calls_errors_and_defender_blocks(tmp_path, monkeypatch
         timeout=20
     )
     assert not app.exception
+    app.selectbox[0].select("Latest hour of logs").run()
+    assert not app.exception
     assert {metric.label: metric.value for metric in app.metric} == {
         "Tool executions started": "2",
         "Requests inspected": "2",
+        "Requests blocked": "1",
         "Classifier errors": "0",
     }
 
@@ -72,6 +75,9 @@ def test_dashboard_empty_then_new_events_and_filters(tmp_path, monkeypatch):
         "".join(json.dumps(row) + "\n" for row in records)
     )
     app.run()
+    assert not app.exception
+    assert app.selectbox[0].value == "Live · last 15 minutes"
+    app.selectbox[0].select("Latest hour of logs").run()
     assert not app.exception
     assert {metric.label: metric.value for metric in app.metric}[
         "Requests inspected"

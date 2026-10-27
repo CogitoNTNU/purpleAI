@@ -112,3 +112,65 @@ def test_empty_and_invalid_events_are_safe():
     )
     assert executions(frame, START, END).empty
     assert traffic(frame, START, END, "1min").requests.sum() == 0
+
+
+def test_missing_result_is_a_point_not_a_continuous_scan():
+    records = [
+        {
+            "timestamp": str(START - pd.Timedelta(days=1)),
+            "actor": "attacker",
+            "action": "tool_call",
+            "tool": "nmap_scan",
+        },
+        {
+            "timestamp": str(START + pd.Timedelta(seconds=30)),
+            "actor": "attacker",
+            "action": "tool_call",
+            "tool": "sqlmap",
+            "tool_call_id": "new",
+        },
+    ]
+    result = executions(event_frame(records), START, END)
+    assert len(result) == 1  # Old unmatched starts cannot imply ongoing activity.
+    assert result.iloc[0].plot_start == result.iloc[0].plot_end
+    assert result.iloc[0].result == "No end event"
+    assert result.iloc[0].event_indices == [1]
+
+
+def test_endpoint_grid_shows_zeroes_and_share_chart_preserves_counts():
+    frame = event_frame(
+        [
+            {
+                "timestamp": str(START),
+                "actor": "defender",
+                "action": "request_decision",
+                "status": "allowed",
+                "path": "/long/route/name",
+            }
+        ]
+    )
+    grid = endpoint_counts(frame)
+    assert len(grid) == 3
+    assert grid.requests.tolist() == [1, 0, 0]
+    heatmap_chart(grid).to_dict()
+    spec = traffic_chart(traffic(frame, START, END, "1min"), share=True).to_dict()
+    assert spec["encoding"]["y"]["stack"] == "normalize"
+    assert spec["encoding"]["x"]["scale"]["type"] == "utc"
+
+
+def test_simultaneous_executions_have_separate_readable_lanes():
+    frame = event_frame(
+        [
+            {
+                "timestamp": str(START),
+                "actor": "attacker",
+                "action": "tool_call",
+                "tool": "sqlmap",
+                "tool_call_id": key,
+            }
+            for key in ["one", "two"]
+        ]
+    )
+    result = executions(frame, START, END)
+    assert result.label.nunique() == 2
+    assert all("No end event" in label for label in result.label)
