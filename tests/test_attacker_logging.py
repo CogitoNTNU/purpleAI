@@ -77,6 +77,42 @@ def test_missing_executable(logging, monkeypatch, tmp_path):
     assert "exit_code" not in end
 
 
+def test_tool_file_logging_runs_outside_the_event_loop(logging, monkeypatch, tmp_path):
+    # Reproduce the dev server's blocking-call guard without adding its
+    # optional runtime dependencies to the root test environment.
+    original_mkdir = Path.mkdir
+
+    def guarded_mkdir(path, *args, **kwargs):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return original_mkdir(path, *args, **kwargs)
+        raise RuntimeError("Blocking call to os.mkdir")
+
+    original_log_event = logging.log_event
+
+    def guarded_log_event(*args, **kwargs):
+        with pytest.raises(RuntimeError, match="no running event loop"):
+            asyncio.get_running_loop()
+        original_log_event(*args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", guarded_mkdir)
+    monkeypatch.setattr(logging, "log_event", guarded_log_event)
+    proc = SimpleNamespace(
+        returncode=0, communicate=AsyncMock(return_value=(b"ok", b""))
+    )
+    monkeypatch.setattr(
+        logging.asyncio, "create_subprocess_exec", AsyncMock(return_value=proc)
+    )
+    assert (
+        asyncio.run(logging.run_logged_tool(["sqlmap"], target="http://lab/")) == "ok"
+    )
+    start, end = events(tmp_path)
+    assert start["action"] == "tool_call"
+    assert end["action"] == "tool_result"
+    assert end["status"] == "completed"
+
+
 @pytest.mark.parametrize("cancel", [False, True])
 def test_timeout_and_cancellation_reap_process(logging, monkeypatch, tmp_path, cancel):
     class Process:

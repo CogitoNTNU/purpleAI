@@ -107,7 +107,8 @@ async def run_logged_tool(cmd, *, target, timeout=1800):
         ],
     }
     started = monotonic()
-    log_event("tool_call", status="started", **fields)
+    # File setup/writes must stay off the execution server's event loop.
+    await asyncio.to_thread(log_event, "tool_call", status="started", **fields)
     proc = None
     status, error_type = "error", None
     try:
@@ -140,7 +141,8 @@ async def run_logged_tool(cmd, *, target, timeout=1800):
             except ProcessLookupError:
                 pass
             await proc.communicate()
-        log_event(
+        await asyncio.to_thread(
+            log_event,
             "tool_result",
             status=status,
             error_type=error_type,
