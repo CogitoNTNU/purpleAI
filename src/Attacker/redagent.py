@@ -12,12 +12,14 @@ from config import Target_url
 from deepagents import create_deep_agent
 from event_logging import log_agent_update, log_engagement, log_span
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph_sdk import get_client
 from llm import get_model
 from prompts import BOSS_PROMPT
 
-# Seconds to wait between autonomous iterations, so the loop monitors running
-# scans without busy-spinning (and without burning tokens non-stop).
-POLL_INTERVAL = 30.0
+# Safety cap: stop after this many Boss turns even if it keeps launching work,
+# so a runaway loop can't run unbounded. The loop normally stops on its own when
+# the Boss has no subagents running and launches nothing new.
+MAX_ITERATIONS = 50
 
 # Fixed thread id: with the checkpointer below, every loop iteration resumes
 # the SAME conversation, so the Boss remembers which tasks it launched and can
@@ -130,9 +132,8 @@ def _render_messages(node: str, update) -> None:
             print(f"  → {call.get('name')}({_short(call.get('args'))})")
 
 
-async def _run_once(message: str, iteration: int) -> None:
+async def _run_once(message: str, iteration: int, config: dict) -> None:
     """Advance the engagement by one turn, streaming each step live."""
-    config = {"configurable": {"thread_id": SESSION_THREAD_ID}}
     print(f"\n===== iteration {iteration} =====")
     with log_span("iteration", iteration=iteration, target=Target_url):
         async for chunk in BossAgent.astream(
@@ -143,22 +144,78 @@ async def _run_once(message: str, iteration: int) -> None:
                 _render_messages(node, update)
 
 
+async def _running_tasks(config: dict) -> list[dict]:
+    """Return the subagent tasks the Boss is tracking that are still running.
+
+    The Boss records every launched task in its graph state under
+    ``async_tasks``; we read that back from the checkpointer to learn what,
+    if anything, is still in flight after a turn.
+    """
+    state = await BossAgent.aget_state(config)
+    tasks = (state.values or {}).get("async_tasks") or {}
+    return [t for t in tasks.values() if t.get("status") == "running"]
+
+
+async def _wait_for_any(client, running: list[dict]) -> None:
+    """Sleep until at least one running subagent reports back.
+
+    This is the event-driven replacement for the old fixed poll interval:
+    ``runs.join`` blocks on the server until a run finishes, so the loop
+    consumes no CPU or tokens while every scan is still working, and wakes the
+    instant the first one completes.
+    """
+    pending = {
+        asyncio.ensure_future(client.runs.join(t["thread_id"], t["run_id"])): t
+        for t in running
+    }
+    print(
+        f"  … {len(pending)} subagent(s) running; sleeping until one reports back."
+    )
+    done, still_pending = await asyncio.wait(
+        pending, return_when=asyncio.FIRST_COMPLETED
+    )
+    # Drop the long-poll connections for tasks that are still running; the Boss
+    # re-checks every task's status on its next turn anyway.
+    for fut in still_pending:
+        fut.cancel()
+    for fut in done:
+        task = pending[fut]
+        print(f"  ← subagent task {task['task_id']} finished; waking the Boss.")
+
+
 @log_engagement
 async def main() -> None:
-    """Run the Boss autonomously until interrupted (Ctrl+C)."""
+    """Run the Boss autonomously, waking on subagent feedback (Ctrl+C to stop)."""
     print("Autonomous attacker running. Press Ctrl+C to stop.")
     _print_trace_pointer()
+    config = {"configurable": {"thread_id": SESSION_THREAD_ID}}
+    client = get_client(url=SUBAGENT_SERVER_URL)
     iteration = 0
     try:
-        while True:
+        while iteration < MAX_ITERATIONS:
             message = INITIAL_OBJECTIVE if iteration == 0 else CONTINUE_NUDGE
-            await _run_once(message, iteration)
+            await _run_once(message, iteration, config)
             iteration += 1
-            # Pause between turns so we monitor running scans rather than
-            # hammering the model and the target back-to-back.
-            await asyncio.sleep(POLL_INTERVAL)
+
+            # Decide whether to wait only AFTER a full Boss turn, so it has
+            # already had its chance to analyze results, update its plan, and
+            # launch the next step. If it launched nothing and nothing is still
+            # running, the engagement is genuinely done.
+            running = await _running_tasks(config)
+            if not running:
+                print(
+                    "\nNo subagents running and nothing new launched - "
+                    "engagement complete."
+                )
+                break
+            # Event-driven: block here until a subagent reports back, then loop
+            # and nudge the Boss to act on it.
+            await _wait_for_any(client, running)
     except (KeyboardInterrupt, asyncio.CancelledError):
         print("\nStopping autonomous attacker (interrupted). Goodbye.")
+        return
+    if iteration >= MAX_ITERATIONS:
+        print(f"\nReached max iterations ({MAX_ITERATIONS}); stopping.")
 
 
 if __name__ == "__main__":
