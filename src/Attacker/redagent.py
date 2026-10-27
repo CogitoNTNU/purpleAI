@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 
 from dotenv import load_dotenv
 
@@ -10,7 +11,7 @@ load_dotenv()
 
 from config import Target_url
 from deepagents import create_deep_agent
-from event_logging import log_agent_update, log_engagement, log_span
+from event_logging import log_agent_update, log_engagement, log_event, log_span
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph_sdk import get_client
 from llm import get_model
@@ -98,7 +99,8 @@ SUMMARY_PROMPT = (
     "The engagement is ending. Write a concise final penetration-test summary "
     "from everything you did this session: which attack surfaces and parameters "
     "were tested, which SQL injections were confirmed or ruled out (with the "
-    "supporting evidence), anything still inconclusive, and your recommended "
+    "supporting evidence), every FLAG{...} value you captured and which "
+    "vulnerability yielded it, anything still inconclusive, and your recommended "
     "next steps. Do NOT launch any new tasks - just report."
 )
 
@@ -124,6 +126,23 @@ def _short(value, limit: int = 200) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
+# Flags are secret strings of the form FLAG{...} planted in the target; capturing
+# them is the objective. We scan every piece of text that streams back (agent
+# reasoning and, crucially, subagent/tool results) for this pattern.
+FLAG_RE = re.compile(r"FLAG\{[^}\n]{0,200}\}")
+# Session-wide set of flags seen so far, so each is announced and reported once.
+CAPTURED_FLAGS: set[str] = set()
+
+
+def _scan_for_flags(text: str) -> None:
+    """Record and announce any newly seen FLAG{...} values in `text`."""
+    for flag in FLAG_RE.findall(text or ""):
+        if flag not in CAPTURED_FLAGS:
+            CAPTURED_FLAGS.add(flag)
+            print(f"  🚩 CAPTURED FLAG: {flag}")
+            log_event("flag_captured", flag=flag, target=Target_url)
+
+
 def _render_messages(node: str, update) -> None:
     """Print the Boss's reasoning for one streamed step as it arrives."""
     log_agent_update(update)
@@ -134,10 +153,14 @@ def _render_messages(node: str, update) -> None:
         kind = getattr(msg, "type", "")
         if kind == "tool":  # a tool/subagent result coming back
             name = getattr(msg, "name", "tool")
-            print(f"  ← {name}: {_short(getattr(msg, 'content', ''))}")
+            content = _text(getattr(msg, "content", ""))
+            # Scan the FULL result (not the truncated preview) for flags.
+            _scan_for_flags(content)
+            print(f"  ← {name}: {_short(content)}")
             continue
         text = _text(getattr(msg, "content", ""))
         if text.strip():
+            _scan_for_flags(text)
             print(f"  [{node}] {text.strip()}")
         for call in getattr(msg, "tool_calls", None) or []:
             print(f"  → {call.get('name')}({_short(call.get('args'))})")
@@ -201,12 +224,26 @@ async def _summarize(config: dict) -> None:
     scans it launched and the results it read.
     """
     print("\n===== ENGAGEMENT SUMMARY =====")
+    flags_note = (
+        " Flags captured so far: " + ", ".join(sorted(CAPTURED_FLAGS)) + "."
+        if CAPTURED_FLAGS
+        else " No FLAG{...} values have been captured yet."
+    )
     with log_span("summary", target=Target_url):
         async for chunk in BossAgent.astream(
-            {"messages": SUMMARY_PROMPT}, config=config, stream_mode="updates"
+            {"messages": SUMMARY_PROMPT + flags_note},
+            config=config,
+            stream_mode="updates",
         ):
             for node, update in chunk.items():
                 _render_messages(node, update)
+    # Mechanical tally so captured flags are unmissable regardless of the model.
+    if CAPTURED_FLAGS:
+        print(f"\nFlags captured ({len(CAPTURED_FLAGS)}):")
+        for flag in sorted(CAPTURED_FLAGS):
+            print(f"  🚩 {flag}")
+    else:
+        print("\nNo flags captured this engagement.")
 
 
 @log_engagement
