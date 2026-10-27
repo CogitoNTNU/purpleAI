@@ -39,6 +39,8 @@ directly on host port 8080. Run one setup at a time.
 
 ## Events
 
+When extending or modifying the defender, follow the [quick logging guide](LOGGING.md).
+
 `event_logging.py` configures `src/purpleai_logging.py` with source
 `defender-agent` and actor `defender`. Proxy code calls
 `log_event("action", **fields)`.
