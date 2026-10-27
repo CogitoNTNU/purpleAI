@@ -1,8 +1,6 @@
-import asyncio
-
-from langchain_core.tools import tool
-
 from config import Target_url
+from event_logging import run_logged_tool
+from langchain_core.tools import tool
 
 # Only these sqlmap injection techniques may be requested by the agent.
 # B=Boolean, E=Error, U=Union, S=Stacked, T=Time, Q=inline Query.
@@ -70,28 +68,4 @@ async def sqlmap(
         # Pass as one argument; sqlmap validates the value itself.
         cmd.append(f"--dbms={dbms}")
 
-    # Non-blocking subprocess so the event loop stays free while sqlmap runs;
-    # this is what lets several async subagents/tools make progress at once.
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-    except FileNotFoundError:
-        return "sqlmap is not installed or not on PATH."
-
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=1800)
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.communicate()
-        return "sqlmap scan timed out after 1800 seconds."
-
-    # TODO: NEED TO GRAB CSV FILE CREATED BY SQLMAP AND FEED IT AS THE RESULT (?)
-    out = stdout.decode(errors="replace")
-    err = stderr.decode(errors="replace")
-    if proc.returncode != 0:
-        message = err or out or f"process exited with status {proc.returncode}"
-        return f"sqlmap failed: {message}"
-    return out or err
+    return await run_logged_tool(cmd, target=Target_url)

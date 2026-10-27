@@ -1,8 +1,7 @@
 """Display agent events from gamehost Vector's daily JSONL archives."""
 
-import streamlit as st
 import pandas as pd
-
+import streamlit as st
 from event_store import EVENTS_DIR, load_events
 
 st.set_page_config(
@@ -26,30 +25,21 @@ def render_events():
         st.info("Check the Vector services on gamehost, RedAI, and BlueAI.")
         return
 
-    # Calculate attack and defender metrics
-    attack_events = (
-        df[df["actor"] == "attacker"].copy()
-        if "actor" in df.columns
-        else pd.DataFrame()
-    )
-
-    if not attack_events.empty and "status" in attack_events.columns:
-        total_attacks = len(attack_events)
-        successful_attacks = len(attack_events[attack_events["status"] == "success"])
-        blocked_attacks = len(attack_events[attack_events["status"] == "blocked"])
-
-        attack_success_rate = (
-            (successful_attacks / total_attacks * 100) if total_attacks > 0 else 0
-        )
-        defender_block_rate = (
-            (blocked_attacks / total_attacks * 100) if total_attacks > 0 else 0
-        )
-    else:
-        total_attacks = 0
-        successful_attacks = 0
-        blocked_attacks = 0
-        attack_success_rate = 0
-        defender_block_rate = 0
+    # Lifecycle/subagent events and tool completion do not prove attack success.
+    actions = df.get("action", pd.Series(index=df.index, dtype=str))
+    actors = df.get("actor", pd.Series(index=df.index, dtype=str))
+    statuses = df.get("status", pd.Series(index=df.index, dtype=str))
+    tool_calls = ((actors == "attacker") & (actions == "tool_call")).sum()
+    tool_errors = (
+        (actors == "attacker")
+        & (actions == "tool_result")
+        & statuses.isin(["error", "timeout"])
+    ).sum()
+    blocked_requests = (
+        (actors == "defender")
+        & (actions == "request_decision")
+        & (statuses == "blocked")
+    ).sum()
 
     # Overview Statistics
     st.header("Overview")
@@ -57,23 +47,13 @@ def render_events():
     col1, col2, col3, col4 = st.columns(4, border=True)
 
     with col1:
-        st.metric(
-            "Attacker Success Rate",
-            f"{attack_success_rate:.1f}%",
-            delta=f"{successful_attacks} successful",
-            delta_color="inverse",  # Red arrow = bad for security
-        )
+        st.metric("Attacker Tool Calls", int(tool_calls))
 
     with col2:
-        st.metric(
-            "Defender Block Rate",
-            f"{defender_block_rate:.1f}%",
-            delta=f"{blocked_attacks} blocked",
-            delta_color="normal",  # Green arrow = good
-        )
+        st.metric("Tool Errors / Timeouts", int(tool_errors))
 
     with col3:
-        st.metric("Total Attack Attempts", total_attacks)
+        st.metric("Defender Requests Blocked", int(blocked_requests))
 
     with col4:
         total_events = len(df)

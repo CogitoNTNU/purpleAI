@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.mark.parametrize(
     "adapter,source,actor",
     [
-        ("nmap-agent/logging_utils.py", "nmap-agent", "attacker"),
+        ("Attacker/event_logging.py", "attacker-agent", "attacker"),
         ("defender/defender-agent/event_logging.py", "defender-agent", "defender"),
     ],
 )
@@ -78,3 +78,33 @@ def test_defender_image_layout_without_host_imports_or_env_override(tmp_path):
     event = json.loads((agent / "logs/events.jsonl").read_text())
     assert event["source"] == "defender-agent"
     assert event["action"] == "image_test"
+
+
+def test_attacker_processes_append_to_the_same_file(tmp_path):
+    path = tmp_path / "events.jsonl"
+    script = (
+        "import runpy; "
+        f"log = runpy.run_path({str(ROOT / 'src/Attacker/event_logging.py')!r})['log_event']; "
+        "[log('concurrent_test', sequence=i) for i in range(40)]"
+    )
+    processes = [
+        subprocess.Popen(
+            [sys.executable, "-I", "-c", script],
+            cwd=tmp_path,
+            env={**os.environ, "PURPLEAI_LOG_FILE": str(path)},
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        for _ in range(2)
+    ]
+    for process in processes:
+        _, errors = process.communicate(timeout=10)
+        assert process.returncode == 0, errors.decode()
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    assert len(records) == len({event["event_id"] for event in records}) == 80
+    run_ids = {event["run_id"] for event in records}
+    assert len(run_ids) == 2
+    for run_id in run_ids:
+        assert [
+            event["sequence"] for event in records if event["run_id"] == run_id
+        ] == list(range(40))

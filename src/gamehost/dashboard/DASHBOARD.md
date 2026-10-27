@@ -21,9 +21,10 @@ with network access on its default port 8501. The theme is defined in
 `.streamlit/config.toml`. Refresh runs every five seconds while the browser
 session is active, including while the archive is empty.
 
-The page shows event-based attacker/defender metrics and the most recent
-20 events across the available archives. Its metrics count logged event
-statuses; they are not independently verified attack outcomes.
+The page shows attacker tool calls, tool errors/timeouts, defender blocked
+requests, total events, and the most recent 20 events across the archives.
+Boss lifecycle/delegation events do not count as tool calls. A completed
+tool or successful subagent task is not a verified attack outcome.
 
 ## Diagnostics
 

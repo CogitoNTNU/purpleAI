@@ -1,12 +1,12 @@
 # PurpleAI
 
-PurpleAI combines an IDUN-backed Nmap reconnaissance agent, an HTTP
+PurpleAI combines an IDUN-backed attacker with asynchronous execution subagents, an HTTP
 defender that classifies SQL injection and XSS, deliberately vulnerable
 web applications, and centralized Vector logging.
 
 ## Repository components
 
-- `src/nmap-agent/`: attacker CLI, target configuration, and restricted Nmap tool.
+- `src/Attacker/`: autonomous Boss, execution subagents, tools, and event logging.
 - `src/defender/defender-agent/`: Flask reverse proxy and request classifiers.
 - `src/defender/vulnerable-app/`: VulnShop Flask/SQLite application.
 - `src/purpleai_logging.py`: shared JSON event logger.

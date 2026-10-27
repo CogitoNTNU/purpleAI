@@ -116,6 +116,47 @@ they're preinstalled; elsewhere:
 sudo apt install sqlmap nmap
 ```
 
+## Event logging
+
+The Boss and execution server use `event_logging.py` and the shared
+`src/purpleai_logging.py`. Events are printed and appended to
+`src/Attacker/logs/events.jsonl`, independent of the working directory.
+No extra logging dependency or service is needed in either process.
+`PURPLEAI_LOG_FILE` optionally overrides the path; both processes should
+use the same path and run as the same host user.
+
+Events cover engagement start/stop, each Boss iteration, delegation/task
+status, and tool calls/results. Tool events include the configured target,
+scan options, elapsed time, exit code, and error type. Raw tool output,
+prompts, keys, and model reasoning are excluded from these JSON events.
+The existing terminal output and LangSmith tracing still work as before.
+
+Each process has its own `run_id`. Boss tool calls/results share a
+`tool_call_id`; actual subprocess calls have their own paired ID.
+`task_id` links the Boss's subagent status to the execution server's tool
+events (DeepAgents uses the remote thread ID as its task ID). Lifecycle
+start/end events share an `operation_id`.
+
+`completed` means a tool exited cleanly, **not** that an attack succeeded.
+Errors, timeouts, and cancellation are recorded separately. Stopping the
+Boss does not stop already delegated remote tasks; stop/cancel those on
+the execution server as needed. Cancelling a tool kills and reaps its
+local subprocess. Startup/import failures before `main()` are not covered
+by the engagement events.
+
+On RedAI, update the existing Vector service's file source:
+
+```yaml
+include:
+  - /home/YOUR_USER/purpleAI/src/Attacker/logs/events.jsonl
+```
+
+Use the actual checkout path, validate `/etc/vector/vector.yaml`, and
+restart Vector after replacing the old Nmap agent path. Vector forwards
+events to the existing gamehost archive and dashboard. See
+[Vector setup](../../deploy/vector/README.md) and
+[event format](../../docs/event-format.md).
+
 ## Configuration
 
 - **Target** — edit `Target_url` in `config.py`.
@@ -137,6 +178,7 @@ sudo apt install sqlmap nmap
 | `prompts.py` | System prompts for all agents (`BOSS_PROMPT`, `EXECUTION_PROMPT`). |
 | `llm.py` | Shared chat model (`get_model()`). |
 | `attools.py` | Tools exposed to the subagents (`sqlmap`, async). |
+| `event_logging.py` | Shared-logger adapter, lifecycle events, and logged subprocess execution. |
 | `redfunction.py` | Helper functions (nmap run/parse) — not yet wired as tools. |
 | `config.py` | Target URL. |
 | `.env.example` | Template for keys/tracing; copy to `.env`. |
