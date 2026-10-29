@@ -1,7 +1,7 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "sql_agent": "./subagents_attack.py:sql_agent",
+    "sql_injection_agent": "./subagents_attack.py:sql_injection_agent",
     "xss_agent": "./subagents_attack.py:xss_agent"
   },
   "env": ".env"
