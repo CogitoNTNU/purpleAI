@@ -114,3 +114,99 @@ async def sqlmap(
             cmd.append("--dump")
 
     return await run_logged_tool(cmd, target=Target_url)
+
+@tool
+async def xsser(
+        timeout=1800,
+        payload=str
+    ) -> str:
+    """Attack the configured target with cross-site scripting using Xsser.
+    
+        The target URL is fixed (config.Target_url) and cannot be chosen here, by
+        design. You decide only which payload (script) to use.
+    
+        Args:
+            payload: the script to be run with xsser.
+            timeout: per-request timeout in seconds (sqlmap --timeout).
+    
+        Returns:
+            xsser's stdout (or stderr if stdout is empty).
+        """
+    cmd = [
+        "xsser",
+        "-u",
+        Target_url,  # target is fixed, never agent-supplied
+        f"--timeout={int(timeout)}",
+        "--Fp", 
+        f"{str(payload)}"
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        return "xsser is not installed or not on PATH."
+    
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=1800)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        return "sqlmap scan timed out after 1800 seconds."
+    out = stdout.decode(errors="replace")
+    err = stderr.decode(errors="replace")
+    if proc.returncode != 0:
+        message = err or out or f"process exited with status {proc.returncode}"
+        return f"xsser failed: {message}"
+
+    return out or err
+
+@tool
+async def xsser(
+        timeout=1800,
+        payload=str
+    ) -> str:
+    """Attack the configured target with cross-site scripting using Xsser.
+    
+        The target URL is fixed (config.Target_url) and cannot be chosen here, by
+        design. You decide only which payload (script) to use.
+    
+        Args:
+            payload: the script to be run with xsser.
+            timeout: per-request timeout in seconds (sqlmap --timeout).
+    
+        Returns:
+            xsser's stdout (or stderr if stdout is empty).
+        """
+    cmd = [
+        "xsser",
+        "-u",
+        Target_url,  # target is fixed, never agent-supplied
+        f"--timeout={int(timeout)}"
+        "--Fp", 
+        f"{str(payload)}"
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        return "sqlmap is not installed or not on PATH."
+    
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=1800)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        return "sqlmap scan timed out after 1800 seconds."
+    out = stdout.decode(errors="replace")
+    err = stderr.decode(errors="replace")
+    if proc.returncode != 0:
+        message = err or out or f"process exited with status {proc.returncode}"
+        return f"xsser failed: {message}"
+
+    return out or err

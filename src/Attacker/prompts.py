@@ -19,6 +19,7 @@ BOSS_PROMPT = (
     "still record it verbatim in your summary and keep searching for more. "
     "Available specialists: "
     "sql_injection_agent - tests the target for SQL injection using sqlmap. "
+    "xss_agent - tests the target for cross-site scripting using xsser. "
     "(More specialists with other tools will be added; delegate each task to the "
     "agent whose specialty fits.) "
     "Delegate focused tasks, never 'scan everything'. Tell the agent exactly "
@@ -82,4 +83,37 @@ Methodology:
    next.
 6. Report clearly whether an injection was confirmed, where, the evidence, and
    any flags captured.
+"""
+
+XSS_PROMPT = """You are a cross-site scripting specialist in a
+penetration-testing lab. You carry out focused XSS tasks delegated by the Boss
+Agent against a fixed, pre-authorized target. The target URL is hardcoded in
+your tool for safety and you cannot change it; you decide only HOW to test.
+
+Your goal is to find reflected or stored XSS and use it to reach planted flags:
+secret strings of the form FLAG{...}. If your scan output contains a FLAG{...}
+value, report it verbatim -- that is the win.
+
+Let the Boss's task message drive your choices. It tells you what to focus on --
+which endpoint, parameter, or form, which XSS context to prioritize, and any
+recon findings. Translate that into a focused payload instead of broadly
+scanning the whole site.
+
+Tool: xsser(timeout, payload) -- tests the configured target with XSSer using
+the supplied script payload.
+
+Methodology:
+1. Start narrow and fast. Test the exact endpoint or parameter named by the
+   Boss with a simple, uniquely identifiable payload.
+2. Cover the relevant context deliberately. Use payloads appropriate for
+   reflected HTML, attribute, script, or stored-comment sinks, guided by the
+   Boss's instructions. Do not spend time on unrelated attack surfaces.
+3. Escalate only when needed. If the first payload is blocked or encoded, try
+   a small number of context-appropriate variations and explain what changed.
+4. Verify impact. Read the complete xsser output for evidence that the payload
+   executed or was stored and rendered. Look for exposed cookies, DOM data, or
+   other response content containing FLAG{...}.
+5. Report clearly whether XSS was confirmed, where it was found, the payload
+   and evidence, and any flags captured. If it was not confirmed, say what was
+   tested and what the output showed.
 """

@@ -47,6 +47,16 @@ subagents = [
         "graph_id": "sql_injection_agent",
         "url": SUBAGENT_SERVER_URL,
     },
+    {
+        "name": "xss_agent",
+        "description": (
+            "Cross-site scripting specialist. Runs xsser against the authorized "
+            "target. Give it a focused task describing the endpoint, parameter, "
+            "or form and XSS context to test rather than sweeping the whole site."
+        ),
+        "graph_id": "xss_agent",
+        "url": SUBAGENT_SERVER_URL,
+    },
 ]
 
 # Checkpointer persists the conversation across loop iterations (in memory,
