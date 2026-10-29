@@ -101,9 +101,17 @@ async def run_logged_tool(cmd, *, target, timeout=1800):
             arg
             for arg in cmd[1:]
             if arg.startswith(
-                ("--level=", "--risk=", "--crawl=", "--timeout=", "--technique=")
+                (
+                    "--level=",
+                    "--risk=",
+                    "--crawl=",
+                    "--timeout=",
+                    "--technique=",
+                    "--dbms=",
+                    "--sql-query=",
+                )
             )
-            or arg == "--forms"
+            or arg in ("--forms", "--dump", "-D", "-T", "-C")
         ],
     }
     started = monotonic()
