@@ -1,3 +1,5 @@
+import re
+
 from config import Target_url
 from event_logging import run_logged_tool
 from langchain_core.tools import tool
@@ -5,6 +7,16 @@ from langchain_core.tools import tool
 # Only these sqlmap injection techniques may be requested by the agent.
 # B=Boolean, E=Error, U=Union, S=Stacked, T=Time, Q=inline Query.
 _ALLOWED_TECHNIQUES = set("BEUSTQ")
+
+# Database/table/column identifiers the agent may name for extraction. Kept to a
+# conservative charset so these values stay plain identifiers and can never be
+# anything but a single argv token (they are passed via create_subprocess_exec,
+# so there is no shell, but this still rejects obviously malformed input).
+_IDENT_RE = re.compile(r"^[A-Za-z0-9_,. ]+$")
+
+# A custom extraction query must be a single, read-only SELECT: it must start
+# with SELECT and contain no ';' (which would allow stacked/destructive queries).
+_READONLY_SELECT_RE = re.compile(r"^\s*SELECT\b", re.IGNORECASE)
 
 
 @tool
@@ -16,14 +28,23 @@ async def sqlmap(
     technique: str | None = None,
     dbms: str | None = None,
     timeout: float = 30.0,
+    dump: bool = False,
+    db: str | None = None,
+    table: str | None = None,
+    columns: str | None = None,
+    sql_query: str | None = None,
 ) -> str:
-    """Scan the configured target for SQL injection with sqlmap.
+    """Scan the configured target for SQL injection with sqlmap, and optionally
+    extract data once an injection is confirmed.
 
     The target URL is fixed (config.Target_url) and cannot be chosen here, by
-    design. You decide only HOW to scan. Recommended methodology: start at
-    level=1, risk=1 with no crawl to confirm an injection fast; only escalate
-    level/risk or enable crawl/forms if nothing is found; pass dbms once recon
-    tells you the backend.
+    design. You decide only HOW to scan and WHAT to read. Recommended
+    methodology: start at level=1, risk=1 with no crawl to confirm an injection
+    fast; only escalate level/risk or enable crawl/forms if nothing is found;
+    pass dbms once recon tells you the backend. Once an injection is CONFIRMED,
+    extract the data that proves it and reveals planted flags: prefer a targeted
+    read (e.g. sql_query="SELECT flag_name, flag_value FROM flags", or
+    table="flags" with dump=True) over dumping the whole database.
 
     Args:
         level: how many places to test (1-5): higher also tests cookies/headers.
@@ -36,6 +57,14 @@ async def sqlmap(
         dbms: backend hint, e.g. "mysql" / "postgresql", to skip guessing;
             None lets sqlmap detect it.
         timeout: per-request timeout in seconds (sqlmap --timeout).
+        dump: dump the selected data (sqlmap --dump). Scope it with db/table/
+            columns; with none set it dumps everything found, which is slow.
+        db: restrict extraction to this database/schema (sqlmap -D).
+        table: restrict extraction to this table, e.g. "flags" (sqlmap -T).
+        columns: restrict extraction to these columns, comma-separated (-C).
+        sql_query: run one read-only SELECT via the injection and return its
+            result (sqlmap --sql-query). Must start with SELECT and contain no
+            ';'. The most surgical way to read a specific value such as a flag.
 
     Returns:
         sqlmap's stdout (or stderr if stdout is empty).
@@ -67,5 +96,21 @@ async def sqlmap(
     if dbms:
         # Pass as one argument; sqlmap validates the value itself.
         cmd.append(f"--dbms={dbms}")
+
+    # --- Data extraction (only after an injection is confirmed) ---------------
+    # A custom read-only SELECT is the most targeted extraction; it takes
+    # precedence over a table dump when both are given.
+    if sql_query and _READONLY_SELECT_RE.match(sql_query) and ";" not in sql_query:
+        cmd.append(f"--sql-query={sql_query.strip()}")
+    else:
+        # Scope a dump with any valid identifiers the agent named.
+        if db and _IDENT_RE.match(db):
+            cmd += ["-D", db.strip()]
+        if table and _IDENT_RE.match(table):
+            cmd += ["-T", table.strip()]
+        if columns and _IDENT_RE.match(columns):
+            cmd += ["-C", columns.strip()]
+        if dump or db or table or columns:
+            cmd.append("--dump")
 
     return await run_logged_tool(cmd, target=Target_url)
