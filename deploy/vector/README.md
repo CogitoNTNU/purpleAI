@@ -14,7 +14,7 @@ also printed to stdout. Agent code calls `log_event("action", **fields)`.
 
 | Component | Configuration adapter | Default host log file |
 | --- | --- | --- |
-| Attacker | `src/nmap-agent/logging_utils.py` | `src/nmap-agent/logs/events.jsonl` |
+| Attacker | `src/Attacker/event_logging.py` | `src/Attacker/logs/events.jsonl` |
 | Defender in Compose | `src/defender/defender-agent/event_logging.py` | `src/defender/logs/events.jsonl` |
 
 Paths in this table are relative to the repository root. Running the
@@ -132,7 +132,7 @@ Run an attacker task and send a request through the defender. On gamehost:
 tail -F /var/log/purpleai/collected/events-$(date -u +%F).jsonl
 ```
 
-Check for `nmap-agent` and `defender-agent` source values. Service diagnostics:
+Check for `attacker-agent` and `defender-agent` source values. Service diagnostics:
 
 ```bash
 sudo journalctl -u vector -n 40 --no-pager

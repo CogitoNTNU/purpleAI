@@ -10,7 +10,6 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -27,7 +26,7 @@ class EventDeliveryTest(unittest.TestCase):
         self.env.start()
         self.addCleanup(self.env.stop)
         return load_module(
-            "test_nmap_logging", ROOT / "src/nmap-agent/logging_utils.py"
+            "test_attacker_logging", ROOT / "src/Attacker/event_logging.py"
         )
 
     def test_events_are_available_before_the_run_ends(self):

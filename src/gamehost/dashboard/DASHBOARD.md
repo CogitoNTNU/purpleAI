@@ -18,12 +18,88 @@ bash src/gamehost/dashboard/run_dashboard.sh
 
 Open `http://GAMEHOST_IP:8501` in a browser. The script starts Streamlit
 with network access on its default port 8501. The theme is defined in
-`.streamlit/config.toml`. Refresh runs every five seconds while the browser
-session is active, including while the archive is empty.
+`.streamlit/config.toml`. Live updates poll every ten seconds while enabled. Turn off **Live updates**
+to pause polling; **Refresh now** checks immediately. Time/view controls stay
+outside the timed fragment so background polls do not redraw them.
 
-The page shows event-based attacker/defender metrics and the most recent
-20 events across the available archives. Its metrics count logged event
-statuses; they are not independently verified attack outcomes.
+## Activity views
+
+- **Attack & defense timeline:** paired attacker tool executions alongside defender
+  decision markers on a shared UTC time axis. Defender markers show when
+  decisions were logged; counts are in the traffic chart. Click an execution bar or start
+  point to open its inspector. The latest 12 executions are plotted; all
+  executions with observed activity in the selected window remain in the selector.
+- **Latest actions:** the latest recorded action and age for each agent, globally
+  across the archive and explicitly dated even when reviewing history. These
+  describe observations, not process liveness.
+- **Defender traffic:** allowed, blocked, and classifier-error decisions per
+  interval, including zero-count intervals. Forwarded response events do not
+  count as additional requests. Boundary intervals can be partial; zero means
+  no recorded decisions, not confirmed service availability. Switch to
+  **Decision share** for a 100% view of the recorded decisions in each interval;
+  tooltips retain counts and empty intervals have no share.
+- **Endpoint activity:** a full-width grid of the 10 busiest recorded routes, broken down by decision.
+  Click a cell for the latest 100 events for that route in the current window.
+  Every cell shows an exact count, including zero. Double-click the chart to
+  clear the selection.
+- **Execution inspector:** tool, target, task/process IDs, duration, exit status,
+  and related attacker events joined by exact task/tool IDs. IDs and raw
+  related events are collapsed by default. Related events may
+  extend beyond the selected window; the latest 100 are displayed.
+- **Event investigation:** a separate view, rendered only when selected, showing the latest 500 events in the selected window, with
+  an actor filter. Streamlit tables provide CSV download and search.
+
+The default **Live - last 15 minutes** window follows the current clock;
+**Live - last hour** provides a wider live view. History options cover the
+latest logged hour, latest logged 24 hours, or all dated logs, anchored to the
+latest event. Empty live windows stay empty instead of presenting old data as
+current activity. Invalid/missing timestamps are excluded from charts with a
+warning. Time buckets grow with the selected period to bound chart size.
+
+Tool calls are paired by `run_id` and `tool_call_id`. Recorded executions that
+cross the window boundary are clipped to its visible range. Missing IDs remain
+separate observations; result-only observations use recorded duration where
+available. Starts without end events are points, not continuous bars. Unmatched
+starts before the window are listed separately in a collapsed section and are
+not shown as ongoing scans. Boss delegation and subagent status events remain
+available in the inspector but do not count as actual tool executions.
+
+Shared timing does not establish an attack/request relationship. A completed
+tool, successful subagent task, allowed request, or defender block is not a
+verified attack outcome. Classifier errors block requests but are distinct
+from detections. Engagement IDs, cross-agent request correlation, labelled
+traffic, and independently verified objective events remain future work.
+
+## Local preview
+
+To read an alternative directory without changing Vector, set
+`PURPLEAI_EVENTS_DIR` to a folder containing `events-*.jsonl` archives:
+
+```bash
+PURPLEAI_EVENTS_DIR=/path/to/archives bash src/gamehost/dashboard/run_dashboard.sh
+```
+
+This reads only that directory; example files are never mixed into live data.
+The tracked sample fixture illustrates the envelope and older action names;
+traffic charts use the current `request_decision` vocabulary.
+
+## Refresh performance
+
+The running dashboard shares a `LiveData` resource per archive directory.
+`EventArchive` tracks each file's identity, size, modification time, consumed
+byte offset and a small checkpoint. Unchanged files are not opened; appended
+records are read from the previous offset. The normalized dataframe is reused
+when no new events arrive, and only new records are normalized on append.
+
+Partial final lines wait for a newline. Replacements, truncation, in-place
+rewrites and archive removal rebuild the snapshot and its deduplication state.
+A lock serializes shared-resource updates; published dataframes are not mutated
+in place. The original `load_events` helper remains available for one-shot reads.
+
+Existing chart content remains opaque during a poll. The displayed "Checked"
+time shows when the last update completed; pausing polling is explicit. Polling
+still redraws the selected chart view, but does not reread historical JSONL or
+render the unselected investigation view each time.
 
 ## Diagnostics
 
@@ -35,8 +111,10 @@ ls -l /var/log/purpleai/collected/
 
 If the dashboard is empty, check the Vector services and source file
 paths. The account running the dashboard needs read access to the archive
-files and search access to their parent directories. Sample files under
-`dashboard/data/` are examples; the live dashboard reads Vector's archives.
+files and search access to their parent directories. The tracked
+`dashboard/data/sample_events.jsonl` is an example; the live dashboard
+reads Vector's archives. The legacy local `dashboard/data/events.jsonl`
+is ignored by Git.
 
 See [Vector setup](../../../deploy/vector/README.md) for the pipeline and
 [event format](../../../docs/event-format.md) for the event envelope.

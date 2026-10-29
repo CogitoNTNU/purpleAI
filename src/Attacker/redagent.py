@@ -8,10 +8,10 @@ from dotenv import load_dotenv
 # langgraph dev server reads the same .env via langgraph.json's "env".
 load_dotenv()
 
-from deepagents import create_deep_agent
-from langgraph.checkpoint.memory import InMemorySaver
-
 from config import Target_url
+from deepagents import create_deep_agent
+from event_logging import log_agent_update, log_engagement, log_span
+from langgraph.checkpoint.memory import InMemorySaver
 from llm import get_model
 from prompts import BOSS_PROMPT
 
@@ -122,6 +122,7 @@ def _short(value, limit: int = 200) -> str:
 
 def _render_messages(node: str, update) -> None:
     """Print the Boss's reasoning for one streamed step as it arrives."""
+    log_agent_update(update)
     messages = update.get("messages") if isinstance(update, dict) else None
     if not messages:
         return
@@ -142,14 +143,16 @@ async def _run_once(message: str, iteration: int) -> None:
     """Advance the engagement by one turn, streaming each step live."""
     config = {"configurable": {"thread_id": SESSION_THREAD_ID}}
     print(f"\n===== iteration {iteration} =====")
-    async for chunk in BossAgent.astream(
-        {"messages": message}, config=config, stream_mode="updates"
-    ):
-        # Each chunk maps node name -> that node's state update.
-        for node, update in chunk.items():
-            _render_messages(node, update)
+    with log_span("iteration", iteration=iteration, target=Target_url):
+        async for chunk in BossAgent.astream(
+            {"messages": message}, config=config, stream_mode="updates"
+        ):
+            # Each chunk maps node name -> that node's state update.
+            for node, update in chunk.items():
+                _render_messages(node, update)
 
 
+@log_engagement
 async def main() -> None:
     """Run the Boss autonomously until interrupted (Ctrl+C)."""
     print("Autonomous attacker running. Press Ctrl+C to stop.")
