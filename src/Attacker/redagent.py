@@ -105,6 +105,17 @@ CONTINUE_NUDGE = (
     "say so briefly. Do not re-launch a scan that is already running or already "
     "answered."
 )
+# Sent when every task has finished and the Boss launched nothing new: the
+# engagement is NOT over, so push it to find a fresh angle rather than idling.
+PROBE_NUDGE = (
+    "Every task has finished and nothing is running, but the engagement is NOT "
+    "over. Look for a new angle to capture more FLAG{...}: an untested endpoint, "
+    "parameter, form, cookie, or a different vulnerability class, and delegate a "
+    "focused new scan to the specialist that fits (sql_injection_agent or "
+    "xss_agent). Do not repeat a scan already run or already answered. Only if "
+    "you have genuinely exhausted every reasonable avenue, say so in one line - "
+    "you will be asked again until the operator stops you."
+)
 # Sent once as the loop exits (any reason) to get a final findings report. The
 # Boss still has the whole engagement in memory, so it can summarise from it.
 SUMMARY_PROMPT = (
@@ -190,15 +201,19 @@ async def _run_once(message: str, iteration: int, config: dict) -> None:
                 _render_messages(node, update)
 
 
-async def _running_tasks(config: dict) -> list[dict]:
-    """Return the subagent tasks the Boss is tracking that are still running.
+async def _tasks(config: dict) -> dict[str, dict]:
+    """Return the Boss's tracked subagent tasks, keyed by task_id.
 
     The Boss records every launched task in its graph state under
-    ``async_tasks``; we read that back from the checkpointer to learn what,
-    if anything, is still in flight after a turn.
+    ``async_tasks``; we read that back from the checkpointer to learn what it
+    has launched and what is still in flight after a turn.
     """
     state = await BossAgent.aget_state(config)
-    tasks = (state.values or {}).get("async_tasks") or {}
+    return (state.values or {}).get("async_tasks") or {}
+
+
+def _running(tasks: dict[str, dict]) -> list[dict]:
+    """Filter tracked tasks down to the ones still running."""
     return [t for t in tasks.values() if t.get("status") == "running"]
 
 
@@ -266,28 +281,36 @@ async def main() -> None:
     config = {"configurable": {"thread_id": SESSION_THREAD_ID}}
     client = get_client(url=SUBAGENT_SERVER_URL)
     iteration = 0
+    message = INITIAL_OBJECTIVE
     try:
         while iteration < MAX_ITERATIONS:
-            message = INITIAL_OBJECTIVE if iteration == 0 else CONTINUE_NUDGE
+            # Snapshot the tasks before the turn so we can tell whether the Boss
+            # launched anything new during it.
+            before = set(await _tasks(config))
             await _run_once(message, iteration, config)
             iteration += 1
 
-            # Decide whether to wait only AFTER a full Boss turn, so it has
-            # already had its chance to analyze results, update its plan, and
-            # launch the next step. If it launched nothing and nothing is still
-            # running, the engagement is genuinely done.
-            running = await _running_tasks(config)
-            if not running:
-                print(
-                    "\nNo subagents running and nothing new launched - "
-                    "engagement complete."
-                )
-                break
-            # Event-driven: block here until a subagent reports back, then loop
-            # and nudge the Boss to act on it.
-            await _wait_for_any(client, running)
-        if iteration >= MAX_ITERATIONS:
-            print(f"\nReached max iterations ({MAX_ITERATIONS}); stopping.")
+            tasks = await _tasks(config)
+            running = _running(tasks)
+            launched_new = any(tid not in before for tid in tasks)
+
+            if running:
+                # Event-driven: sleep until a subagent reports back, then nudge
+                # the Boss to act on it.
+                await _wait_for_any(client, running)
+                message = CONTINUE_NUDGE
+            elif launched_new:
+                # The Boss launched work that already finished (e.g. a fast
+                # failure). Loop so it reads those results before we judge it
+                # idle - never stop with unreacted results on the table.
+                message = CONTINUE_NUDGE
+            else:
+                # Nothing running and nothing launched this turn: the Boss is
+                # idle. Keep probing for new angles rather than stopping; the
+                # engagement ends only at MAX_ITERATIONS or on Ctrl+C.
+                print("\n  (idle - probing for a new angle)")
+                message = PROBE_NUDGE
+        print(f"\nReached max iterations ({MAX_ITERATIONS}); stopping.")
     except (KeyboardInterrupt, asyncio.CancelledError):
         print("\nStopping autonomous attacker (interrupted).")
     finally:
