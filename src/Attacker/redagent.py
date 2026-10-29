@@ -92,8 +92,10 @@ def _print_trace_pointer() -> None:
 # to pick up where it left off — check running tasks, act on finished ones, and
 # decide the next move — so the engagement advances on its own.
 INITIAL_OBJECTIVE = (
-    f"Begin a penetration test of {Target_url}, starting with SQL injection. "
-    "Delegate a focused scan to the sql_injection_agent."
+    f"Begin a penetration test of {Target_url}. Launch two focused scans in "
+    "parallel right away, since they are independent: delegate a SQL injection "
+    "scan to the sql_injection_agent and a cross-site scripting scan to the "
+    "xss_agent. Give each a specific task for its specialty."
 )
 CONTINUE_NUDGE = (
     "Continue the engagement. First check the status of every task you have "
