@@ -294,6 +294,7 @@ class ComponentTab(ttk.Frame):
         self.reasoning_only = tk.BooleanVar(value=bool(cfg.get("filterable")))
         self._show_block = False  # filter state: are we inside a shown block?
         self.flags: set[str] = set()  # unique FLAG{...} seen on this box
+        self.sub_tasks: dict = {}  # subagent name -> {task_id: status}
 
         bar = ttk.Frame(self)
         bar.pack(fill="x", pady=(0, 6))
@@ -415,6 +416,7 @@ class ComponentTab(ttk.Frame):
             entry["status"].set(status)
 
     def _reset_lights(self):
+        self.sub_tasks.clear()
         for entry in self.lights.values():
             entry["canvas"].itemconfig(entry["oval"], fill="#555")
             entry["status"].set("idle")
@@ -429,16 +431,26 @@ class ComponentTab(ttk.Frame):
         tool = ev.get("tool")
         sub = ev.get("subagent")
         if action == "subagent_status" and sub:
-            running = ev.get("status") == "running"
-            self._set_light(sub, running, ev.get("status") or "idle")
+            tid = ev.get("task_id")
+            status = ev.get("status") or ""
+            tasks = self.sub_tasks.setdefault(sub, {})
+            is_new = tid is not None and tid not in tasks
+            if tid is not None:
+                tasks[tid] = status
+            active = sum(1 for s in tasks.values()
+                         if s in ("running", "pending", "busy"))
+            total = len(tasks)
+            self._set_light(sub, active > 0, f"{active} active / {total} launched")
+            if is_new:
+                self.append(f"  [{self._label_for(sub)}] ➕ launched "
+                            f"(#{total}, task {str(tid)[:8]})\n")
         elif action == "tool_call" and tool:
             opts = " ".join(ev.get("scan_options") or [])
-            self._set_light(tool, True, "running")
+            self._set_light(tool, True)  # blip on; subagent_status owns the text
             self.append(f"  [{self._label_for(tool)}] ▶ {tool} {opts}".rstrip() + "\n")
         elif action == "tool_result" and tool:
             st = ev.get("status") or "done"
             dur = ev.get("duration_ms")
-            self._set_light(tool, False, st)
             mark = "✓" if st == "completed" else "✗"
             tail = f" ({dur} ms)" if dur is not None else ""
             self.append(f"  [{self._label_for(tool)}] {mark} {tool} {st}{tail}\n")
