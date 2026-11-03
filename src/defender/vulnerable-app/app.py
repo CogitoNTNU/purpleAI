@@ -15,10 +15,18 @@ Kjør:
 import os
 import sqlite3
 import subprocess
+from pathlib import Path
 
 from flask import (
-    Flask, g, request, session, redirect, url_for,
-    render_template, send_from_directory, make_response
+    Flask,
+    g,
+    make_response,
+    redirect,
+    render_template,
+    request,
+    send_from_directory,
+    session,
+    url_for,
 )
 
 APP_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -28,6 +36,17 @@ REPORTS_DIR = os.path.join(APP_ROOT, "reports")
 
 app = Flask(__name__)
 app.secret_key = "supersecret123"  # (VULN: svak, hardkodet secret key)
+
+
+# The full lab Compose stack mounts the shared logger and enables this file.
+if os.environ.get("PURPLEAI_LOG_FILE"):
+    from purpleai_logging import EventLogger
+
+    objective_log = EventLogger(
+        "vulnshop", "target", Path("/var/log/purpleai/vulnshop.jsonl")
+    )
+else:
+    objective_log = None
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +329,14 @@ def admin():
         return "Ingen tilgang (403)", 403
     db = get_db()
     users = db.execute("SELECT * FROM users").fetchall()
-    return render_template("admin.html", users=users)
+    page = render_template("admin.html", users=users)
+    if objective_log:
+        objective_log.log_event(
+            "objective_served",
+            objective="admin_page",
+            request_id=request.headers.get("X-PurpleAI-Request-ID"),
+        )
+    return page
 
 
 @app.route("/admin/ping", methods=["GET", "POST"])

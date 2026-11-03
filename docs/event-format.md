@@ -86,3 +86,28 @@ delivery retries and buffering separately from application execution.
 
 See `deploy/vector/README.md` in the repository for host
 configuration, permissions, buffering, and retention.
+
+## Correlating a lab run
+
+Set the same optional `PURPLEAI_ENGAGEMENT_ID` on the RedAI Boss,
+RedAI execution server, and in the gamehost k6 environment. Use a short
+identifier such as `lab-run-1` (letters, digits, underscores, and hyphens).
+RedAI attaches it to its events. sqlmap and k6 send it as
+`X-PurpleAI-Engagement`, which BlueAI records when valid.
+
+- sqlmap sends its execution's `tool_call_id` as `X-PurpleAI-Traffic`.
+  BlueAI records it on decisions and results with `traffic_source: redai`.
+  k6 sends `k6` in that header and BlueAI records `traffic_source: k6`.
+  Missing or invalid tags leave the source unknown. These are self-reported
+  labels for controlled lab traffic. XSSer emits execution events without
+  propagating a request tag.
+- BlueAI generates `X-PurpleAI-Request-ID` on forwarding. VulnShop's
+  `objective_served` event carries that ID when it renders the admin
+  page. This records page access, including legitimate admin access.
+- BlueAI's `duration_ms` measures classification on decisions and
+  forwarding on results. A detection or classifier error includes
+  `classifier`, the classifier that stopped evaluation.
+- A tool-side `flag_captured` includes the execution and task IDs when
+  available. It describes a string seen in tool output. Boss observations
+  can repeat the same flag, so these events should not be counted as
+  unique objective completions.

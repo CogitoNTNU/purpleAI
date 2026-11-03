@@ -6,6 +6,11 @@ if (!baseUrl) {
   throw new Error('Set TARGET to the BlueAI defender URL, for example http://192.168.0.120:8080');
 }
 
+const headers = { 'X-PurpleAI-Traffic': 'k6' };
+if (__ENV.PURPLEAI_ENGAGEMENT_ID) {
+  headers['X-PurpleAI-Engagement'] = __ENV.PURPLEAI_ENGAGEMENT_ID;
+}
+
 export const options = { vus: 1, duration: '10m' };
 
 const users = [
@@ -25,11 +30,11 @@ function pick(items) {
 
 export function browse() {
   const path = pick(['/', '/search?q=juice', `/product/${pick(products).id}`, '/login', '/register']);
-  check(http.get(`${baseUrl}${path}`), { 'browse returned 200': (r) => r.status === 200 });
+  check(http.get(`${baseUrl}${path}`, { headers }), { 'browse returned 200': (r) => r.status === 200 });
 }
 
 export function login() {
-  const response = http.post(`${baseUrl}/login`, pick(users), { redirects: 0 });
+  const response = http.post(`${baseUrl}/login`, pick(users), { redirects: 0, headers });
   return check(response, { 'login returned 302': (r) => r.status === 302 });
 }
 
@@ -40,7 +45,7 @@ export function buyProduct() {
   const response = http.post(`${baseUrl}/checkout`, {
     product_name: product.name,
     price: product.price,
-  }, { redirects: 0 });
+  }, { redirects: 0, headers });
   check(response, { 'purchase returned 200': (r) => r.status === 200 });
 }
 

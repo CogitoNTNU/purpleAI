@@ -2,6 +2,11 @@ services:
   vulnerable-app:
     build: ./vulnerable-app
     container_name: vulnerable-app
+    environment:
+      - PURPLEAI_LOG_FILE=/var/log/purpleai/vulnshop.jsonl
+    volumes:
+      - ./logs:/var/log/purpleai
+      - ../purpleai_logging.py:/app/purpleai_logging.py:ro
     networks:
       - backend-network
 
