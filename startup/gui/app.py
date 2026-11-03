@@ -10,6 +10,7 @@ since this GUI runs ssh non-interactively.
 """
 from __future__ import annotations
 
+import json
 import queue
 import re
 import subprocess
@@ -129,6 +130,16 @@ COMPONENTS = [
         "color": "#C0392B",
         "filterable": True,   # adds the "Reasoning only" checkbox (on by default)
         "show_flags": True,   # adds the "Flags captured" overview
+        # Subagents to show activity lights for; `tool` maps a tool event to its
+        # subagent (sqlmap -> SQLi, xsser -> XSS).
+        "subagents": [
+            {"name": "sql_injection_agent", "label": "SQLi", "tool": "sqlmap"},
+            {"name": "xss_agent", "label": "XSS", "tool": "xsser"},
+        ],
+        # Structured event log (both Boss and subagent server append here).
+        "events": f"mkdir -p {REPO}/src/Attacker/logs "
+                  f"&& touch {REPO}/src/Attacker/logs/events.jsonl "
+                  f"&& tail -n 200 -F {REPO}/src/Attacker/logs/events.jsonl",
         "start": {"script": ATTACKER_START_SH, "desc": "pull main + start Boss/server in tmux"},
         "stop":  {"script": ATTACKER_STOP_SH, "desc": "stop attacker (kill tmux + procs)"},
         "logs":  f"mkdir -p {REPO}/startup/logs && touch {REPO}/startup/logs/attacker.log "
@@ -246,7 +257,9 @@ class ComponentTab(ttk.Frame):
         self.cfg = cfg
         self.q: "queue.Queue[tuple]" = queue.Queue()
         self.log_proc: Proc | None = None   # the long-lived `logs -f` stream
+        self.events_proc: Proc | None = None  # the events.jsonl stream (attacker)
         self.action_proc: Proc | None = None  # one-shot start/stop/status
+        self.lights: dict = {}  # subagent name AND tool -> light entry
         # "Reasoning only" filter (attacker): show iteration headers + the
         # Boss's [node] reasoning + flags; hide tool-call/result chatter.
         self.reasoning_only = tk.BooleanVar(value=bool(cfg.get("filterable")))
@@ -272,6 +285,26 @@ class ComponentTab(ttk.Frame):
         if cfg.get("filterable"):
             ttk.Checkbutton(bar, text="Reasoning only",
                             variable=self.reasoning_only).pack(side="left", padx=(10, 2))
+
+        # Subagent activity lights (attacker): green while that subagent / its
+        # tool is running, grey when idle.
+        if cfg.get("subagents"):
+            sframe = ttk.LabelFrame(self, text="Subagents")
+            sframe.pack(fill="x", pady=(0, 6))
+            inner = ttk.Frame(sframe)
+            inner.pack(fill="x", padx=6, pady=4)
+            for sa in cfg["subagents"]:
+                cell = ttk.Frame(inner)
+                cell.pack(side="left", padx=(0, 20))
+                c = tk.Canvas(cell, width=14, height=14, highlightthickness=0)
+                c.pack(side="left", padx=(0, 6))
+                oval = c.create_oval(2, 2, 12, 12, fill="#555", outline="")
+                ttk.Label(cell, text=sa["label"], width=5).pack(side="left")
+                sv = tk.StringVar(value="idle")
+                ttk.Label(cell, textvariable=sv, width=12).pack(side="left")
+                entry = {"canvas": c, "oval": oval, "status": sv, "label": sa["label"]}
+                self.lights[sa["name"]] = entry
+                self.lights[sa["tool"]] = entry  # same light, keyed by tool too
 
         # Flags overview (attacker): a running list of captured FLAG{...}.
         self.flags_list = None
@@ -316,17 +349,72 @@ class ComponentTab(ttk.Frame):
         self.flags_list.delete(0, "end")
         self.flags_frame.configure(text="🚩 Flags captured (0)")
 
+    def _add_flag(self, flag: str):
+        if self.flags_list is None or not flag or flag in self.flags:
+            return
+        self.flags.add(flag)
+        self.flags_list.insert("end", flag)
+        self.flags_list.see("end")
+        self.flags_frame.configure(text=f"🚩 Flags captured ({len(self.flags)})")
+
     def _harvest_flags(self, text: str):
         """Pull any new FLAG{...} out of a streamed line into the overview."""
-        if self.flags_list is None:
-            return
         for flag in FLAG_RE.findall(text):
-            if flag not in self.flags:
-                self.flags.add(flag)
-                self.flags_list.insert("end", flag)
-                self.flags_list.see("end")
-                self.flags_frame.configure(
-                    text=f"🚩 Flags captured ({len(self.flags)})")
+            self._add_flag(flag)
+
+    # -- subagent lights + event feed -------------------------------------- #
+    def _set_light(self, key: str, on: bool, status: str | None = None):
+        entry = self.lights.get(key)
+        if not entry:
+            return
+        entry["canvas"].itemconfig(entry["oval"], fill="#2ECC71" if on else "#555")
+        if status is not None:
+            entry["status"].set(status)
+
+    def _reset_lights(self):
+        for entry in self.lights.values():
+            entry["canvas"].itemconfig(entry["oval"], fill="#555")
+            entry["status"].set("idle")
+
+    def _label_for(self, key: str) -> str:
+        entry = self.lights.get(key)
+        return entry["label"] if entry else (key or "sub")
+
+    def _handle_event(self, ev: dict):
+        """Turn one events.jsonl record into a light update + a readable line."""
+        action = ev.get("action")
+        tool = ev.get("tool")
+        sub = ev.get("subagent")
+        if action == "subagent_status" and sub:
+            running = ev.get("status") == "running"
+            self._set_light(sub, running, ev.get("status") or "idle")
+        elif action == "tool_call" and tool:
+            opts = " ".join(ev.get("scan_options") or [])
+            self._set_light(tool, True, "running")
+            self.append(f"  [{self._label_for(tool)}] ▶ {tool} {opts}".rstrip() + "\n")
+        elif action == "tool_result" and tool:
+            st = ev.get("status") or "done"
+            dur = ev.get("duration_ms")
+            self._set_light(tool, False, st)
+            mark = "✓" if st == "completed" else "✗"
+            tail = f" ({dur} ms)" if dur is not None else ""
+            self.append(f"  [{self._label_for(tool)}] {mark} {tool} {st}{tail}\n")
+        elif action == "flag_captured":
+            flag = ev.get("flag")
+            self._add_flag(flag)
+            self.append(f"  [{self._label_for(tool) if tool else 'flag'}] 🚩 {flag}\n")
+
+    def _on_event_line(self, line: str):
+        """Parse one events.jsonl line (JSON) and dispatch it; ignore the rest."""
+        line = line.strip()
+        if not line.startswith("{"):
+            return
+        try:
+            ev = json.loads(line)
+        except (ValueError, TypeError):
+            return
+        if isinstance(ev, dict) and ev.get("action"):
+            self._handle_event(ev)
 
     # -- actions ------------------------------------------------------------ #
     def _run_action(self, which: str):
@@ -360,15 +448,23 @@ class ComponentTab(ttk.Frame):
     def start_logs(self):
         self.stop_logs()
         self._show_block = False  # reset the reasoning filter for a fresh stream
+        self._reset_lights()
         self.append(f"\n--- streaming logs ({self.cfg['host']}) ---\n")
         self.log_proc = Proc(ssh_inline_argv(self.cfg["host"], self.cfg["logs"]),
                              self.q, role="logs")
         self.log_proc.start()
+        if self.cfg.get("events"):
+            self.events_proc = Proc(ssh_inline_argv(self.cfg["host"], self.cfg["events"]),
+                                    self.q, role="events")
+            self.events_proc.start()
 
     def stop_logs(self):
         if self.log_proc:
             self.log_proc.kill()
             self.log_proc = None
+        if self.events_proc:
+            self.events_proc.kill()
+            self.events_proc = None
 
     # -- reasoning-only filter --------------------------------------------- #
     # Boss output per turn:
@@ -399,8 +495,13 @@ class ComponentTab(ttk.Frame):
             while True:
                 kind, role, payload = self.q.get_nowait()
                 if kind == "line":
-                    if role == "logs":
+                    if role == "events":
+                        self._on_event_line(payload)
+                    elif role == "logs":
                         self._harvest_flags(payload)  # scan all log lines
+                        s = payload.strip()
+                        if s.startswith("{") and '"action"' in s:
+                            continue  # raw event JSON; shown via the events feed
                         if not self.reasoning_only.get() or self._keep_line(payload):
                             self.append(payload)
                     else:
