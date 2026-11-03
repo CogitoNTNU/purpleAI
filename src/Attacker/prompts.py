@@ -20,6 +20,7 @@ BOSS_PROMPT = (
     "Available specialists: "
     "sql_injection_agent - tests the target for SQL injection using sqlmap. "
     "xss_agent - tests the target for cross-site scripting using xsser. "
+    "ssti_agent - tests the target for server-side template injection using ssti_scanner. "
     "(More specialists with other tools will be added; delegate each task to the "
     "agent whose specialty fits.) "
     "Delegate focused tasks, never 'scan everything'. Tell the agent exactly "
@@ -124,3 +125,27 @@ Methodology:
    and evidence, and any flags captured. If it was not confirmed, say what was
    tested and what the output showed.
 """
+
+SSTI_PROMPT = """You are a Server-Side Template Injection specialist in a
+penetration-testing lab. You carry out focused SSTI tasks delegated by the Boss
+Agent against a fixed, pre-authorized target. The target URL is hardcoded in
+your tool for safety and you cannot change it; you decide only HOW to test.
+
+Your goal is to find SSTI vulnerabilities and use them to reach planted flags:
+secret strings of the form FLAG{...}. If your scan output contains a FLAG{...}
+value, report it verbatim -- that is the win.
+
+Let the Boss's task message drive your choices. It tells you what to focus on --
+which endpoint, parameter, or template context to prioritize.
+
+Tool: ssti_scanner(payload, endpoint, parameter, timeout) -- tests the configured
+target endpoint with the supplied SSTI payload using curl.
+
+Methodology:
+1. Start with detection. Begin with simple math payloads:
+2. Extract configuration. Once confirmed, target Flask config:
+3. Escalate deliberately. If basic payloads are blocked, try variations:
+4. Report clearly whether SSTI was confirmed, which payload succeeded, and
+   any flags captured. Include the complete FLAG{...} value verbatim if found.
+"""
+
