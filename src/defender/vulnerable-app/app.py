@@ -18,7 +18,7 @@ import subprocess
 
 from flask import (
     Flask, g, request, session, redirect, url_for,
-    render_template, send_from_directory, make_response
+    render_template, render_template_string, send_from_directory, make_response
 )
 
 APP_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -28,6 +28,7 @@ REPORTS_DIR = os.path.join(APP_ROOT, "reports")
 
 app = Flask(__name__)
 app.secret_key = "supersecret123"  # (VULN: svak, hardkodet secret key)
+app.config['SSTI_FLAG'] = "FLAG{server_side_template_injection}"  # (VULN: flag discoverable via SSTI)
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +140,7 @@ def current_user():
 
 # ---------------------------------------------------------------------------
 # Ruter
-# ---------------------------------------------------------------------------
+
 
 @app.route("/")
 def index():
@@ -329,6 +330,23 @@ def admin_ping():
         except Exception as e:
             output = str(e)
     return render_template("admin_ping.html", output=output)
+
+
+@app.route("/greet", methods=["GET", "POST"])
+def greet():
+    # VULN: Server-Side Template Injection (SSTI)
+    # User input is directly embedded into a template string and rendered.
+    # This allows attackers to inject template expressions that execute on the server.
+    # Examples: {{ 7*7 }} → 49, {{ config.items() }} → leaks Flask config
+    greeting = None
+    user_input = request.args.get("name", "") or request.form.get("name", "")
+
+    if user_input:
+        # Dangerous: concatenating user input directly into template
+        template = "Hello " + user_input + "!"
+        greeting = render_template_string(template)
+
+    return render_template("greet.html", greeting=greeting, user_input=user_input)
 
 
 @app.route("/robots.txt")
