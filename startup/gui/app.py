@@ -95,6 +95,15 @@ sleep 1
 
 [ -d "$ATT" ] || { echo "ERROR: $ATT not found." >&2; exit 1; }
 
+# Fresh state each run so earlier runs' tasks don't carry over into the UI or
+# keep draining the single worker:
+#  - rotate events.jsonl (the GUI tails it; it otherwise accumulates across runs)
+#  - wipe .langgraph_api (the dev server persists subagent threads/runs to disk)
+mkdir -p "$ATT/logs"
+[ -s "$ATT/logs/events.jsonl" ] && mv -f "$ATT/logs/events.jsonl" "$ATT/logs/events.prev.jsonl" 2>/dev/null || true
+rm -rf "$ATT/.langgraph_api" 2>/dev/null || true
+echo "[attacker] cleared previous run state (events rotated, server threads wiped)."
+
 if [ ! -x "$ATT/.venv/bin/langgraph" ]; then
   echo "[attacker] .venv not set up; bootstrapping with uv..."
   if command -v uv >/dev/null 2>&1; then
