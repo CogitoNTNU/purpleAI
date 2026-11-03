@@ -257,3 +257,9 @@ Thumbs.db
 
 # Flask application
 *.db
+
+# PurpleAI control-panel build artifacts
+startup/gui/build/
+startup/gui/dist/
+startup/gui/*.spec
+startup/logs/

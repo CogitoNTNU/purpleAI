@@ -1,0 +1,442 @@
+"""PurpleAI Control — a clickable GUI to start/stop the attacker, defender and
+vulnerable app on the remote lab boxes, with live logs shown in-window.
+
+Connection path (no terminal needed):
+    this PC --ssh--> gamehost --ssh--> redai (attacker) / blueai (defender)
+
+The ssh host aliases (gamehost/redai/blueai) and the repo path live in CONFIG
+below — edit them if yours differ. Requires key-based ssh (no password prompts),
+since this GUI runs ssh non-interactively.
+"""
+from __future__ import annotations
+
+import queue
+import re
+import subprocess
+import sys
+import threading
+import tkinter as tk
+from tkinter import ttk
+from tkinter.scrolledtext import ScrolledText
+
+# --------------------------------------------------------------------------- #
+# CONFIG — edit to match your setup                                           #
+# --------------------------------------------------------------------------- #
+GAMEHOST = "gamehost"          # ssh alias of the jump host (reached from this PC)
+REPO = "~/purpleAI"            # repo path on redai and blueai
+
+
+# Picks how to call docker: plain `docker` if the socket is reachable,
+# passwordless `sudo -n docker` if that's allowed, otherwise a clear one-time-fix
+# message. `sudo -n` never prompts — it fails fast instead of hanging.
+# Only double quotes here; single quotes would clash with the `ssh host '...'`
+# wrapper.
+_DOCKER_PICK = (
+    "if docker info >/dev/null 2>&1; then DC=docker; "
+    'elif sudo -n docker info >/dev/null 2>&1; then DC="sudo -n docker"; '
+    'else echo "ERROR: this user cannot access Docker on this box."; '
+    'echo "One-time fix:  sudo usermod -aG docker $(whoami)  then log out and back in."; '
+    "exit 13; fi"
+)
+
+
+def _dc(compose: str, action: str) -> str:
+    """A single docker-compose action (stop/logs/status) on one compose file."""
+    return f"cd {REPO}/src/defender && {_DOCKER_PICK} && $DC compose -f {compose} {action}"
+
+
+def docker_start(target: str, other: str) -> str:
+    """Start `target`, first bringing `other` down so the two compose files
+    don't fight over port 8080 / the `vulnerable-app` container name."""
+    return (
+        f"cd {REPO}/src/defender && {_DOCKER_PICK} && "
+        f"$DC compose -f {other} down --remove-orphans; "
+        f"$DC compose -f {target} up -d --build --remove-orphans"
+    )
+
+
+def with_pull(cmd: str) -> str:
+    """Pull the latest main on the remote before running `cmd`. Uses `;` so a
+    pull hiccup (no network, non-fast-forward) is reported but doesn't block
+    the start."""
+    return f"cd {REPO} && git pull --ff-only origin main; {cmd}"
+
+
+# The attacker has a multi-step launch (tmux + venv). Rather than require these
+# scripts to already be on redai, the GUI ships them over ssh via `bash -s` on
+# stdin, so the box only needs the repo itself — not these helper files.
+ATTACKER_START_SH = r"""
+set -euo pipefail
+REPO="${PURPLE_REPO:-$HOME/purpleAI}"
+ATT="$REPO/src/Attacker"
+SESSION="attacker"
+LOGDIR="$REPO/startup/logs"
+LOG="$LOGDIR/attacker.log"
+mkdir -p "$LOGDIR"
+
+# Pull latest main first (non-fatal if it can't fast-forward).
+( cd "$REPO" && git pull --ff-only origin main ) || echo "[attacker] git pull skipped/failed."
+
+if ! command -v tmux >/dev/null 2>&1; then
+  echo "[attacker] installing tmux..."
+  sudo -n apt-get update -y && sudo -n apt-get install -y tmux \
+    || { echo "ERROR: tmux missing and cannot sudo-install it. Run: sudo apt-get install -y tmux"; exit 1; }
+fi
+
+if tmux has-session -t "$SESSION" 2>/dev/null; then
+  echo "[attacker] already running (tmux session '$SESSION')."; exit 0
+fi
+
+[ -d "$ATT" ] || { echo "ERROR: $ATT not found." >&2; exit 1; }
+
+if [ ! -x "$ATT/.venv/bin/langgraph" ]; then
+  echo "[attacker] .venv not set up; bootstrapping with uv..."
+  if command -v uv >/dev/null 2>&1; then
+    ( cd "$ATT" && uv venv && uv pip install --python .venv/bin/python -r requirements.txt )
+  else
+    echo "ERROR: no .venv and uv missing; see $ATT/README.md" >&2; exit 1
+  fi
+fi
+
+: > "$LOG"
+tmux new-session -d -s "$SESSION" -c "$ATT"
+tmux pipe-pane -o -t "$SESSION" "cat >> '$LOG'"
+tmux send-keys -t "$SESSION" ".venv/bin/langgraph dev > '$LOGDIR/langgraph.log' 2>&1 &" C-m
+tmux send-keys -t "$SESSION" "echo 'waiting for subagent server on :2024...'; until curl -s http://localhost:2024/ok >/dev/null 2>&1 || curl -s http://localhost:2024/ >/dev/null 2>&1; do sleep 1; done; echo 'server up; starting Boss'; .venv/bin/python redagent.py" C-m
+echo "[attacker] started (detached). Logs -> $LOG"
+"""
+
+ATTACKER_STOP_SH = r"""
+set -uo pipefail
+SESSION="attacker"
+tmux kill-session -t "$SESSION" 2>/dev/null && echo "killed tmux '$SESSION'" || echo "no tmux session '$SESSION'"
+pkill -f 'langgraph dev' 2>/dev/null && echo "stopped langgraph server" || true
+pkill -f 'redagent.py'   2>/dev/null && echo "stopped Boss" || true
+echo "[attacker] stop done."
+"""
+
+
+COMPONENTS = [
+    {
+        "key": "attacker",
+        "label": "Attacker  (redai)",
+        "host": "redai",
+        "color": "#C0392B",
+        "filterable": True,   # adds the "Reasoning only" checkbox (on by default)
+        "start": {"script": ATTACKER_START_SH, "desc": "pull main + start Boss/server in tmux"},
+        "stop":  {"script": ATTACKER_STOP_SH, "desc": "stop attacker (kill tmux + procs)"},
+        "logs":  f"mkdir -p {REPO}/startup/logs && touch {REPO}/startup/logs/attacker.log "
+                 f"&& tail -n 300 -F {REPO}/startup/logs/attacker.log",
+        "status": "tmux has-session -t attacker 2>/dev/null "
+                  "&& echo RUNNING || echo STOPPED",
+    },
+    {
+        "key": "defender",
+        "label": "Defender + VulnApp  (blueai)",
+        "host": "blueai",
+        "color": "#2471A3",
+        "start":  with_pull(docker_start("docker-compose.full.yml", "docker-compose.app.yml")),
+        "stop":   _dc("docker-compose.full.yml", "down"),
+        "logs":   _dc("docker-compose.full.yml", "logs -f --tail=300"),
+        "status": _dc("docker-compose.full.yml", "ps"),
+    },
+    {
+        "key": "vulnapp",
+        "label": "Vulnerable app only  (blueai)",
+        "host": "blueai",
+        "color": "#7D3C98",
+        "start":  with_pull(docker_start("docker-compose.app.yml", "docker-compose.full.yml")),
+        "stop":   _dc("docker-compose.app.yml", "down"),
+        "logs":   _dc("docker-compose.app.yml", "logs -f --tail=300"),
+        "status": _dc("docker-compose.app.yml", "ps"),
+    },
+]
+
+# Hide the console windows spawned by ssh.exe on Windows.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+
+
+def ssh_inline_argv(host: str, remote_cmd: str) -> list[str]:
+    """argv for: ssh GAMEHOST "ssh HOST 'remote_cmd'". remote_cmd must not use
+    single quotes (they'd clash with the wrapper); use double quotes instead."""
+    return ["ssh", GAMEHOST, f"ssh {host} '{remote_cmd}'"]
+
+
+def ssh_script_argv(host: str) -> list[str]:
+    """argv for: ssh GAMEHOST "ssh HOST bash -s"  — the script is fed on stdin,
+    so it can use any quoting and need not exist on the remote."""
+    return ["ssh", GAMEHOST, f"ssh {host} bash -s"]
+
+
+class Proc:
+    """Runs one argv, streaming combined stdout/stderr line-by-line to a queue."""
+
+    def __init__(self, argv: list[str], out_q: "queue.Queue[tuple]",
+                 stdin_data: str | None = None, role: str = "action"):
+        self.argv = argv
+        self.q = out_q
+        self.stdin_data = stdin_data
+        self.role = role  # "action" (start/stop/status) or "logs" (live stream)
+        self.popen: subprocess.Popen | None = None
+        self._thread: threading.Thread | None = None
+
+    def start(self):
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self):
+        try:
+            self.popen = subprocess.Popen(
+                self.argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=(subprocess.PIPE if self.stdin_data is not None
+                       else subprocess.DEVNULL),
+                text=True,
+                bufsize=1,
+                creationflags=_NO_WINDOW,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.q.put(("line", self.role, f"!! failed to launch ssh: {exc}\n"))
+            self.q.put(("exit", self.role, -1))
+            return
+        if self.stdin_data is not None and self.popen.stdin is not None:
+            try:
+                # Normalize to LF — bash on the Linux remote fails on CRLF with
+                # "$'\r': command not found". In text mode Windows would re-add
+                # CRLF on write, so disable newline translation first.
+                data = self.stdin_data.replace("\r\n", "\n").replace("\r", "\n")
+                try:
+                    self.popen.stdin.reconfigure(newline="")
+                except Exception:  # noqa: BLE001
+                    pass
+                self.popen.stdin.write(data)
+                self.popen.stdin.close()
+            except Exception as exc:  # noqa: BLE001
+                self.q.put(("line", self.role, f"!! stdin write failed: {exc}\n"))
+        assert self.popen.stdout is not None
+        for line in self.popen.stdout:
+            self.q.put(("line", self.role, line))
+        code = self.popen.wait()
+        self.q.put(("exit", self.role, code))
+
+    def is_running(self) -> bool:
+        return self.popen is not None and self.popen.poll() is None
+
+    def kill(self):
+        if self.is_running():
+            try:
+                self.popen.terminate()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+class ComponentTab(ttk.Frame):
+    def __init__(self, master: tk.Misc, cfg: dict):
+        super().__init__(master, padding=8)
+        self.cfg = cfg
+        self.q: "queue.Queue[tuple]" = queue.Queue()
+        self.log_proc: Proc | None = None   # the long-lived `logs -f` stream
+        self.action_proc: Proc | None = None  # one-shot start/stop/status
+        # "Reasoning only" filter (attacker): show iteration headers + the
+        # Boss's [node] reasoning + flags; hide tool-call/result chatter.
+        self.reasoning_only = tk.BooleanVar(value=bool(cfg.get("filterable")))
+        self._show_block = False  # filter state: are we inside a shown block?
+
+        bar = ttk.Frame(self)
+        bar.pack(fill="x", pady=(0, 6))
+
+        dot = tk.Canvas(bar, width=14, height=14, highlightthickness=0)
+        dot.pack(side="left", padx=(0, 6))
+        self._dot = dot.create_oval(2, 2, 12, 12, fill="#888", outline="")
+        self._dot_canvas = dot
+
+        self.status_var = tk.StringVar(value="idle")
+        ttk.Label(bar, textvariable=self.status_var, width=16).pack(side="left")
+
+        ttk.Button(bar, text="▶ Start", command=self.on_start).pack(side="left", padx=2)
+        ttk.Button(bar, text="■ Stop", command=self.on_stop).pack(side="left", padx=2)
+        ttk.Button(bar, text="📜 View logs", command=self.start_logs).pack(side="left", padx=2)
+        ttk.Button(bar, text="⟳ Status", command=self.on_status).pack(side="left", padx=2)
+        ttk.Button(bar, text="Clear", command=self.clear_log).pack(side="left", padx=2)
+        if cfg.get("filterable"):
+            ttk.Checkbutton(bar, text="Reasoning only",
+                            variable=self.reasoning_only).pack(side="left", padx=(10, 2))
+
+        self.log = ScrolledText(self, height=22, bg="#0e0f12", fg="#d6d6d6",
+                                insertbackground="#d6d6d6", font=("Consolas", 10),
+                                wrap="none", state="disabled")
+        self.log.pack(fill="both", expand=True)
+
+        self.after(100, self._drain)
+
+    # -- UI helpers --------------------------------------------------------- #
+    def set_dot(self, color: str):
+        self._dot_canvas.itemconfig(self._dot, fill=color)
+
+    def append(self, text: str):
+        self.log.configure(state="normal")
+        self.log.insert("end", text)
+        self.log.see("end")
+        self.log.configure(state="disabled")
+
+    def clear_log(self):
+        self.log.configure(state="normal")
+        self.log.delete("1.0", "end")
+        self.log.configure(state="disabled")
+
+    # -- actions ------------------------------------------------------------ #
+    def _run_action(self, which: str):
+        if self.action_proc and self.action_proc.is_running():
+            self.append("… an action is already running; wait for it to finish.\n")
+            return
+        self.status_var.set(f"{which}…")
+        self.set_dot("#E1B400")
+        spec = self.cfg[which]
+        host = self.cfg["host"]
+        if isinstance(spec, dict) and "script" in spec:
+            self.append(f"\n$ [{which}] ({spec.get('desc', 'run script')}) on {host}\n")
+            proc = Proc(ssh_script_argv(host), self.q, stdin_data=spec["script"])
+        else:
+            self.append(f"\n$ [{which}] {spec}\n")
+            proc = Proc(ssh_inline_argv(host, spec), self.q)
+        proc._which = which  # type: ignore[attr-defined]
+        self.action_proc = proc
+        proc.start()
+
+    def on_start(self):
+        self._run_action("start")
+
+    def on_stop(self):
+        self.stop_logs()
+        self._run_action("stop")
+
+    def on_status(self):
+        self._run_action("status")
+
+    def start_logs(self):
+        self.stop_logs()
+        self._show_block = False  # reset the reasoning filter for a fresh stream
+        self.append(f"\n--- streaming logs ({self.cfg['host']}) ---\n")
+        self.log_proc = Proc(ssh_inline_argv(self.cfg["host"], self.cfg["logs"]),
+                             self.q, role="logs")
+        self.log_proc.start()
+
+    def stop_logs(self):
+        if self.log_proc:
+            self.log_proc.kill()
+            self.log_proc = None
+
+    # -- reasoning-only filter --------------------------------------------- #
+    # Boss output per turn:
+    #   "===== iteration N ====="   -> boundary (show)
+    #   "  [node] reasoning..."      -> reasoning (show; may wrap to more lines)
+    #   "  -> tool(args)" / "  <- tool: result"  -> tool chatter (hide)
+    #   "  🚩 CAPTURED FLAG: ..."    -> always show
+    _RE_ITER = re.compile(r"^\s*=+\s*iteration\b", re.IGNORECASE)
+    _RE_REASON = re.compile(r"^\s*\[")          # "  [node] ..."
+    _RE_TOOL = re.compile(r"^\s*[→←>←<]")       # tool call "→"/">" or result "←"/"<"
+
+    def _keep_line(self, line: str) -> bool:
+        """Stateful filter: True to show this line, False to drop it."""
+        if "🚩" in line or "CAPTURED FLAG" in line or "FLAG{" in line:
+            return True
+        if self._RE_ITER.match(line) or self._RE_REASON.match(line):
+            self._show_block = True
+            return True
+        if self._RE_TOOL.match(line):
+            self._show_block = False
+            return False
+        # Continuation / blank line: follow the current block's visibility.
+        return self._show_block
+
+    # -- queue pump --------------------------------------------------------- #
+    def _drain(self):
+        try:
+            while True:
+                kind, role, payload = self.q.get_nowait()
+                if kind == "line":
+                    if role == "logs" and self.reasoning_only.get():
+                        if self._keep_line(payload):
+                            self.append(payload)
+                    else:
+                        self.append(payload)
+                elif kind == "exit" and role == "action":
+                    self._on_action_exit(payload)
+        except queue.Empty:
+            pass
+        self.after(100, self._drain)
+
+    def _on_action_exit(self, code):
+        # Only react to the one-shot action process finishing.
+        which = getattr(self.action_proc, "_which", None) if self.action_proc else None
+        if which is None:
+            return
+        if self.action_proc and self.action_proc.is_running():
+            return
+        self.append(f"[{which} exited: {code}]\n")
+        if which == "start":
+            if code == 0:
+                self.status_var.set("started")
+                self.set_dot("#2ECC71")
+                self.start_logs()  # auto-attach the live log stream
+            else:
+                self.status_var.set("start failed")
+                self.set_dot("#E74C3C")
+        elif which == "stop":
+            self.status_var.set("stopped")
+            self.set_dot("#888888")
+        elif which == "status":
+            self.status_var.set("status shown")
+        self.action_proc = None
+
+    def shutdown(self):
+        self.stop_logs()
+        if self.action_proc:
+            self.action_proc.kill()
+
+
+class App(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("PurpleAI Control")
+        self.geometry("920x620")
+        self.minsize(720, 480)
+
+        header = ttk.Frame(self, padding=(10, 8))
+        header.pack(fill="x")
+        ttk.Label(header, text="PurpleAI Control", font=("Segoe UI", 15, "bold")).pack(side="left")
+        ttk.Button(header, text="Start all", command=self.start_all).pack(side="right", padx=3)
+        ttk.Button(header, text="Stop all", command=self.stop_all).pack(side="right", padx=3)
+        ttk.Label(header, text=f"via {GAMEHOST}", foreground="#888").pack(side="right", padx=10)
+
+        nb = ttk.Notebook(self)
+        nb.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.tabs: list[ComponentTab] = []
+        for cfg in COMPONENTS:
+            tab = ComponentTab(nb, cfg)
+            nb.add(tab, text=cfg["label"])
+            self.tabs.append(tab)
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _tab(self, key: str) -> ComponentTab:
+        return next(t for t in self.tabs if t.cfg["key"] == key)
+
+    def start_all(self):
+        # Attacker + defender (defender already includes the vuln app).
+        self._tab("attacker").on_start()
+        self._tab("defender").on_start()
+
+    def stop_all(self):
+        for t in self.tabs:
+            t.on_stop()
+
+    def _on_close(self):
+        for t in self.tabs:
+            t.shutdown()
+        self.destroy()
+
+
+if __name__ == "__main__":
+    App().mainloop()
