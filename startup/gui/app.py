@@ -109,7 +109,9 @@ START_DELAY="${PURPLE_ATTACKER_DELAY:-10}"
 tmux new-session -d -s "$SESSION" -c "$ATT"
 tmux pipe-pane -o -t "$SESSION" "cat >> '$LOG'"
 # 1) Start the subagent server (langgraph dev) in the background, own log.
-tmux send-keys -t "$SESSION" ".venv/bin/langgraph dev > '$LOGDIR/langgraph.log' 2>&1 &" C-m
+#    --no-browser: on a headless box, opening LangGraph Studio launches a
+#    text-mode browser that grabs the tmux pane's tty and suspends the server.
+tmux send-keys -t "$SESSION" "BROWSER=true .venv/bin/langgraph dev --no-browser > '$LOGDIR/langgraph.log' 2>&1 &" C-m
 # 2) Give it time to boot (and you a chance to open the Server log) before Boss.
 tmux send-keys -t "$SESSION" "echo 'subagent server starting on :2024 (log: $LOGDIR/langgraph.log)'; echo 'open the Server log to watch it; Boss starts in ${START_DELAY}s...'; sleep ${START_DELAY}" C-m
 # 3) Then wait (bounded, ~60s) until it actually answers before starting Boss.
