@@ -83,9 +83,14 @@ if ! command -v tmux >/dev/null 2>&1; then
     || { echo "ERROR: tmux missing and cannot sudo-install it. Run: sudo apt-get install -y tmux"; exit 1; }
 fi
 
+# Always restart clean: end any existing attacker before starting a new one.
 if tmux has-session -t "$SESSION" 2>/dev/null; then
-  echo "[attacker] already running (tmux session '$SESSION')."; exit 0
+  echo "[attacker] ending existing attacker session before restart..."
+  tmux kill-session -t "$SESSION" 2>/dev/null || true
 fi
+pkill -f 'langgraph dev' 2>/dev/null || true
+pkill -f 'redagent.py'   2>/dev/null || true
+sleep 1
 
 [ -d "$ATT" ] || { echo "ERROR: $ATT not found." >&2; exit 1; }
 
@@ -123,6 +128,7 @@ COMPONENTS = [
         "host": "redai",
         "color": "#C0392B",
         "filterable": True,   # adds the "Reasoning only" checkbox (on by default)
+        "show_flags": True,   # adds the "Flags captured" overview
         "start": {"script": ATTACKER_START_SH, "desc": "pull main + start Boss/server in tmux"},
         "stop":  {"script": ATTACKER_STOP_SH, "desc": "stop attacker (kill tmux + procs)"},
         "logs":  f"mkdir -p {REPO}/startup/logs && touch {REPO}/startup/logs/attacker.log "
@@ -154,6 +160,9 @@ COMPONENTS = [
 
 # Hide the console windows spawned by ssh.exe on Windows.
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+
+# FLAG{...} values are the objective; harvest them from the attacker's stream.
+FLAG_RE = re.compile(r"FLAG\{[^}\n]{0,200}\}")
 
 
 def ssh_inline_argv(host: str, remote_cmd: str) -> list[str]:
@@ -242,6 +251,7 @@ class ComponentTab(ttk.Frame):
         # Boss's [node] reasoning + flags; hide tool-call/result chatter.
         self.reasoning_only = tk.BooleanVar(value=bool(cfg.get("filterable")))
         self._show_block = False  # filter state: are we inside a shown block?
+        self.flags: set[str] = set()  # unique FLAG{...} seen on this box
 
         bar = ttk.Frame(self)
         bar.pack(fill="x", pady=(0, 6))
@@ -263,7 +273,21 @@ class ComponentTab(ttk.Frame):
             ttk.Checkbutton(bar, text="Reasoning only",
                             variable=self.reasoning_only).pack(side="left", padx=(10, 2))
 
-        self.log = ScrolledText(self, height=22, bg="#0e0f12", fg="#d6d6d6",
+        # Flags overview (attacker): a running list of captured FLAG{...}.
+        self.flags_list = None
+        if cfg.get("show_flags"):
+            self.flags_frame = ttk.LabelFrame(self, text="🚩 Flags captured (0)")
+            self.flags_frame.pack(fill="x", pady=(0, 6))
+            row = ttk.Frame(self.flags_frame)
+            row.pack(fill="x", padx=4, pady=4)
+            self.flags_list = tk.Listbox(row, height=4, bg="#141414", fg="#f1c40f",
+                                         font=("Consolas", 10), activestyle="none",
+                                         selectbackground="#333")
+            self.flags_list.pack(side="left", fill="x", expand=True)
+            ttk.Button(row, text="Clear", width=6,
+                       command=self.clear_flags).pack(side="left", padx=(6, 0))
+
+        self.log = ScrolledText(self, height=18, bg="#0e0f12", fg="#d6d6d6",
                                 insertbackground="#d6d6d6", font=("Consolas", 10),
                                 wrap="none", state="disabled")
         self.log.pack(fill="both", expand=True)
@@ -284,6 +308,25 @@ class ComponentTab(ttk.Frame):
         self.log.configure(state="normal")
         self.log.delete("1.0", "end")
         self.log.configure(state="disabled")
+
+    def clear_flags(self):
+        if self.flags_list is None:
+            return
+        self.flags.clear()
+        self.flags_list.delete(0, "end")
+        self.flags_frame.configure(text="🚩 Flags captured (0)")
+
+    def _harvest_flags(self, text: str):
+        """Pull any new FLAG{...} out of a streamed line into the overview."""
+        if self.flags_list is None:
+            return
+        for flag in FLAG_RE.findall(text):
+            if flag not in self.flags:
+                self.flags.add(flag)
+                self.flags_list.insert("end", flag)
+                self.flags_list.see("end")
+                self.flags_frame.configure(
+                    text=f"🚩 Flags captured ({len(self.flags)})")
 
     # -- actions ------------------------------------------------------------ #
     def _run_action(self, which: str):
@@ -356,8 +399,9 @@ class ComponentTab(ttk.Frame):
             while True:
                 kind, role, payload = self.q.get_nowait()
                 if kind == "line":
-                    if role == "logs" and self.reasoning_only.get():
-                        if self._keep_line(payload):
+                    if role == "logs":
+                        self._harvest_flags(payload)  # scan all log lines
+                        if not self.reasoning_only.get() or self._keep_line(payload):
                             self.append(payload)
                     else:
                         self.append(payload)
