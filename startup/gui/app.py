@@ -407,11 +407,13 @@ class ComponentTab(ttk.Frame):
             self._add_flag(flag)
 
     # -- subagent lights + event feed -------------------------------------- #
-    def _set_light(self, key: str, on: bool, status: str | None = None):
+    def _set_light(self, key: str, on: bool, status: str | None = None,
+                   color: str | None = None):
         entry = self.lights.get(key)
         if not entry:
             return
-        entry["canvas"].itemconfig(entry["oval"], fill="#2ECC71" if on else "#555")
+        fill = color or ("#2ECC71" if on else "#555")
+        entry["canvas"].itemconfig(entry["oval"], fill=fill)
         if status is not None:
             entry["status"].set(status)
 
@@ -437,10 +439,15 @@ class ComponentTab(ttk.Frame):
             is_new = tid is not None and tid not in tasks
             if tid is not None:
                 tasks[tid] = status
-            active = sum(1 for s in tasks.values()
-                         if s in ("running", "pending", "busy"))
+            running = sum(1 for s in tasks.values() if s in ("running", "busy"))
+            queued = sum(1 for s in tasks.values() if s == "pending")
             total = len(tasks)
-            self._set_light(sub, active > 0, f"{active} active / {total} launched")
+            # Server has 1 worker: green while one truly runs, amber if only
+            # queued work is waiting, grey when nothing is outstanding.
+            color = "#2ECC71" if running else ("#E1B400" if queued else "#555")
+            self._set_light(sub, running > 0,
+                            f"{running} running / {queued} queued / {total} launched",
+                            color=color)
             if is_new:
                 self.append(f"  [{self._label_for(sub)}] ➕ launched "
                             f"(#{total}, task {str(tid)[:8]})\n")
