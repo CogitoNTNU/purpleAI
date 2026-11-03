@@ -133,6 +133,51 @@ pkill -f 'redagent.py'   2>/dev/null && echo "stopped Boss" || true
 echo "[attacker] stop done."
 """
 
+# Dump each subagent thread's message trail (its reasoning) from the langgraph
+# server as JSON lines. Shipped to redai via bash -s and run on each poll; the
+# GUI dedupes by (tid, index) and maps tid -> subagent via subagent_status.
+REASONING_SCRIPT = r"""
+python3 - <<'PY'
+import json, urllib.request
+BASE = "http://localhost:2024"
+def jget(u):
+    return json.load(urllib.request.urlopen(u, timeout=6))
+def jpost(u, d):
+    req = urllib.request.Request(u, data=json.dumps(d).encode(),
+                                 headers={"Content-Type": "application/json"})
+    return json.load(urllib.request.urlopen(req, timeout=6))
+try:
+    ths = jpost(BASE + "/threads/search", {"limit": 40})
+except Exception as e:
+    print("REASON_ERR " + str(e)); raise SystemExit
+for t in ths:
+    tid = t.get("thread_id")
+    if not tid:
+        continue
+    try:
+        st = jget(BASE + "/threads/%s/state" % tid)
+    except Exception:
+        continue
+    msgs = (st.get("values") or {}).get("messages") or []
+    for i, m in enumerate(msgs):
+        if not isinstance(m, dict):
+            continue
+        typ = m.get("type")
+        if typ not in ("ai", "tool"):
+            continue
+        c = m.get("content")
+        if isinstance(c, list):
+            c = " ".join(b.get("text", "") for b in c if isinstance(b, dict))
+        c = " ".join(str(c or "").split())
+        tools = [tc.get("name") for tc in (m.get("tool_calls") or [])
+                 if isinstance(tc, dict)]
+        if not c and not tools:
+            continue
+        print(json.dumps({"tid": tid, "i": i, "type": typ,
+                          "text": c[:500], "tools": tools}))
+PY
+"""
+
 
 COMPONENTS = [
     {
@@ -156,6 +201,9 @@ COMPONENTS = [
         "server_logs": f"mkdir -p {REPO}/startup/logs "
                        f"&& touch {REPO}/startup/logs/langgraph.log "
                        f"&& tail -n 200 -F {REPO}/startup/logs/langgraph.log",
+        # Subagent reasoning: pull each subagent thread's message trail from the
+        # server (shipped via bash -s, so no quoting worries).
+        "reasoning_script": REASONING_SCRIPT,
         # One-shot health probe of the subagent server (langgraph dev :2024),
         # polled on a timer. Prints "SERVER <http_code>" (000 = unreachable).
         "health": (
@@ -287,6 +335,11 @@ class ComponentTab(ttk.Frame):
         self.serverlog_proc: Proc | None = None  # langgraph server log stream
         self.health_proc: Proc | None = None  # one-shot server health probe
         self._health_after = None             # pending health-poll timer id
+        self.reason_proc: Proc | None = None  # subagent-reasoning poll
+        self._reason_after = None             # pending reasoning-poll timer id
+        self._reason_on = False               # reasoning stream toggled on?
+        self._seen_msgs: set = set()          # (tid, i) already shown
+        self.tid_label: dict = {}             # thread id -> subagent label
         self.action_proc: Proc | None = None  # one-shot start/stop/status
         self.lights: dict = {}  # subagent name AND tool -> light entry
         # "Reasoning only" filter (attacker): show iteration headers + the
@@ -313,6 +366,9 @@ class ComponentTab(ttk.Frame):
         if cfg.get("server_logs"):
             ttk.Button(bar, text="📄 Server log",
                        command=self.toggle_server_log).pack(side="left", padx=2)
+        if cfg.get("reasoning_script"):
+            ttk.Button(bar, text="🧠 Reasoning",
+                       command=self.toggle_reasoning).pack(side="left", padx=2)
         ttk.Button(bar, text="⟳ Status", command=self.on_status).pack(side="left", padx=2)
         ttk.Button(bar, text="Clear", command=self.clear_log).pack(side="left", padx=2)
         if cfg.get("filterable"):
@@ -419,6 +475,8 @@ class ComponentTab(ttk.Frame):
 
     def _reset_lights(self):
         self.sub_tasks.clear()
+        self.tid_label.clear()
+        self._seen_msgs.clear()
         for entry in self.lights.values():
             entry["canvas"].itemconfig(entry["oval"], fill="#555")
             entry["status"].set("idle")
@@ -439,6 +497,7 @@ class ComponentTab(ttk.Frame):
             is_new = tid is not None and tid not in tasks
             if tid is not None:
                 tasks[tid] = status
+                self.tid_label[tid] = self._label_for(sub)
             running = sum(1 for s in tasks.values() if s in ("running", "busy"))
             queued = sum(1 for s in tasks.values() if s == "pending")
             total = len(tasks)
@@ -485,6 +544,60 @@ class ComponentTab(ttk.Frame):
                                     self.q, role="health")
             self.health_proc.start()
         self._health_after = self.after(8000, self._poll_health)
+
+    def toggle_reasoning(self):
+        """Start/stop polling the server for subagent reasoning."""
+        if self._reason_on:
+            self._reason_on = False
+            if self._reason_after is not None:
+                self.after_cancel(self._reason_after)
+                self._reason_after = None
+            if self.reason_proc:
+                self.reason_proc.kill()
+                self.reason_proc = None
+            self.append("--- subagent reasoning stream stopped ---\n")
+        else:
+            self._reason_on = True
+            self.append("\n--- subagent reasoning (polling server threads) ---\n")
+            self._poll_reasoning()
+
+    def _poll_reasoning(self):
+        if not self._reason_on:
+            return
+        if not (self.reason_proc and self.reason_proc.is_running()):
+            self.reason_proc = Proc(ssh_script_argv(self.cfg["host"]), self.q,
+                                    stdin_data=self.cfg["reasoning_script"],
+                                    role="reasoning")
+            self.reason_proc.start()
+        self._reason_after = self.after(6000, self._poll_reasoning)
+
+    def _handle_reasoning(self, line: str):
+        line = line.strip()
+        if line.startswith("REASON_ERR"):
+            self.append("  [reason] " + line + "\n")
+            return
+        if not line.startswith("{"):
+            return
+        try:
+            m = json.loads(line)
+        except (ValueError, TypeError):
+            return
+        tid, i = m.get("tid"), m.get("i")
+        key = (tid, i)
+        if key in self._seen_msgs:
+            return
+        self._seen_msgs.add(key)
+        label = self.tid_label.get(tid)
+        if not label:
+            return  # a thread not launched in this session; skip
+        typ, text, tools = m.get("type"), m.get("text") or "", m.get("tools") or []
+        if typ == "ai":
+            if text:
+                self.append(f"  [{label}·🧠] {text}\n")
+            if tools:
+                self.append(f"  [{label}·🧠] → {', '.join(tools)}\n")
+        elif typ == "tool" and text:
+            self.append(f"  [{label}] ← {text[:200]}\n")
 
     def _on_event_line(self, line: str):
         """Parse one events.jsonl line (JSON) and dispatch it; ignore the rest."""
@@ -572,6 +685,13 @@ class ComponentTab(ttk.Frame):
         if self.health_proc:
             self.health_proc.kill()
             self.health_proc = None
+        self._reason_on = False
+        if self._reason_after is not None:
+            self.after_cancel(self._reason_after)
+            self._reason_after = None
+        if self.reason_proc:
+            self.reason_proc.kill()
+            self.reason_proc = None
 
     # -- reasoning-only filter --------------------------------------------- #
     # Boss output per turn:
@@ -604,6 +724,8 @@ class ComponentTab(ttk.Frame):
                 if kind == "line":
                     if role == "health":
                         self._handle_health(payload)
+                    elif role == "reasoning":
+                        self._handle_reasoning(payload)
                     elif role == "serverlog":
                         self.append("[srv] " + payload)
                     elif role == "events":
