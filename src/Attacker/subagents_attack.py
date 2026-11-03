@@ -8,10 +8,9 @@ lets subagents run asynchronously and finish on their own clocks.
 
 from deepagents import create_deep_agent
 
-from attools import sqlmap
-from attools import xsser
+from attools import sqlmap, ssti_scanner, xsser
 from llm import get_model
-from prompts import SQL_INJECTION_PROMPT, XSS_PROMPT
+from prompts import SQL_INJECTION_PROMPT, SSTI_PROMPT, XSS_PROMPT
 
 # Registered in langgraph.json as the "sql_injection_agent" graph.
 sql_injection_agent = create_deep_agent(
@@ -25,4 +24,10 @@ xss_agent = create_deep_agent(
     tools=[xsser],
     system_prompt=XSS_PROMPT,
     name="xss_agent",
+)
+ssti_agent = create_deep_agent(
+    model=get_model(),
+    tools=[ssti_scanner],
+    system_prompt=SSTI_PROMPT,
+    name="ssti_agent",
 )

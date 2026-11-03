@@ -142,3 +142,39 @@ async def xsser(payload: str, timeout: float = 1800.0) -> str:
         str(payload),  # one argv token (no shell), so payload is never parsed as flags
     ]
     return await run_logged_tool(cmd, target=f"{base_url}{injection_point}")
+
+
+@tool
+async def ssti_scanner(
+    payload: str,
+    endpoint: str = "/greet",
+    parameter: str = "name",
+    timeout: float = 30.0,
+) -> str:
+    """Test the configured target for Server-Side Template Injection using curl.
+
+    The target URL is fixed (config.Target_url) and cannot be chosen here, by
+    design. You decide which payload to inject and where to inject it.
+
+    Args:
+        payload: the SSTI payload to test.
+        endpoint: the endpoint to test (default: "/greet").
+        parameter: which parameter to inject the payload into.
+        timeout: request timeout in seconds.
+
+    Returns:
+        The HTTP response showing whether the template was evaluated.
+    """
+    base_url = Target_url.rstrip("/")
+    full_url = f"{base_url}{endpoint}"
+
+    cmd = [
+        "curl",
+        "-X", "POST",
+        "-d", f"{parameter}={payload}",
+        "--max-time", str(int(timeout)),
+        "-i",  # include HTTP headers in output
+        full_url,
+    ]
+
+    return await run_logged_tool(cmd, target=full_url)
