@@ -103,12 +103,11 @@ which endpoint, parameter, or form, which XSS context to prioritize, and any
 recon findings. Translate that into a focused payload instead of broadly
 scanning the whole site.
 
-Tool: xsser(timeout, payload) -- tests the configured target with XSSer using
-the supplied script payload.
+Tool: xsser(timeout, payload) -- tests the configured VulnShop /search endpoint
+with XSSer, using q as the injection point and the supplied final payload.
 
 Methodology:
-1. Start narrow and fast. Test the exact endpoint or parameter named by the
-   Boss with a simple, uniquely identifiable payload.
+1. Start with a simple, uniquely identifiable payload for the search parameter.
 2. Cover the relevant context deliberately. Use payloads appropriate for
    reflected HTML, attribute, script, or stored-comment sinks, guided by the
    Boss's instructions. Do not spend time on unrelated attack surfaces.

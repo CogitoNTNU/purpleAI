@@ -92,15 +92,15 @@ configuration, permissions, buffering, and retention.
 Set the same optional `PURPLEAI_ENGAGEMENT_ID` on the RedAI Boss,
 RedAI execution server, and in the gamehost k6 environment. Use a short
 identifier such as `lab-run-1` (letters, digits, underscores, and hyphens).
-RedAI attaches it to its events. sqlmap and k6 send it as
-`X-PurpleAI-Engagement`, which BlueAI records when valid.
+RedAI attaches it to its events. BlueAI records it from valid traffic tags.
 
-- sqlmap sends its execution's `tool_call_id` as `X-PurpleAI-Traffic`.
+- sqlmap and XSSer send their execution's `tool_call_id` as
+  `X-PurpleAI-Traffic`, followed by a space and the optional engagement ID.
   BlueAI records it on decisions and results with `traffic_source: redai`.
-  k6 sends `k6` in that header and BlueAI records `traffic_source: k6`.
+  k6 sends `k6` in that header and the optional ID in
+  `X-PurpleAI-Engagement`. BlueAI records `traffic_source: k6`.
   Missing or invalid tags leave the source unknown. These are self-reported
-  labels for controlled lab traffic. XSSer emits execution events without
-  propagating a request tag.
+  labels for controlled lab traffic.
 - BlueAI generates `X-PurpleAI-Request-ID` on forwarding. VulnShop's
   `objective_served` event carries that ID when it renders the admin
   page. This records page access, including legitimate admin access.

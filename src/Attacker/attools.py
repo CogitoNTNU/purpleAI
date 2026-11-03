@@ -117,7 +117,7 @@ async def sqlmap(
 
 @tool
 async def xsser(payload: str, timeout: float = 1800.0) -> str:
-    """Attack the configured target with cross-site scripting using XSSer.
+    """Test the configured VulnShop search endpoint for reflected XSS.
 
     The target URL is fixed (config.Target_url) and cannot be chosen here, by
     design. You decide only which payload (script) to inject.
@@ -129,12 +129,16 @@ async def xsser(payload: str, timeout: float = 1800.0) -> str:
     Returns:
         xsser's stdout (or stderr if stdout is empty).
     """
+    base_url = Target_url.rstrip("/")
+    injection_point = "/search?q=XSS"
     cmd = [
         "xsser",
         "-u",
-        Target_url,  # target is fixed, never agent-supplied
+        base_url,
+        "-g",
+        injection_point,
         f"--timeout={int(timeout)}",
         "--Fp",
         str(payload),  # one argv token (no shell), so payload is never parsed as flags
     ]
-    return await run_logged_tool(cmd, target=Target_url)
+    return await run_logged_tool(cmd, target=f"{base_url}{injection_point}")

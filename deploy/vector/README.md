@@ -135,8 +135,8 @@ Run an attacker task and send a request through the defender. On gamehost:
 tail -F /var/log/purpleai/collected/events-$(date -u +%F).jsonl
 ```
 
-Check for `attacker-agent` and `defender-agent` source values. Run sqlmap
-against BlueAI and look for the same `tool_call_id` on the tool event and
+Check for `attacker-agent` and `defender-agent` source values. Run sqlmap and
+XSSer against BlueAI and look for the same `tool_call_id` on the tool event and
 proxy decisions. Send a k6 request and look for `traffic_source: k6`.
 For an allowed request that serves the admin page, check that
 `objective_served` from `vulnshop` has the same `request_id` as the

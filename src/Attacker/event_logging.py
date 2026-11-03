@@ -130,12 +130,13 @@ async def run_logged_tool(cmd, *, target, timeout=1800):
             or arg in ("--forms", "--dump", "-D", "-T", "-C")
         ],
     }
-    if tool == "sqlmap":
-        headers = [f"X-PurpleAI-Traffic: {fields['tool_call_id']}"]
+    if tool in ("sqlmap", "xsser"):
+        # XSSer passes this argument to curl as a single header.
+        traffic = fields["tool_call_id"]
         engagement_id = lab_engagement_id(os.environ.get("PURPLEAI_ENGAGEMENT_ID"))
         if engagement_id:
-            headers.append(f"X-PurpleAI-Engagement: {engagement_id}")
-        cmd = [*cmd, "--headers=" + "\n".join(headers)]
+            traffic += f" {engagement_id}"
+        cmd = [*cmd, f"--headers=X-PurpleAI-Traffic: {traffic}"]
     started = monotonic()
     # File setup/writes must stay off the execution server's event loop.
     await asyncio.to_thread(log_event, "tool_call", status="started", **fields)
