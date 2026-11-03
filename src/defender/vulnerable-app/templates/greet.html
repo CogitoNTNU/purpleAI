@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Greeting Generator{% endblock %}
+{% block content %}
+<h1>Custom Greeting Generator</h1>
+<p>Generate a personalized greeting message!</p>
+
+<form method="post">
+    <label for="name">Enter your name:</label>
+    <input type="text" id="name" name="name" value="{{ user_input }}" placeholder="e.g., Alice">
+    <button type="submit">Generate Greeting</button>
+</form>
+
+{% if greeting %}
+<div class="card">
+    <h2>Your Greeting:</h2>
+    <!-- VULN: greeting contains the result of render_template_string, which evaluated user input as code -->
+    <p>{{ greeting|safe }}</p>
+</div>
+{% endif %}
+
+<div class="card" style="margin-top: 20px; background: #f0f0f0;">
+    <h3>Tips:</h3>
+    <p>Try entering just your name first, then experiment with special characters!</p>
+</div>
+{% endblock %}
