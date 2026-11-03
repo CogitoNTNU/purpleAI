@@ -7,11 +7,15 @@ Every request comes here first. We ask the Idun AI "is this SQL injection?".
 """
 
 import os
-from uuid import uuid4
+from time import monotonic
+from uuid import UUID, uuid4
+
 import requests
-from flask import Flask, request, Response
-from langchain_openai import ChatOpenAI
 from event_logging import log_event
+from flask import Flask, Response, request
+from langchain_openai import ChatOpenAI
+
+from purpleai_logging import lab_engagement_id
 
 TARGET = os.environ.get("TARGET", "http://backend:8000")  # the real backend
 
@@ -70,13 +74,32 @@ def proxy(path):
         "method": request.method,
         "path": request.path,
     }
+    traffic = request.headers.get("X-PurpleAI-Traffic")
+    if traffic == "k6":
+        event_fields["traffic_source"] = "k6"
+    elif traffic and len(traffic) == 36:
+        try:
+            tool_call_id = UUID(traffic)
+        except ValueError:
+            pass
+        else:
+            if tool_call_id.version == 4 and str(tool_call_id) == traffic:
+                event_fields.update(traffic_source="redai", tool_call_id=traffic)
+    event_fields["engagement_id"] = lab_engagement_id(
+        request.headers.get("X-PurpleAI-Engagement")
+    )
     # 1. SENSE: the whole request as text (method, URL, body)
     body = request.get_data(as_text=True)
     request_text = f"{request.method} {request.full_path}\n{body}"
 
-    # 2. DECIDE: ask every agent
+    # 2. DECIDE: stop at the first detection.
+    classifier = None
+    started = monotonic()
     try:
-        attack = any(agent(request_text) for agent in AGENTS)
+        for agent in AGENTS:
+            if agent(request_text):
+                classifier = getattr(agent, "__name__", type(agent).__name__)
+                break
     except Exception as e:
         # AI unreachable (VPN off, API down): block to be safe
         log_event(
@@ -84,24 +107,43 @@ def proxy(path):
             status="error",
             decision="block",
             error_type=type(e).__name__,
+            classifier=getattr(agent, "__name__", type(agent).__name__),
+            duration_ms=round((monotonic() - started) * 1000),
             **event_fields,
         )
         return Response("Blocked: defender could not check request\n", status=403)
 
     # 3. ACT: block or forward
-    if attack:
+    duration_ms = round((monotonic() - started) * 1000)
+    if classifier:
         log_event(
-            "request_decision", status="blocked", decision="block", **event_fields
+            "request_decision",
+            status="blocked",
+            decision="block",
+            classifier=classifier,
+            duration_ms=duration_ms,
+            **event_fields,
         )
         return Response("Blocked by defender agent\n", status=403)
 
-    log_event("request_decision", status="allowed", decision="allow", **event_fields)
+    log_event(
+        "request_decision",
+        status="allowed",
+        decision="allow",
+        duration_ms=duration_ms,
+        **event_fields,
+    )
 
     headers = {
-        k: v for k, v in request.headers if k.lower() not in ("host", "content-length")
+        k: v
+        for k, v in request.headers
+        if k.lower() not in ("host", "content-length", "x-purpleai-request-id")
     }
     headers["Host"] = "localhost"  # so Django accepts the forwarded request
 
+    headers["X-PurpleAI-Request-ID"] = event_fields["request_id"]
+
+    started = monotonic()
     try:
         upstream = requests.request(
             method=request.method,
@@ -116,6 +158,7 @@ def proxy(path):
             "request_result",
             status="error",
             error_type=type(exc).__name__,
+            duration_ms=round((monotonic() - started) * 1000),
             **event_fields,
         )
         raise
@@ -123,6 +166,7 @@ def proxy(path):
         "request_result",
         status="returned",
         http_status=upstream.status_code,
+        duration_ms=round((monotonic() - started) * 1000),
         **event_fields,
     )
     skip = {

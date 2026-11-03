@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
+from uuid import uuid4
 
 import pytest
 import requests
@@ -51,15 +52,26 @@ def test_decisions_and_results(defender, outcome):
     module.AGENTS = [agent]
     upstream = Mock(status_code=200, content=b"ok", headers={})
     upstream.raw.headers.getlist.return_value = []
+    tool_call_id = str(uuid4())
     with patch.object(module.requests, "request", return_value=upstream) as send:
         if outcome == "upstream_error":
             send.side_effect = requests.ConnectionError("secret upstream data")
         with redirect_stdout(io.StringIO()):
             response = module.app.test_client().post(
-                "/probe?token=secret-query", data="secret-body"
+                "/probe?token=secret-query",
+                data="secret-body",
+                headers={
+                    "X-PurpleAI-Traffic": tool_call_id,
+                    "X-PurpleAI-Engagement": "lab-run-1",
+                    "X-PurpleAI-Request-ID": "client-supplied",
+                },
             )
     events = [json.loads(line) for line in path.read_text().splitlines()]
     decision = events[0]
+    assert decision["tool_call_id"] == tool_call_id
+    assert decision["traffic_source"] == "redai"
+    assert decision["engagement_id"] == "lab-run-1"
+    assert decision["duration_ms"] >= 0
     assert decision["source"] == "defender-agent"
     assert decision["action"] == "request_decision"
     assert decision["status"] == (
@@ -76,6 +88,11 @@ def test_decisions_and_results(defender, outcome):
     else:
         assert response.status_code == (500 if outcome == "upstream_error" else 200)
         assert events[1]["request_id"] == decision["request_id"]
+        assert events[1]["tool_call_id"] == tool_call_id
+        assert (
+            send.call_args.kwargs["headers"]["X-PurpleAI-Request-ID"]
+            == decision["request_id"]
+        )
         assert events[1]["status"] == (
             "error" if outcome == "upstream_error" else "returned"
         )
