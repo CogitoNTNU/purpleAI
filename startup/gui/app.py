@@ -187,11 +187,17 @@ COMPONENTS = [
         "color": "#C0392B",
         "filterable": True,   # adds the "Reasoning only" checkbox (on by default)
         "show_flags": True,   # adds the "Flags captured" overview
+        # Three live panes side by side: Boss, SQL, Cross-site.
+        "panes": [
+            {"key": "boss", "title": "Boss"},
+            {"key": "sql", "title": "SQL  (sql_injection_agent)"},
+            {"key": "xss", "title": "Cross-site  (xss_agent)"},
+        ],
         # Subagents to show activity lights for; `tool` maps a tool event to its
-        # subagent (sqlmap -> SQLi, xsser -> XSS).
+        # subagent (sqlmap -> SQLi, xsser -> XSS); `pane` routes its output.
         "subagents": [
-            {"name": "sql_injection_agent", "label": "SQLi", "tool": "sqlmap"},
-            {"name": "xss_agent", "label": "XSS", "tool": "xsser"},
+            {"name": "sql_injection_agent", "label": "SQLi", "tool": "sqlmap", "pane": "sql"},
+            {"name": "xss_agent", "label": "XSS", "tool": "xsser", "pane": "xss"},
         ],
         # Structured event log (both Boss and subagent server append here).
         "events": f"mkdir -p {REPO}/src/Attacker/logs "
@@ -348,6 +354,13 @@ class ComponentTab(ttk.Frame):
         self._show_block = False  # filter state: are we inside a shown block?
         self.flags: set[str] = set()  # unique FLAG{...} seen on this box
         self.sub_tasks: dict = {}  # subagent name -> {task_id: status}
+        self.panes: dict = {}  # pane key -> ScrolledText (multi-pane mode)
+        # Route a subagent name / tool / label to its pane key.
+        self.pane_for: dict = {}
+        for sa in cfg.get("subagents", []):
+            if sa.get("pane"):
+                for k in (sa["name"], sa["tool"], sa["label"]):
+                    self.pane_for[k] = sa["pane"]
 
         bar = ttk.Frame(self)
         bar.pack(fill="x", pady=(0, 6))
@@ -420,10 +433,27 @@ class ComponentTab(ttk.Frame):
             ttk.Button(row, text="Clear", width=6,
                        command=self.clear_flags).pack(side="left", padx=(6, 0))
 
-        self.log = ScrolledText(self, height=18, bg="#0e0f12", fg="#d6d6d6",
-                                insertbackground="#d6d6d6", font=("Consolas", 10),
-                                wrap="none", state="disabled")
-        self.log.pack(fill="both", expand=True)
+        if cfg.get("panes"):
+            # Three live panes side by side (resizable).
+            pw = ttk.PanedWindow(self, orient="horizontal")
+            pw.pack(fill="both", expand=True)
+            for p in cfg["panes"]:
+                frame = ttk.LabelFrame(pw, text=p["title"])
+                txt = ScrolledText(frame, height=18, width=30, bg="#0e0f12",
+                                   fg="#d6d6d6", insertbackground="#d6d6d6",
+                                   font=("Consolas", 10), wrap="word",
+                                   state="disabled")
+                txt.pack(fill="both", expand=True)
+                pw.add(frame, weight=1)
+                self.panes[p["key"]] = txt
+            # Default target for undirected output is the first pane (Boss).
+            self.log = self.panes[cfg["panes"][0]["key"]]
+        else:
+            self.log = ScrolledText(self, height=18, bg="#0e0f12", fg="#d6d6d6",
+                                    insertbackground="#d6d6d6",
+                                    font=("Consolas", 10), wrap="none",
+                                    state="disabled")
+            self.log.pack(fill="both", expand=True)
 
         self.after(100, self._drain)
 
@@ -431,16 +461,20 @@ class ComponentTab(ttk.Frame):
     def set_dot(self, color: str):
         self._dot_canvas.itemconfig(self._dot, fill=color)
 
-    def append(self, text: str):
-        self.log.configure(state="normal")
-        self.log.insert("end", text)
-        self.log.see("end")
-        self.log.configure(state="disabled")
+    def append(self, text: str, pane: str = "boss"):
+        w = self.panes.get(pane) if self.panes else None
+        w = w or self.log
+        w.configure(state="normal")
+        w.insert("end", text)
+        w.see("end")
+        w.configure(state="disabled")
 
     def clear_log(self):
-        self.log.configure(state="normal")
-        self.log.delete("1.0", "end")
-        self.log.configure(state="disabled")
+        widgets = list(self.panes.values()) or [self.log]
+        for w in widgets:
+            w.configure(state="normal")
+            w.delete("1.0", "end")
+            w.configure(state="disabled")
 
     def clear_flags(self):
         if self.flags_list is None:
@@ -508,22 +542,24 @@ class ComponentTab(ttk.Frame):
                             f"{running} running / {queued} queued / {total} launched",
                             color=color)
             if is_new:
-                self.append(f"  [{self._label_for(sub)}] ➕ launched "
-                            f"(#{total}, task {str(tid)[:8]})\n")
+                self.append(f"  ➕ launched scan (#{total}, task {str(tid)[:8]})\n",
+                            pane=self.pane_for.get(sub, "boss"))
         elif action == "tool_call" and tool:
             opts = " ".join(ev.get("scan_options") or [])
             self._set_light(tool, True)  # blip on; subagent_status owns the text
-            self.append(f"  [{self._label_for(tool)}] ▶ {tool} {opts}".rstrip() + "\n")
+            self.append(f"  ▶ {tool} {opts}".rstrip() + "\n",
+                        pane=self.pane_for.get(tool, "boss"))
         elif action == "tool_result" and tool:
             st = ev.get("status") or "done"
             dur = ev.get("duration_ms")
             mark = "✓" if st == "completed" else "✗"
             tail = f" ({dur} ms)" if dur is not None else ""
-            self.append(f"  [{self._label_for(tool)}] {mark} {tool} {st}{tail}\n")
+            self.append(f"  {mark} {tool} {st}{tail}\n",
+                        pane=self.pane_for.get(tool, "boss"))
         elif action == "flag_captured":
             flag = ev.get("flag")
             self._add_flag(flag)
-            self.append(f"  [{self._label_for(tool) if tool else 'flag'}] 🚩 {flag}\n")
+            self.append(f"  🚩 {flag}\n", pane=self.pane_for.get(tool, "boss"))
 
     def _handle_health(self, line: str):
         """Parse a 'SERVER <code>' health line and colour the Server light."""
@@ -590,14 +626,15 @@ class ComponentTab(ttk.Frame):
         label = self.tid_label.get(tid)
         if not label:
             return  # a thread not launched in this session; skip
+        pane = self.pane_for.get(label, "boss")
         typ, text, tools = m.get("type"), m.get("text") or "", m.get("tools") or []
         if typ == "ai":
             if text:
-                self.append(f"  [{label}·🧠] {text}\n")
+                self.append(f"  🧠 {text}\n", pane=pane)
             if tools:
-                self.append(f"  [{label}·🧠] → {', '.join(tools)}\n")
+                self.append(f"  🧠 → {', '.join(tools)}\n", pane=pane)
         elif typ == "tool" and text:
-            self.append(f"  [{label}] ← {text[:200]}\n")
+            self.append(f"  ← {text[:200]}\n", pane=pane)
 
     def _on_event_line(self, line: str):
         """Parse one events.jsonl line (JSON) and dispatch it; ignore the rest."""
@@ -656,6 +693,10 @@ class ComponentTab(ttk.Frame):
             if "server" in self.lights:
                 self.lights["server"]["status"].set("checking…")
             self._poll_health()
+        # Auto-start subagent reasoning so Boss/SQL/XSS panes are all live.
+        if self.cfg.get("reasoning_script") and not self._reason_on:
+            self._reason_on = True
+            self._poll_reasoning()
 
     def toggle_server_log(self):
         """Start/stop streaming the subagent server's own log into the panel."""
@@ -778,8 +819,8 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("PurpleAI Control")
-        self.geometry("920x620")
-        self.minsize(720, 480)
+        self.geometry("1200x680")
+        self.minsize(760, 480)
 
         header = ttk.Frame(self, padding=(10, 8))
         header.pack(fill="x")
