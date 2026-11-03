@@ -3,6 +3,7 @@
 import asyncio
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -259,3 +260,16 @@ def test_normal_engagement_stop(logging, tmp_path):
 
     assert asyncio.run(run()) == "stopped by operator"
     assert events(tmp_path)[-1]["status"] == "stopped"
+
+
+def test_xsser_wrapper_supplies_search_injection_point(logging, monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / "src/Attacker"))
+    monkeypatch.setitem(sys.modules, "event_logging", logging)
+    from attools import xsser
+
+    run = AsyncMock(return_value="ok")
+    monkeypatch.setitem(xsser.coroutine.__globals__, "run_logged_tool", run)
+    monkeypatch.setitem(xsser.coroutine.__globals__, "Target_url", "http://lab/")
+    assert asyncio.run(xsser.ainvoke({"payload": "<script>alert(1)</script>"})) == "ok"
+    args = run.call_args.args[0]
+    assert args[:5] == ["xsser", "-u", "http://lab", "-g", "/search?q=XSS"]
