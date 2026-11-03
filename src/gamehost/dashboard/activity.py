@@ -20,6 +20,8 @@ def event_frame(events):
         "path",
         "request_id",
         "event_id",
+        "engagement_id",
+        "traffic_source",
     ]:
         if column not in frame:
             frame[column] = ""

@@ -15,10 +15,30 @@ def test_dashboard_counts_calls_errors_and_defender_blocks(tmp_path, monkeypatch
     monkeypatch.setattr(event_store, "EVENTS_DIR", tmp_path)
     records = [
         {"actor": "attacker", "action": "task_start", "status": "started"},
-        {"actor": "attacker", "action": "tool_call", "status": "started"},
-        {"actor": "attacker", "action": "tool_result", "status": "completed"},
-        {"actor": "attacker", "action": "tool_call", "status": "started"},
-        {"actor": "attacker", "action": "tool_result", "status": "timeout"},
+        {
+            "actor": "attacker",
+            "action": "tool_call",
+            "status": "started",
+            "tool_call_id": "one",
+        },
+        {
+            "actor": "attacker",
+            "action": "tool_result",
+            "status": "completed",
+            "tool_call_id": "one",
+        },
+        {
+            "actor": "attacker",
+            "action": "tool_call",
+            "status": "started",
+            "tool_call_id": "two",
+        },
+        {
+            "actor": "attacker",
+            "action": "tool_result",
+            "status": "timeout",
+            "tool_call_id": "two",
+        },
         {"actor": "attacker", "action": "subagent_status", "status": "success"},
         {"actor": "defender", "action": "request_decision", "status": "blocked"},
         {"actor": "defender", "action": "request_decision", "status": "allowed"},
@@ -36,9 +56,10 @@ def test_dashboard_counts_calls_errors_and_defender_blocks(tmp_path, monkeypatch
     app.selectbox[0].select("Latest hour of logs").run()
     assert not app.exception
     assert {metric.label: metric.value for metric in app.metric} == {
-        "Tool executions started": "2",
-        "Requests inspected": "2",
-        "Requests blocked": "1",
+        "Tool executions": "2",
+        "RedAI requests blocked": "0",
+        "k6 requests blocked": "0",
+        "Unlabelled requests blocked": "1",
         "Classifier errors": "0",
     }
 
@@ -56,6 +77,7 @@ def test_dashboard_empty_then_new_events_and_filters(tmp_path, monkeypatch):
             "action": "request_decision",
             "status": "blocked",
             "path": "/old",
+            "request_id": "old-request",
         },
         {
             "timestamp": "2026-10-27T12:00:00Z",
@@ -80,20 +102,13 @@ def test_dashboard_empty_then_new_events_and_filters(tmp_path, monkeypatch):
     app.selectbox[0].select("Latest hour of logs").run()
     assert not app.exception
     assert {metric.label: metric.value for metric in app.metric}[
-        "Requests inspected"
+        "Classifier errors"
     ] == "1"
     assert "invalid timestamps" in app.warning[0].value
-    app.selectbox[0].select("All logs").run()
+    assert app.dataframe[-1].value["path"].tolist() == ["/new"]
+    app.text_input[0].set_value("old-request").run()
     assert not app.exception
-    assert {metric.label: metric.value for metric in app.metric}[
-        "Requests inspected"
-    ] == "2"
-    next(radio for radio in app.radio if radio.label == "View").set_value(
-        "Event investigation"
-    ).run()
-    app.selectbox[1].select("attacker").run()
-    assert not app.exception
-    assert app.dataframe[-1].value.empty
+    assert app.dataframe[-1].value["path"].tolist() == ["/old"]
 
 
 def test_refresh_controls_keep_updates_optional(tmp_path, monkeypatch):
@@ -107,7 +122,5 @@ def test_refresh_controls_keep_updates_optional(tmp_path, monkeypatch):
     app.button[0].click().run()
     app.selectbox[0].select("Latest hour of logs").run()
     assert not app.exception
-    assert {metric.label: metric.value for metric in app.metric}[
-        "Requests inspected"
-    ] == "1"
+    assert app.dataframe[-1].value["event_id"].tolist() == ["one"]
     assert any("Live updates paused" in caption.value for caption in app.caption)
