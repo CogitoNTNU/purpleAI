@@ -22,53 +22,26 @@ with network access on its default port 8501. The theme is defined in
 to pause polling; **Refresh now** checks immediately. Time/view controls stay
 outside the timed fragment so background polls do not redraw them.
 
-## Activity views
+## Review a run
 
-- **Attack & defense timeline:** paired attacker tool executions alongside defender
-  decision markers on a shared UTC time axis. Defender markers show when
-  decisions were logged; counts are in the traffic chart. Click an execution bar or start
-  point to open its inspector. The latest 12 executions are plotted; all
-  executions with observed activity in the selected window remain in the selector.
-- **Latest actions:** the latest recorded action and age for each agent, globally
-  across the archive and explicitly dated even when reviewing history. These
-  describe observations, not process liveness.
-- **Defender traffic:** allowed, blocked, and classifier-error decisions per
-  interval, including zero-count intervals. Forwarded response events do not
-  count as additional requests. Boundary intervals can be partial; zero means
-  no recorded decisions, not confirmed service availability. Switch to
-  **Decision share** for a 100% view of the recorded decisions in each interval;
-  tooltips retain counts and empty intervals have no share.
-- **Endpoint activity:** a full-width grid of the 10 busiest recorded routes, broken down by decision.
-  Click a cell for the latest 100 events for that route in the current window.
-  Every cell shows an exact count, including zero. Double-click the chart to
-  clear the selection.
-- **Execution inspector:** tool, target, task/process IDs, duration, exit status,
-  and related events joined by task, tool call, and proxy request IDs. IDs and raw
-  related events are collapsed by default. Related events may
-  extend beyond the selected window; the latest 100 are displayed.
-- **Event investigation:** a separate view, rendered only when selected, showing the latest 500 events in the selected window, with
-  an actor filter. Streamlit tables provide CSV download and search.
+- **Time range and engagement** filter the summary and execution timeline.
+  Live windows follow the current clock. The history window ends at the
+  latest recorded event. Select **All engagements** to include older and
+  untagged events.
+- **Summary** counts tool executions with activity in the selected window
+  and blocked requests by recorded source (RedAI, k6, or unlabelled).
+  Classifier errors are counted separately from detections.
+- **Tool executions** shows the latest 12 executions in a UTC timeline.
+  Click a mark or choose an execution from the dropdown. The inspector shows
+  matching BlueAI decisions by `tool_call_id` and any VulnShop objective
+  events linked by `request_id`, even when those events fall outside the
+  selected window. Completion describes the tool process. A target event
+  records a specific observation such as VulnShop serving the admin page.
+- **Event search** shows recent events in the selection. Enter an exact
+  request, tool call, or event ID to search across the entire archive.
 
-The default **Live - last 15 minutes** window follows the current clock;
-**Live - last hour** provides a wider live view. History options cover the
-latest logged hour, latest logged 24 hours, or all dated logs, anchored to the
-latest event. Empty live windows stay empty instead of presenting old data as
-current activity. Invalid/missing timestamps are excluded from charts with a
-warning. Time buckets grow with the selected period to bound chart size.
-
-Tool calls are paired by `run_id` and `tool_call_id`. Recorded executions that
-cross the window boundary are clipped to its visible range. Missing IDs remain
-separate observations; result-only observations use recorded duration where
-available. Starts without end events are points, not continuous bars. Unmatched
-starts before the window are listed separately in a collapsed section and are
-not shown as ongoing scans. Boss delegation and subagent status events remain
-available in the inspector but do not count as actual tool executions.
-
-For tagged sqlmap and XSSer requests, the inspector shows matching BlueAI events
-and any VulnShop admin-page event joined through the proxy request ID.
-k6 traffic has a source label in Event investigation. Older events and
-untagged tools still appear in their usual views. The timeline groups
-observations by time. Only matching IDs link a tool execution to requests.
+The dashboard keeps older executions without correlation IDs available in
+the timeline. Starts without a result appear as points.
 
 ## Local preview
 
