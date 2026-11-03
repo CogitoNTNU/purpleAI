@@ -36,19 +36,43 @@ def live_data(directory):
 
 
 def render_summary(scope, runs):
+    st.subheader("Run summary")
     requests = decisions(scope)
-    blocked = requests[requests.status == "blocked"]
-    columns = st.columns(5)
-    columns[0].metric("Tool executions", len(runs))
-    columns[1].metric(
-        "RedAI requests blocked", int(blocked.traffic_source.eq("redai").sum())
+
+    def describe(source):
+        counts = requests.loc[requests.traffic_source.eq(source), "status"].value_counts()
+        if counts.empty:
+            return "No decisions recorded."
+        return (
+            f"{counts.sum():,} inspected · {counts.get('allowed', 0):,} allowed · "
+            f"{counts.get('blocked', 0):,} blocked · {counts.get('error', 0):,} classifier errors."
+        )
+
+    st.write(f"**Normal traffic (k6).** {describe('k6')}")
+    st.write(f"**RedAI.** {len(runs):,} tool executions. {describe('redai')}")
+
+    attacker = scope[scope.actor.eq("attacker")]
+    tasks = attacker[attacker.action.eq("subagent_status") & attacker.task_id.ne("")]
+    tool_tasks = attacker.loc[attacker.action.isin(["tool_call", "tool_result"]), "task_id"]
+    without_tool = tasks.loc[~tasks.task_id.isin(tool_tasks), "task_id"].nunique()
+    if without_tool:
+        st.caption(f"{without_tool:,} delegated tasks had no tool events in this window.")
+
+    objectives = scope.action.eq("objective_served").sum()
+    flag_reports = attacker.action.eq("flag_captured").sum()
+    st.write(
+        f"**Outcome evidence.** {objectives:,} target objective events and "
+        f"{flag_reports:,} attacker flag reports. Flag reports require verification."
     )
-    columns[2].metric("k6 requests blocked", int(blocked.traffic_source.eq("k6").sum()))
-    columns[3].metric(
-        "Unlabelled requests blocked",
-        int((~blocked.traffic_source.isin(["redai", "k6"])).sum()),
-    )
-    columns[4].metric("Classifier errors", int(requests.status.eq("error").sum()))
+
+    other = requests[~requests.traffic_source.isin(["redai", "k6"])]
+    if not other.empty:
+        blocked = other.status.eq("blocked").sum()
+        errors = other.status.eq("error").sum()
+        st.write(
+            f"**Unlabelled traffic.** {len(other):,} inspected · "
+            f"{blocked:,} blocked · {errors:,} classifier errors."
+        )
 
 
 def render_execution(runs, frame, start, end):

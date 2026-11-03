@@ -55,13 +55,11 @@ def test_dashboard_counts_calls_errors_and_defender_blocks(tmp_path, monkeypatch
     assert not app.exception
     app.selectbox[0].select("Latest hour of logs").run()
     assert not app.exception
-    assert {metric.label: metric.value for metric in app.metric} == {
-        "Tool executions": "2",
-        "RedAI requests blocked": "0",
-        "k6 requests blocked": "0",
-        "Unlabelled requests blocked": "1",
-        "Classifier errors": "0",
-    }
+    summary = [item.value for item in app.markdown]
+    assert "**RedAI.** 2 tool executions. No decisions recorded." in summary
+    assert "**Unlabelled traffic.** 2 inspected · 1 blocked · 0 classifier errors." in summary
+    assert any("0 target objective events and 0 attacker flag reports" in line for line in summary)
+
 
 
 def test_dashboard_empty_then_new_events_and_filters(tmp_path, monkeypatch):
@@ -101,9 +99,10 @@ def test_dashboard_empty_then_new_events_and_filters(tmp_path, monkeypatch):
     assert app.selectbox[0].value == "Live · last 15 minutes"
     app.selectbox[0].select("Latest hour of logs").run()
     assert not app.exception
-    assert {metric.label: metric.value for metric in app.metric}[
-        "Classifier errors"
-    ] == "1"
+    assert any(
+        "**Unlabelled traffic.** 1 inspected · 0 blocked · 1 classifier errors." == item.value
+        for item in app.markdown
+    )
     assert "invalid timestamps" in app.warning[0].value
     assert app.dataframe[-1].value["path"].tolist() == ["/new"]
     app.text_input[0].set_value("old-request").run()
