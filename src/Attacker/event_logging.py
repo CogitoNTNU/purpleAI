@@ -1,6 +1,7 @@
 """Attacker events and execution helpers; Vector handles delivery."""
 
 import asyncio
+import os
 import re
 import sys
 from contextlib import contextmanager
@@ -10,7 +11,7 @@ from time import monotonic
 from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from purpleai_logging import EventLogger
+from purpleai_logging import EventLogger, lab_engagement_id
 
 log_event = EventLogger(
     source="attacker-agent",
@@ -18,21 +19,20 @@ log_event = EventLogger(
     default_path=Path(__file__).resolve().parent / "logs/events.jsonl",
 ).log_event
 
-# finds FLAG{...} patterns and logs them 
-FLAG_PATTERN = re.compile(r'FLAG\{[^}]+\}')
+FLAG_PATTERN = re.compile(r"FLAG\{[^}\n]{1,200}\}")
 
-def scan_for_flags(output: str, tool: str, target: str):
+
+def scan_for_flags(output: str, **fields):
     """Scan tool output for flags and log them immediately."""
     if not output:
         return
 
     flags = FLAG_PATTERN.findall(output)
-    for flag in flags:
+    for flag in dict.fromkeys(flags):
         log_event(
             "flag_captured",
             flag=flag,
-            tool=tool,
-            target=target,
+            **fields,
         )
 
 
@@ -125,13 +125,18 @@ async def run_logged_tool(cmd, *, target, timeout=1800):
                     "--crawl=",
                     "--timeout=",
                     "--technique=",
-                    "--dbms=",
-                    "--sql-query=",
                 )
             )
             or arg in ("--forms", "--dump", "-D", "-T", "-C")
         ],
     }
+    if tool in ("sqlmap", "xsser"):
+        # XSSer passes this argument to curl as a single header.
+        traffic = fields["tool_call_id"]
+        engagement_id = lab_engagement_id(os.environ.get("PURPLEAI_ENGAGEMENT_ID"))
+        if engagement_id:
+            traffic += f" {engagement_id}"
+        cmd = [*cmd, f"--headers=X-PurpleAI-Traffic: {traffic}"]
     started = monotonic()
     # File setup/writes must stay off the execution server's event loop.
     await asyncio.to_thread(log_event, "tool_call", status="started", **fields)
@@ -145,7 +150,7 @@ async def run_logged_tool(cmd, *, target, timeout=1800):
         out, err = stdout.decode(errors="replace"), stderr.decode(errors="replace")
 
         # Scan output for flags after the agents are running, and logs them immediately
-        await asyncio.to_thread(scan_for_flags, out or err, tool, target)
+        await asyncio.to_thread(scan_for_flags, out or err, **fields)
 
         if proc.returncode != 0:
             message = err or out or f"process exited with status {proc.returncode}"

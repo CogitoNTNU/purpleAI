@@ -43,7 +43,7 @@ outside the timed fragment so background polls do not redraw them.
   Every cell shows an exact count, including zero. Double-click the chart to
   clear the selection.
 - **Execution inspector:** tool, target, task/process IDs, duration, exit status,
-  and related attacker events joined by exact task/tool IDs. IDs and raw
+  and related events joined by task, tool call, and proxy request IDs. IDs and raw
   related events are collapsed by default. Related events may
   extend beyond the selected window; the latest 100 are displayed.
 - **Event investigation:** a separate view, rendered only when selected, showing the latest 500 events in the selected window, with
@@ -64,11 +64,11 @@ starts before the window are listed separately in a collapsed section and are
 not shown as ongoing scans. Boss delegation and subagent status events remain
 available in the inspector but do not count as actual tool executions.
 
-Shared timing does not establish an attack/request relationship. A completed
-tool, successful subagent task, allowed request, or defender block is not a
-verified attack outcome. Classifier errors block requests but are distinct
-from detections. Engagement IDs, cross-agent request correlation, labelled
-traffic, and independently verified objective events remain future work.
+For tagged sqlmap and XSSer requests, the inspector shows matching BlueAI events
+and any VulnShop admin-page event joined through the proxy request ID.
+k6 traffic has a source label in Event investigation. Older events and
+untagged tools still appear in their usual views. The timeline groups
+observations by time. Only matching IDs link a tool execution to requests.
 
 ## Local preview
 

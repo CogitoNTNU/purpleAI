@@ -30,8 +30,9 @@ def events(tmp_path):
     ]
 
 
+@pytest.mark.parametrize("tool", ["sqlmap", "xsser"])
 @pytest.mark.parametrize("exit_code", [0, 2])
-def test_tool_result_and_effective_options(logging, monkeypatch, tmp_path, exit_code):
+def test_tool_result_and_effective_options(logging, monkeypatch, tmp_path, exit_code, tool):
     proc = SimpleNamespace(
         returncode=exit_code,
         communicate=AsyncMock(return_value=(b"private tool output", b"")),
@@ -39,6 +40,7 @@ def test_tool_result_and_effective_options(logging, monkeypatch, tmp_path, exit_
     monkeypatch.setattr(
         logging.asyncio, "create_subprocess_exec", AsyncMock(return_value=proc)
     )
+    monkeypatch.setenv("PURPLEAI_ENGAGEMENT_ID", "lab-run-1")
     result = asyncio.run(
         logging.run_logged_tool(
             [
@@ -55,6 +57,10 @@ def test_tool_result_and_effective_options(logging, monkeypatch, tmp_path, exit_
     )
     start, end = events(tmp_path)
     assert start["tool_call_id"] == end["tool_call_id"]
+    assert start["engagement_id"] == end["engagement_id"] == "lab-run-1"
+    assert logging.asyncio.create_subprocess_exec.call_args.args[-1] == (
+        f"--headers=X-PurpleAI-Traffic: {start['tool_call_id']} lab-run-1"
+    )
     assert start["scan_options"] == ["--level=2", "--risk=1", "--forms"]
     assert end["status"] == ("completed" if exit_code == 0 else "error")
     assert end["exit_code"] == exit_code
