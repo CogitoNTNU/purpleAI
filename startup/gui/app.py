@@ -105,11 +105,17 @@ if [ ! -x "$ATT/.venv/bin/langgraph" ]; then
 fi
 
 : > "$LOG"
+START_DELAY="${PURPLE_ATTACKER_DELAY:-10}"
 tmux new-session -d -s "$SESSION" -c "$ATT"
 tmux pipe-pane -o -t "$SESSION" "cat >> '$LOG'"
+# 1) Start the subagent server (langgraph dev) in the background, own log.
 tmux send-keys -t "$SESSION" ".venv/bin/langgraph dev > '$LOGDIR/langgraph.log' 2>&1 &" C-m
-tmux send-keys -t "$SESSION" "echo 'waiting for subagent server on :2024...'; until curl -s http://localhost:2024/ok >/dev/null 2>&1 || curl -s http://localhost:2024/ >/dev/null 2>&1; do sleep 1; done; echo 'server up; starting Boss'; .venv/bin/python redagent.py" C-m
-echo "[attacker] started (detached). Logs -> $LOG"
+# 2) Give it time to boot (and you a chance to open the Server log) before Boss.
+tmux send-keys -t "$SESSION" "echo 'subagent server starting on :2024 (log: $LOGDIR/langgraph.log)'; echo 'open the Server log to watch it; Boss starts in ${START_DELAY}s...'; sleep ${START_DELAY}" C-m
+# 3) Then wait (bounded, ~60s) until it actually answers before starting Boss.
+tmux send-keys -t "$SESSION" "n=0; until curl -s http://localhost:2024/ok >/dev/null 2>&1 || curl -s http://localhost:2024/ >/dev/null 2>&1; do n=\$((n+1)); [ \$n -ge 30 ] && break; sleep 2; done" C-m
+tmux send-keys -t "$SESSION" "if curl -s http://localhost:2024/ok >/dev/null 2>&1 || curl -s http://localhost:2024/ >/dev/null 2>&1; then echo 'server up; starting Boss'; else echo 'WARNING: server not responding on :2024 - check the Server log'; fi; .venv/bin/python redagent.py" C-m
+echo "[attacker] started (detached). Server booting; Boss starts after ${START_DELAY}s. Logs -> $LOG"
 """
 
 ATTACKER_STOP_SH = r"""
@@ -140,6 +146,10 @@ COMPONENTS = [
         "events": f"mkdir -p {REPO}/src/Attacker/logs "
                   f"&& touch {REPO}/src/Attacker/logs/events.jsonl "
                   f"&& tail -n 200 -F {REPO}/src/Attacker/logs/events.jsonl",
+        # The subagent server's own stdout/stderr (why it did/didn't start).
+        "server_logs": f"mkdir -p {REPO}/startup/logs "
+                       f"&& touch {REPO}/startup/logs/langgraph.log "
+                       f"&& tail -n 200 -F {REPO}/startup/logs/langgraph.log",
         # One-shot health probe of the subagent server (langgraph dev :2024),
         # polled on a timer. Prints "SERVER <http_code>" (000 = unreachable).
         "health": (
@@ -268,6 +278,7 @@ class ComponentTab(ttk.Frame):
         self.q: "queue.Queue[tuple]" = queue.Queue()
         self.log_proc: Proc | None = None   # the long-lived `logs -f` stream
         self.events_proc: Proc | None = None  # the events.jsonl stream (attacker)
+        self.serverlog_proc: Proc | None = None  # langgraph server log stream
         self.health_proc: Proc | None = None  # one-shot server health probe
         self._health_after = None             # pending health-poll timer id
         self.action_proc: Proc | None = None  # one-shot start/stop/status
@@ -292,6 +303,9 @@ class ComponentTab(ttk.Frame):
         ttk.Button(bar, text="▶ Start", command=self.on_start).pack(side="left", padx=2)
         ttk.Button(bar, text="■ Stop", command=self.on_stop).pack(side="left", padx=2)
         ttk.Button(bar, text="📜 View logs", command=self.start_logs).pack(side="left", padx=2)
+        if cfg.get("server_logs"):
+            ttk.Button(bar, text="📄 Server log",
+                       command=self.toggle_server_log).pack(side="left", padx=2)
         ttk.Button(bar, text="⟳ Status", command=self.on_status).pack(side="left", padx=2)
         ttk.Button(bar, text="Clear", command=self.clear_log).pack(side="left", padx=2)
         if cfg.get("filterable"):
@@ -505,6 +519,18 @@ class ComponentTab(ttk.Frame):
                 self.lights["server"]["status"].set("checking…")
             self._poll_health()
 
+    def toggle_server_log(self):
+        """Start/stop streaming the subagent server's own log into the panel."""
+        if self.serverlog_proc and self.serverlog_proc.is_running():
+            self.serverlog_proc.kill()
+            self.serverlog_proc = None
+            self.append("--- server log stream stopped ---\n")
+            return
+        self.append("\n--- streaming SERVER log (langgraph dev) ---\n")
+        self.serverlog_proc = Proc(ssh_inline_argv(self.cfg["host"], self.cfg["server_logs"]),
+                                   self.q, role="serverlog")
+        self.serverlog_proc.start()
+
     def stop_logs(self):
         if self.log_proc:
             self.log_proc.kill()
@@ -512,6 +538,9 @@ class ComponentTab(ttk.Frame):
         if self.events_proc:
             self.events_proc.kill()
             self.events_proc = None
+        if self.serverlog_proc:
+            self.serverlog_proc.kill()
+            self.serverlog_proc = None
         if self._health_after is not None:
             self.after_cancel(self._health_after)
             self._health_after = None
@@ -550,6 +579,8 @@ class ComponentTab(ttk.Frame):
                 if kind == "line":
                     if role == "health":
                         self._handle_health(payload)
+                    elif role == "serverlog":
+                        self.append("[srv] " + payload)
                     elif role == "events":
                         self._on_event_line(payload)
                     elif role == "logs":
