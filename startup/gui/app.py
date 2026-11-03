@@ -140,6 +140,16 @@ COMPONENTS = [
         "events": f"mkdir -p {REPO}/src/Attacker/logs "
                   f"&& touch {REPO}/src/Attacker/logs/events.jsonl "
                   f"&& tail -n 200 -F {REPO}/src/Attacker/logs/events.jsonl",
+        # One-shot health probe of the subagent server (langgraph dev :2024),
+        # polled on a timer. Prints "SERVER <http_code>" (000 = unreachable).
+        "health": (
+            'c=$(curl -s -o /dev/null -w "%{http_code}" --max-time 4 '
+            "http://localhost:2024/ok 2>/dev/null); "
+            'if [ -z "$c" ] || [ "$c" = "000" ]; then '
+            'c=$(curl -s -o /dev/null -w "%{http_code}" --max-time 4 '
+            "http://localhost:2024/ 2>/dev/null); fi; "
+            'echo "SERVER $c"'
+        ),
         "start": {"script": ATTACKER_START_SH, "desc": "pull main + start Boss/server in tmux"},
         "stop":  {"script": ATTACKER_STOP_SH, "desc": "stop attacker (kill tmux + procs)"},
         "logs":  f"mkdir -p {REPO}/startup/logs && touch {REPO}/startup/logs/attacker.log "
@@ -258,6 +268,8 @@ class ComponentTab(ttk.Frame):
         self.q: "queue.Queue[tuple]" = queue.Queue()
         self.log_proc: Proc | None = None   # the long-lived `logs -f` stream
         self.events_proc: Proc | None = None  # the events.jsonl stream (attacker)
+        self.health_proc: Proc | None = None  # one-shot server health probe
+        self._health_after = None             # pending health-poll timer id
         self.action_proc: Proc | None = None  # one-shot start/stop/status
         self.lights: dict = {}  # subagent name AND tool -> light entry
         # "Reasoning only" filter (attacker): show iteration headers + the
@@ -293,6 +305,17 @@ class ComponentTab(ttk.Frame):
             sframe.pack(fill="x", pady=(0, 6))
             inner = ttk.Frame(sframe)
             inner.pack(fill="x", padx=6, pady=4)
+            if cfg.get("health"):
+                cell = ttk.Frame(inner)
+                cell.pack(side="left", padx=(0, 20))
+                c = tk.Canvas(cell, width=14, height=14, highlightthickness=0)
+                c.pack(side="left", padx=(0, 6))
+                oval = c.create_oval(2, 2, 12, 12, fill="#555", outline="")
+                ttk.Label(cell, text="Server", width=6).pack(side="left")
+                sv = tk.StringVar(value="?")
+                ttk.Label(cell, textvariable=sv, width=14).pack(side="left")
+                self.lights["server"] = {"canvas": c, "oval": oval,
+                                         "status": sv, "label": "Server"}
             for sa in cfg["subagents"]:
                 cell = ttk.Frame(inner)
                 cell.pack(side="left", padx=(0, 20))
@@ -404,6 +427,26 @@ class ComponentTab(ttk.Frame):
             self._add_flag(flag)
             self.append(f"  [{self._label_for(tool) if tool else 'flag'}] 🚩 {flag}\n")
 
+    def _handle_health(self, line: str):
+        """Parse a 'SERVER <code>' health line and colour the Server light."""
+        entry = self.lights.get("server")
+        if not entry or "SERVER" not in line:
+            return
+        code = line.split("SERVER", 1)[1].strip() or "000"
+        up = code not in ("", "000")
+        entry["canvas"].itemconfig(entry["oval"], fill="#2ECC71" if up else "#E74C3C")
+        entry["status"].set(f"connected ({code})" if up else "down (:2024)")
+
+    def _poll_health(self):
+        """Fire a one-shot health probe, then reschedule while streaming."""
+        if not self.cfg.get("health"):
+            return
+        if not (self.health_proc and self.health_proc.is_running()):
+            self.health_proc = Proc(ssh_inline_argv(self.cfg["host"], self.cfg["health"]),
+                                    self.q, role="health")
+            self.health_proc.start()
+        self._health_after = self.after(8000, self._poll_health)
+
     def _on_event_line(self, line: str):
         """Parse one events.jsonl line (JSON) and dispatch it; ignore the rest."""
         line = line.strip()
@@ -457,6 +500,10 @@ class ComponentTab(ttk.Frame):
             self.events_proc = Proc(ssh_inline_argv(self.cfg["host"], self.cfg["events"]),
                                     self.q, role="events")
             self.events_proc.start()
+        if self.cfg.get("health"):
+            if "server" in self.lights:
+                self.lights["server"]["status"].set("checking…")
+            self._poll_health()
 
     def stop_logs(self):
         if self.log_proc:
@@ -465,6 +512,12 @@ class ComponentTab(ttk.Frame):
         if self.events_proc:
             self.events_proc.kill()
             self.events_proc = None
+        if self._health_after is not None:
+            self.after_cancel(self._health_after)
+            self._health_after = None
+        if self.health_proc:
+            self.health_proc.kill()
+            self.health_proc = None
 
     # -- reasoning-only filter --------------------------------------------- #
     # Boss output per turn:
@@ -495,7 +548,9 @@ class ComponentTab(ttk.Frame):
             while True:
                 kind, role, payload = self.q.get_nowait()
                 if kind == "line":
-                    if role == "events":
+                    if role == "health":
+                        self._handle_health(payload)
+                    elif role == "events":
                         self._on_event_line(payload)
                     elif role == "logs":
                         self._harvest_flags(payload)  # scan all log lines
