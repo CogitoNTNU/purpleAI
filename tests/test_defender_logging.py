@@ -61,8 +61,7 @@ def test_decisions_and_results(defender, outcome):
                 "/probe?token=secret-query",
                 data="secret-body",
                 headers={
-                    "X-PurpleAI-Traffic": tool_call_id,
-                    "X-PurpleAI-Engagement": "lab-run-1",
+                    "X-PurpleAI-Traffic": f"{tool_call_id} lab-run-1",
                     "X-PurpleAI-Request-ID": "client-supplied",
                 },
             )

@@ -74,10 +74,13 @@ def proxy(path):
         "method": request.method,
         "path": request.path,
     }
-    traffic = request.headers.get("X-PurpleAI-Traffic")
+    traffic, _, attack_engagement = request.headers.get(
+        "X-PurpleAI-Traffic", ""
+    ).partition(" ")
+    engagement = request.headers.get("X-PurpleAI-Engagement")
     if traffic == "k6":
         event_fields["traffic_source"] = "k6"
-    elif traffic and len(traffic) == 36:
+    elif len(traffic) == 36:
         try:
             tool_call_id = UUID(traffic)
         except ValueError:
@@ -85,9 +88,8 @@ def proxy(path):
         else:
             if tool_call_id.version == 4 and str(tool_call_id) == traffic:
                 event_fields.update(traffic_source="redai", tool_call_id=traffic)
-    event_fields["engagement_id"] = lab_engagement_id(
-        request.headers.get("X-PurpleAI-Engagement")
-    )
+                engagement = attack_engagement or engagement
+    event_fields["engagement_id"] = lab_engagement_id(engagement)
     # 1. SENSE: the whole request as text (method, URL, body)
     body = request.get_data(as_text=True)
     request_text = f"{request.method} {request.full_path}\n{body}"

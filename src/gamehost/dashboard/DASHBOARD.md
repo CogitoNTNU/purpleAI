@@ -64,7 +64,7 @@ starts before the window are listed separately in a collapsed section and are
 not shown as ongoing scans. Boss delegation and subagent status events remain
 available in the inspector but do not count as actual tool executions.
 
-For tagged sqlmap requests, the inspector shows matching BlueAI events
+For tagged sqlmap and XSSer requests, the inspector shows matching BlueAI events
 and any VulnShop admin-page event joined through the proxy request ID.
 k6 traffic has a source label in Event investigation. Older events and
 untagged tools still appear in their usual views. The timeline groups
