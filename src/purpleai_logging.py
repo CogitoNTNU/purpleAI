@@ -3,12 +3,20 @@
 import json
 import logging
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from logging.handlers import WatchedFileHandler
 from pathlib import Path
 from threading import Lock
 from uuid import uuid4
+
+
+def lab_engagement_id(value):
+    """Accept only short lab identifiers, never arbitrary header content."""
+    if value and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value):
+        return value
+    return None
 
 
 class EventLogger:
@@ -46,6 +54,9 @@ class EventLogger:
             "actor": self.actor,
             "action": action,
         }
+        engagement_id = lab_engagement_id(os.environ.get("PURPLEAI_ENGAGEMENT_ID"))
+        if engagement_id:
+            event.setdefault("engagement_id", engagement_id)
         payload = json.dumps(event, ensure_ascii=False)
         print(payload, flush=True)
         try:

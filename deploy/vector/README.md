@@ -15,6 +15,7 @@ also printed to stdout. Agent code calls `log_event("action", **fields)`.
 | Component | Configuration adapter | Default host log file |
 | --- | --- | --- |
 | Attacker | `src/Attacker/event_logging.py` | `src/Attacker/logs/events.jsonl` |
+| VulnShop in full Compose | Shared logger enabled by the Compose environment | `src/defender/logs/vulnshop.jsonl` |
 | Defender in Compose | `src/defender/defender-agent/event_logging.py` | `src/defender/logs/events.jsonl` |
 
 Paths in this table are relative to the repository root. Running the
@@ -71,7 +72,9 @@ sudo cp deploy/vector/agent.yaml /etc/vector/vector.yaml
 
 Edit `/etc/vector/vector.yaml` for that host:
 
-- Sender `include`: absolute host path from the application-files table.
+- Sender `include`: absolute host paths from the application-files table.
+  On BlueAI with full Compose, include both `events.jsonl` and
+  `vulnshop.jsonl` in the mounted logs directory.
 - Sender `address`: `http://GAMEHOST_IP:6000`.
 - Receiver `address`: gamehost's listening IP and port, or `0.0.0.0:6000`.
 
@@ -132,7 +135,15 @@ Run an attacker task and send a request through the defender. On gamehost:
 tail -F /var/log/purpleai/collected/events-$(date -u +%F).jsonl
 ```
 
-Check for `attacker-agent` and `defender-agent` source values. Service diagnostics:
+Check for `attacker-agent` and `defender-agent` source values. Run sqlmap and
+XSSer against BlueAI and look for the same `tool_call_id` on the tool event and
+proxy decisions. Send a k6 request and look for `traffic_source: k6`.
+For an allowed request that serves the admin page, check that
+`objective_served` from `vulnshop` has the same `request_id` as the
+proxy events. Compare each event's `event_id` with its local file and
+find it in the dashboard's Event investigation view.
+
+Service diagnostics:
 
 ```bash
 sudo journalctl -u vector -n 40 --no-pager

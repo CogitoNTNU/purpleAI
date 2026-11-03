@@ -97,6 +97,20 @@ def render_inspector(runs, frame, picked):
             (frame.actor == "attacker")
             & ((frame.task_id == item.task_id) | frame.index.isin(item.event_indices))
         ]
+    if item.tool_call_id:
+        requests = frame[
+            (frame.actor == "defender") & (frame.tool_call_id == item.tool_call_id)
+        ]
+        objectives = frame[
+            (frame.action == "objective_served")
+            & frame.request_id.isin(requests.request_id[requests.request_id != ""])
+        ]
+        flags = frame[
+            (frame.action == "flag_captured")
+            & (frame.tool_call_id == item.tool_call_id)
+        ]
+        related_indices = related.index.union(requests.index).union(objectives.index)
+        related = frame.loc[related_indices.union(flags.index)]
     with st.expander("Task IDs and related events"):
         st.json(
             {
@@ -108,7 +122,7 @@ def render_inspector(runs, frame, picked):
             }
         )
         st.caption(
-            "Joined by exact task/tool IDs. Related events can extend beyond this time window; latest 100 shown."
+            "Joined by task, tool call, and proxy request IDs. Related events can extend beyond this time window; latest 100 shown."
         )
         st.dataframe(related.drop(columns="time").tail(100), hide_index=True)
 

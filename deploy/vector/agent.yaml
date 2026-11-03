@@ -6,6 +6,7 @@ sources:
     type: file
     include:
       - /var/log/purpleai/events.jsonl
+      - /var/log/purpleai/vulnshop.jsonl
     read_from: beginning
 
 transforms:
