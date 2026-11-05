@@ -16,6 +16,7 @@ import os
 import sqlite3
 import subprocess
 from pathlib import Path
+from lxml import etree
 
 from flask import (
     Flask,
@@ -39,6 +40,7 @@ app = Flask(__name__)
 app.secret_key = "supersecret123"  # (VULN: svak, hardkodet secret key)
 app.config['SSTI_FLAG'] = "FLAG{server_side_template_injection}"  # (VULN: flag discoverable via SSTI)
 
+# XXE_FLAG: FLAG{xxe}  (VULN: flag discoverable by reading this file via XXE)
 
 # The full lab Compose stack mounts the shared logger and enables this file.
 if os.environ.get("PURPLEAI_LOG_FILE"):
@@ -374,6 +376,42 @@ def greet():
         greeting = render_template_string(template)
 
     return render_template("greet.html", greeting=greeting, user_input=user_input)
+
+
+@app.route("/api/process_order", methods=["GET", "POST"])
+def process_order():
+    # VULN: XXE (XML External Entity Injection)
+    # The XML parser is configured to resolve external entities, allowing attackers
+    # to read local files, perform SSRF, or cause DoS.
+    # Example payload to read files:
+    # <?xml version="1.0"?>
+    # <!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///path/to/file">]>
+    # <order><item>&xxe;</item></order>
+
+    result = None
+    error = None
+    xml_input = ""
+
+    if request.method == "POST":
+        xml_input = request.form.get("xml", "") or request.data.decode('utf-8')
+
+        if xml_input:
+            try:
+                # DANGEROUS: Parser allows external entities
+                parser = etree.XMLParser(resolve_entities=True, no_network=False)
+                root = etree.fromstring(xml_input.encode('utf-8'), parser)
+
+                # Extract order details
+                items = []
+                for item in root.findall('.//item'):
+                    items.append(item.text or "")
+
+                result = "Order processed successfully! Items: " + ", ".join(items)
+
+            except Exception as e:
+                error = f"XML parsing error: {str(e)}"
+
+    return render_template("process_order.html", result=result, error=error, xml_input=xml_input)
 
 
 @app.route("/robots.txt")

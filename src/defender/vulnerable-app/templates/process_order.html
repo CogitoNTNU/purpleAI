@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}XML Order Processing{% endblock %}
+{% block content %}
+<h1>XML Order Processing (API)</h1>
+<p>Submit your order in XML format. Example:</p>
+<pre>&lt;?xml version="1.0"?&gt;
+&lt;order&gt;
+  &lt;item&gt;Eplejuice&lt;/item&gt;
+  &lt;item&gt;Appelsinjuice&lt;/item&gt;
+&lt;/order&gt;</pre>
+
+<form method="POST">
+    <textarea name="xml" rows="10" cols="60" placeholder="Enter XML here...">{{ xml_input }}</textarea><br>
+    <button type="submit">Process Order</button>
+</form>
+
+{% if result %}
+<div style="margin-top: 20px; padding: 10px; background-color: #d4edda; border: 1px solid #c3e6cb; color: #155724;">
+    <strong>Success:</strong> {{ result }}
+</div>
+{% endif %}
+
+{% if error %}
+<div style="margin-top: 20px; padding: 10px; background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24;">
+    <strong>Error:</strong> {{ error }}
+</div>
+{% endif %}
+
+<p style="margin-top: 20px;"><a href="{{ url_for('index') }}">Tilbake til butikken</a></p>
+{% endblock %}
