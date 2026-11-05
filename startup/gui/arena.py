@@ -1,19 +1,20 @@
-"""Siege — a pixel-art castle-defence view for the PurpleAI control panel.
+"""Siege — a top-down pixel map where red commanders besiege a walled town.
 
-The defender is a castle; each planted flag is a structure (gate / wall / tower
-/ keep). The red attacker agents (SQL / XSS / SSTI, led by the Boss) besiege it,
-speaking their live reasoning in bubbles. When an agent captures a flag through
-its own vulnerability, the matching structure crumbles and the castle loses a
-piece; capture them all and the castle falls. The defender fights back: every
-blocked request fires a volley that knocks an attacker down.
+The defender is a walled town (grass, river, stone walls, red-roofed towers and
+houses). Each planted flag is a building inside. The attacker agents are
+**commanders** out on the field; while running they **send out little soldiers**
+that march on the gate. When an agent captures a flag through its own
+vulnerability the matching building burns down; take them all and the town is
+overrun. The defender fights back: a blocked request cuts soldiers down.
 
-The scene is driven entirely by calls from the control panel:
+Public API (called by the control panel):
     set_state(agent, "running"|"queued"|"idle")
-    say(agent, text)          # show reasoning in that agent's bubble
-    capture(flag)             # a flag was scored -> crumble its structure
-    leak(agent)               # a near miss (leaked, not scored)
-    block()                   # defender blocked an attack (blue point)
-    reset()                   # new engagement
+    say(agent, text)      # reasoning bubble over the commander
+    capture(flag)         # scored -> building burns
+    leak(agent)           # a soldier bounces off (not scored)
+    block()               # defender kills soldiers (blue point)
+    reset()               # new engagement
+    set_scores(red, blue)
 
 `agent` is one of: "boss", "sql", "xss", "ssti".
 """
@@ -25,131 +26,49 @@ import time
 import tkinter as tk
 from tkinter import ttk
 
-# --------------------------------------------------------------------------- #
-# Pixel sprites                                                               #
-# --------------------------------------------------------------------------- #
-# Hooded attacker. C=cloak, S=skin, E=eye, B=body, K=boots, W=weapon.
-_ATK_IDLE = [
-    "..CCCC..",
-    ".CCCCCC.",
-    ".CSSSSC.",
-    ".CSEESC.",
-    ".CSSSSC.",
-    ".CCCCCC.",
-    "..CBBC..",
-    ".CBBBBC.",
-    "CBBBBBBC",
-    ".BB..BB.",
-    ".BB..BB.",
-    ".KK..KK.",
-]
-_ATK_SWING = [
-    "..CCCC.W",
-    ".CCCCCCW",
-    ".CSSSSCW",
-    ".CSEESC.",
-    ".CSSSSC.",
-    ".CCCCCC.",
-    "..CBBC..",
-    ".CBBBBC.",
-    "CBBBBBBC",
-    ".BB..BB.",
-    ".BB..BB.",
-    ".KK..KK.",
-]
-# Boss has a crown (Y) and a cape.
-_BOSS_IDLE = [
-    ".Y.YY.Y.",
-    ".YYYYYY.",
-    "..CCCC..",
-    ".CSSSSC.",
-    ".CSEESC.",
-    ".CSSSSC.",
-    ".CCCCCC.",
-    ".CBBBBC.",
-    "CBBBBBBC",
-    ".BB..BB.",
-    ".BB..BB.",
-    ".KK..KK.",
-]
-
-
-def _palette(cloak, body, extra=None):
-    p = {
-        "C": cloak, "B": body, "S": "#e8c9a0", "E": "#0d1117",
-        "K": "#30363d", "W": "#c9d1d9", "Y": "#ffd33d",
-    }
-    if extra:
-        p.update(extra)
-    return p
-
-
-def _make_sprite(pixmap, palette, scale):
-    h = len(pixmap)
-    w = max(len(r) for r in pixmap)
-    img = tk.PhotoImage(width=w * scale, height=h * scale)
-    for y, row in enumerate(pixmap):
-        for x, ch in enumerate(row):
-            col = palette.get(ch)
-            if not col:
-                continue
-            x0, y0 = x * scale, y * scale
-            img.put(col, to=(x0, y0, x0 + scale, y0 + scale))
-    return img
-
-
-# Which castle structure each flag maps to, in draw order.
-_FLAG_STRUCT = {
-    "FLAG{sql_login_bypass_success}": "gate",
-    "FLAG{sql_union_injection_found}": "wall_l",
-    "FLAG{reflected_xss}": "tower_l",
-    "FLAG{stored_xss_dom}": "tower_r",
+# Flag -> interior building id (draw order inside the town).
+_FLAG_BUILDING = {
+    "FLAG{sql_login_bypass_success}": "b_gate",
+    "FLAG{sql_union_injection_found}": "b_sw",
+    "FLAG{reflected_xss}": "b_nw",
+    "FLAG{stored_xss_dom}": "b_ne",
     "FLAG{server_side_template_injection}": "keep",
 }
-# Where each agent's attack bolts fly.
-_AGENT_TARGET = {"sql": "gate", "xss": "tower_l", "ssti": "keep", "boss": "keep"}
+
+_TEAM = {
+    "boss": "#d2a8ff", "sql": "#f85149", "xss": "#ff9f1c", "ssti": "#a371f7",
+}
+_LABEL = {"boss": "Boss", "sql": "SQLi", "xss": "XSS", "ssti": "SSTI"}
 
 
 class ArenaTab(ttk.Frame):
     def __init__(self, master, pal, flags):
         super().__init__(master)
         self.pal = pal
-        self.canvas = tk.Canvas(self, bg=pal["bg"], highlightthickness=0)
+        self.canvas = tk.Canvas(self, bg="#5c9346", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
 
-        S = 4  # sprite pixel scale
-        self.sprites = {
-            "sql": {"idle": _make_sprite(_ATK_IDLE, _palette("#f85149", "#a01f1a"), S),
-                    "swing": _make_sprite(_ATK_SWING, _palette("#f85149", "#a01f1a"), S)},
-            "xss": {"idle": _make_sprite(_ATK_IDLE, _palette("#ff9f1c", "#b35e00"), S),
-                    "swing": _make_sprite(_ATK_SWING, _palette("#ff9f1c", "#b35e00"), S)},
-            "ssti": {"idle": _make_sprite(_ATK_IDLE, _palette("#a371f7", "#6b3fb0"), S),
-                     "swing": _make_sprite(_ATK_SWING, _palette("#a371f7", "#6b3fb0"), S)},
-            "boss": {"idle": _make_sprite(_BOSS_IDLE, _palette("#d2a8ff", "#8957e5"), S),
-                     "swing": _make_sprite(_BOSS_IDLE, _palette("#d2a8ff", "#8957e5"), S)},
-        }
+        self.flag_building = dict(_FLAG_BUILDING)
+        self.reachable = set(self.flag_building.values())
+        self.captured: set[str] = set()
+        self.flash: dict[str, float] = {}
 
-        self.agents = {}
-        order = [("boss", "Boss"), ("sql", "SQLi"), ("xss", "XSS"), ("ssti", "SSTI")]
-        for key, label in order:
-            self.agents[key] = {
-                "label": label, "state": "idle", "bubble": "", "bubble_t": 0.0,
-                "phase": random.random() * 6.28, "knock": 0.0,
+        self.commanders = {}
+        for i, key in enumerate(("boss", "sql", "xss", "ssti")):
+            self.commanders[key] = {
+                "label": _LABEL[key], "color": _TEAM[key], "state": "idle",
+                "bubble": "", "bubble_t": 0.0, "spawn_cd": random.uniform(0.3, 1.0),
+                "xf": 0.08 + (i % 2) * 0.12, "yf": 0.18 + i * 0.19,
+                "phase": random.random() * 6.28,
             }
-
-        self.structures = {"gate", "wall_l", "wall_r", "tower_l", "tower_r", "keep"}
-        self.flag_struct = dict(_FLAG_STRUCT)
-        self.reachable = set(self.flag_struct.values())
-        self.captured_structs: set[str] = set()
-        self.flash: dict[str, float] = {}     # struct -> flash end time
-        self.bolts: list[dict] = []           # attacker -> castle
-        self.arrows: list[dict] = []          # castle -> attacker (defence)
-        self.shield_t = 0.0
+        self.soldiers: list[dict] = []
+        self.sparks: list[dict] = []      # transient hit/arrow effects
         self.won = False
         self.red = 0
         self.blue = 0
 
-        self._rain = []
+        self._terrain = None
+        self._tsize = (0, 0)
         self._last = time.time()
         self.after(60, self._tick)
 
@@ -158,263 +77,312 @@ class ArenaTab(ttk.Frame):
         self.red, self.blue = red, blue
 
     def set_state(self, agent, state):
-        a = self.agents.get(agent)
-        if a:
-            a["state"] = state
+        c = self.commanders.get(agent)
+        if c:
+            c["state"] = state
 
     def say(self, agent, text):
-        a = self.agents.get(agent)
-        if a and text:
-            a["bubble"] = " ".join(str(text).split())[:120]
-            a["bubble_t"] = time.time() + 9.0
+        c = self.commanders.get(agent)
+        if c and text:
+            c["bubble"] = " ".join(str(text).split())[:120]
+            c["bubble_t"] = time.time() + 9.0
 
     def capture(self, flag):
-        st = self.flag_struct.get(flag)
-        if st and st not in self.captured_structs:
-            self.captured_structs.add(st)
-            self.flash[st] = time.time() + 0.8
-            if self.reachable and self.reachable <= self.captured_structs:
+        b = self.flag_building.get(flag)
+        if b and b not in self.captured:
+            self.captured.add(b)
+            self.flash[b] = time.time() + 1.2
+            if self.reachable and self.reachable <= self.captured:
                 self.won = True
 
     def leak(self, agent):
-        a = self.agents.get(agent)
-        if a:
-            self._spawn_bolt(agent, leaked=True)
+        c = self.commanders.get(agent)
+        if c:
+            self._spawn_soldier(agent, leaked=True)
 
     def block(self):
-        # Pick an active attacker to shove back.
-        actives = [k for k, a in self.agents.items()
-                   if k != "boss" and a["state"] in ("running", "queued")]
-        target = random.choice(actives) if actives else random.choice(["sql", "xss", "ssti"])
-        self.arrows.append({"target": target, "t": 0.0})
-        self.shield_t = time.time() + 0.4
-        a = self.agents.get(target)
-        if a:
-            a["knock"] = 1.0
+        live = [s for s in self.soldiers if s["alive"]]
+        live.sort(key=lambda s: -s["x"])  # nearest the town first
+        for s in live[:3]:
+            s["alive"] = False
+            self.sparks.append({"x": s["x"], "y": s["y"], "t": 0.0, "kind": "kill"})
 
     def reset(self):
-        self.captured_structs.clear()
+        self.captured.clear()
         self.flash.clear()
-        self.bolts.clear()
-        self.arrows.clear()
+        self.soldiers.clear()
+        self.sparks.clear()
         self.won = False
-        for a in self.agents.values():
-            a["state"] = "idle"
-            a["bubble"] = ""
-            a["knock"] = 0.0
+        for c in self.commanders.values():
+            c["state"] = "idle"
+            c["bubble"] = ""
 
-    # -- geometry ---------------------------------------------------------- #
+    # -- terrain (precomputed, stable across frames) ----------------------- #
     def _layout(self):
-        w = self.canvas.winfo_width() or 900
-        h = self.canvas.winfo_height() or 560
-        # castle occupies the right ~45%
-        cw = int(w * 0.40)
-        cx = int(w * 0.56)
-        gy = int(h * 0.86)                      # ground line
-        return w, h, cx, cw, gy
+        w = self.canvas.winfo_width()
+        h = self.canvas.winfo_height()
+        if w < 50 or h < 50:
+            return w, h  # not laid out yet; caller bails
+        if (w, h) != self._tsize:
+            self._tsize = (w, h)
+            self._build_terrain(w, h)
+        return w, h
 
-    def _struct_rects(self, cx, cw, gy):
-        """Return {name: (x0, y0, x1, y1)} for each castle piece."""
-        u = cw / 10.0
-        base = gy
-        r = {}
-        r["wall_l"] = (cx, base - 3.2 * u, cx + 3 * u, base)
-        r["wall_r"] = (cx + 7 * u, base - 3.2 * u, cx + 10 * u, base)
-        r["gate"] = (cx + 3.6 * u, base - 3.0 * u, cx + 6.4 * u, base)
-        r["tower_l"] = (cx - 0.6 * u, base - 5.0 * u, cx + 2.2 * u, base)
-        r["tower_r"] = (cx + 7.8 * u, base - 5.0 * u, cx + 10.6 * u, base)
-        r["keep"] = (cx + 3.4 * u, base - 6.6 * u, cx + 6.6 * u, base - 2.6 * u)
-        return {k: tuple(map(int, v)) for k, v in r.items()}
+    def _build_terrain(self, w, h):
+        rnd = random.Random(1234)
+        patches = [(rnd.randint(0, w), rnd.randint(0, h),
+                    rnd.randint(14, 40), rnd.choice(["#558a42", "#6fab53", "#4f803c"]))
+                   for _ in range(70)]
+        # town compound on the right
+        tx0, ty0 = int(w * 0.42), int(h * 0.14)
+        tx1, ty1 = int(w * 0.90), int(h * 0.90)
+        gate = (tx0, int((ty0 + ty1) / 2))
+        # river meanders down the far-right background
+        rv = [(int(w * 0.95 + math.sin(k / 3.0) * w * 0.03), int(h * k / 10))
+              for k in range(11)]
+        # trees scattered on the field (avoid the compound)
+        trees = []
+        for _ in range(26):
+            x, y = rnd.randint(10, w - 10), rnd.randint(10, h - 10)
+            if tx0 - 10 < x < tx1 + 10 and ty0 - 10 < y < ty1 + 10:
+                continue
+            trees.append((x, y))
+        # interior buildings (fractions of the compound)
+        def box(fx0, fy0, fx1, fy1):
+            return (int(tx0 + (tx1 - tx0) * fx0), int(ty0 + (ty1 - ty0) * fy0),
+                    int(tx0 + (tx1 - tx0) * fx1), int(ty0 + (ty1 - ty0) * fy1))
+        buildings = {
+            "keep":   box(0.40, 0.38, 0.62, 0.62),
+            "b_nw":   box(0.14, 0.14, 0.34, 0.30),
+            "b_ne":   box(0.66, 0.16, 0.86, 0.32),
+            "b_sw":   box(0.16, 0.68, 0.36, 0.84),
+            "b_gate": box(0.18, 0.42, 0.34, 0.58),
+            "b_dec1": box(0.64, 0.64, 0.84, 0.80),
+            "b_dec2": box(0.40, 0.70, 0.58, 0.86),
+        }
+        towers = [(tx0, ty0), (tx1, ty0), (tx0, ty1), (tx1, ty1)]
+        self._terrain = {
+            "patches": patches, "compound": (tx0, ty0, tx1, ty1), "gate": gate,
+            "river": rv, "trees": trees, "buildings": buildings, "towers": towers,
+        }
 
-    def _agent_pos(self, key, w, h, gy):
-        idx = {"boss": 0, "sql": 1, "xss": 2, "ssti": 3}[key]
-        x = int(w * 0.07) + (idx % 2) * int(w * 0.11)
-        y = gy - 56 - (idx // 2) * 120 if False else gy - 44 - idx * 0  # simple column
-        # stack vertically on the left battlefield
-        y = int(h * 0.20) + idx * int(h * 0.19)
-        return x, y
+    # -- soldiers ---------------------------------------------------------- #
+    def _cmd_pos(self, c, w, h):
+        return c["xf"] * w, c["yf"] * h
 
-    # -- animation --------------------------------------------------------- #
-    def _spawn_bolt(self, agent, leaked=False):
-        self.bolts.append({"agent": agent, "t": 0.0, "leaked": leaked})
+    def _spawn_soldier(self, agent, leaked=False):
+        if not self._terrain or len([s for s in self.soldiers if s["alive"]]) > 44:
+            return
+        w, h = self._tsize
+        c = self.commanders[agent]
+        cx, cy = self._cmd_pos(c, w, h)
+        gx, gy = self._terrain["gate"] if self._terrain else (w * 0.42, h * 0.5)
+        self.soldiers.append({
+            "x": cx + random.uniform(-8, 8), "y": cy + random.uniform(-8, 8),
+            "tx": gx + random.uniform(-10, 24), "ty": gy + random.uniform(-40, 40),
+            "color": c["color"], "alive": True, "leaked": leaked,
+            "phase": random.random() * 6.28,
+        })
 
     def _tick(self):
         now = time.time()
-        dt = now - self._last
+        dt = min(0.1, now - self._last)
         self._last = now
-        # occasionally spawn attack bolts for running agents
-        for key, a in self.agents.items():
-            if key != "boss" and a["state"] == "running" and random.random() < 0.08:
-                self._spawn_bolt(key)
-            if a["knock"] > 0:
-                a["knock"] = max(0.0, a["knock"] - dt * 1.6)
-        for b in self.bolts:
-            b["t"] += dt * 1.4
-        self.bolts = [b for b in self.bolts if b["t"] < 1.0]
-        for ar in self.arrows:
-            ar["t"] += dt * 1.6
-        self.arrows = [ar for ar in self.arrows if ar["t"] < 1.0]
+        w, h = self._tsize or (900, 560)
+        for key, c in self.commanders.items():
+            if c["state"] == "running":
+                c["spawn_cd"] -= dt
+                if c["spawn_cd"] <= 0:
+                    self._spawn_soldier(key)
+                    c["spawn_cd"] = random.uniform(0.5, 1.1)
+        for s in self.soldiers:
+            if not s["alive"]:
+                continue
+            dx, dy = s["tx"] - s["x"], s["ty"] - s["y"]
+            dist = math.hypot(dx, dy) or 1
+            spd = 48 * dt
+            if dist < 6:
+                self.sparks.append({"x": s["x"], "y": s["y"], "t": 0.0,
+                                    "kind": "leak" if s["leaked"] else "hit"})
+                s["alive"] = False
+            else:
+                s["x"] += dx / dist * spd
+                s["y"] += dy / dist * spd
+        self.soldiers = [s for s in self.soldiers if s["alive"]]
+        for sp in self.sparks:
+            sp["t"] += dt * 2.2
+        self.sparks = [sp for sp in self.sparks if sp["t"] < 1.0]
         try:
             self._render(now)
         except tk.TclError:
-            return  # widget gone
+            return
         self.after(60, self._tick)
 
+    # -- rendering --------------------------------------------------------- #
     def _render(self, now):
         c = self.canvas
         c.delete("all")
-        w, h, cx, cw, gy = self._layout()
-        pal = self.pal
-        if w < 10:
+        w, h = self._layout()
+        if w < 50 or h < 50 or not self._terrain:
             return
-
-        # --- matrix rain backdrop ---
-        if not self._rain or len(self._rain) != max(8, w // 22):
-            self._rain = [{"x": i * 22 + 8, "y": random.randint(-h, h),
-                           "s": random.uniform(40, 120)} for i in range(max(8, w // 22))]
-        glyphs = "01<>{}[]#$%&/\\|=+*ｱｲｳｴｵﾊﾋﾌ"
-        for col in self._rain:
-            col["y"] += col["s"] * 0.06
-            if col["y"] > h:
-                col["y"] = random.randint(-80, 0)
-            for k in range(5):
-                yy = col["y"] - k * 16
-                if 0 <= yy <= h:
-                    shade = "#113311" if k else "#1f7a1f"
-                    c.create_text(col["x"], yy, text=random.choice(glyphs),
-                                  fill=shade, font=("Consolas", 10))
-
-        # --- ground ---
-        c.create_rectangle(0, gy, w, h, fill="#0a1a0a", width=0)
-        c.create_line(0, gy, w, gy, fill="#18381a")
-
-        # --- castle ---
-        rects = self._struct_rects(cx, cw, gy)
-        draw_order = ["tower_l", "tower_r", "wall_l", "wall_r", "keep", "gate"]
-        for name in draw_order:
-            x0, y0, x1, y1 = rects[name]
-            broken = name in self.captured_structs
-            flashing = self.flash.get(name, 0) > now
-            self._draw_structure(name, x0, y0, x1, y1, broken, flashing)
-        # defender shield shimmer
-        if self.shield_t > now:
-            c.create_arc(cx - 16, gy - 7.2 * (cw / 10.0), cx + cw + 16, gy + 40,
-                         start=0, extent=180, style="arc", outline=pal["blue"], width=3)
-
-        # --- attacker bolts (red) ---
-        for b in self.bolts:
-            self._draw_bolt(b, w, h, gy, rects)
-        # --- defender arrows (blue) ---
-        for ar in self.arrows:
-            self._draw_arrow(ar, w, h, gy)
-
-        # --- agents + bubbles ---
-        for key, a in self.agents.items():
-            self._draw_agent(key, a, now, w, h, gy)
-
-        # --- HUD ---
-        self._draw_hud(now, w, h, cx, cw, gy)
-
-    def _draw_structure(self, name, x0, y0, x1, y1, broken, flashing):
-        c = self.canvas
+        T = self._terrain
         pal = self.pal
-        if broken:
-            # rubble
-            c.create_rectangle(x0, (y0 + y1) / 2, x1, y1, fill="#2b2b2b", width=0)
-            for _ in range(6):
-                rx = random.randint(int(x0), int(x1) - 4)
-                ry = random.randint(int((y0 + y1) / 2), int(y1) - 3)
-                c.create_rectangle(rx, ry, rx + 4, ry + 3, fill="#3a3a3a", width=0)
-            c.create_text((x0 + x1) / 2, y1 - 8, text="💥", font=("Segoe UI", 12))
+
+        # grass patches
+        for (x, y, r, col) in T["patches"]:
+            c.create_oval(x - r, y - r // 2, x + r, y + r // 2, fill=col, width=0)
+        # river
+        pts = T["river"]
+        for i in range(len(pts) - 1):
+            c.create_line(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1],
+                          fill="#4a90c2", width=14, capstyle="round")
+            c.create_line(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1],
+                          fill="#6fb6e0", width=5, capstyle="round")
+        # background trees
+        for (x, y) in T["trees"]:
+            self._tree(x, y)
+
+        # town: ground, walls, towers, buildings
+        tx0, ty0, tx1, ty1 = T["compound"]
+        c.create_rectangle(tx0, ty0, tx1, ty1, fill="#9a9589", width=0)  # courtyard
+        self._walls(tx0, ty0, tx1, ty1, T["gate"])
+        for (bx, by) in T["towers"]:
+            self._tower(bx, by)
+        for name, (x0, y0, x1, y1) in T["buildings"].items():
+            burning = self.flash.get(name, 0) > now
+            down = name in self.captured
+            self._house(x0, y0, x1, y1, down, burning)
+
+        # soldiers
+        for s in self.soldiers:
+            self._soldier(s, now)
+        # sparks / arrows
+        for sp in self.sparks:
+            self._spark(sp)
+
+        # commanders + bubbles
+        for key, cm in self.commanders.items():
+            self._commander(key, cm, now, w, h)
+
+        self._hud(now, w, h, T)
+
+    def _tree(self, x, y):
+        c = self.canvas
+        c.create_rectangle(x - 1, y, x + 1, y + 4, fill="#6b4a2b", width=0)
+        c.create_oval(x - 6, y - 10, x + 6, y + 2, fill="#2f6b34", width=0)
+        c.create_oval(x - 4, y - 12, x + 4, y - 2, fill="#3f8a44", width=0)
+
+    def _walls(self, x0, y0, x1, y1, gate):
+        c = self.canvas
+        wcol, edge = "#9a9a9a", "#6f6f6f"
+        tkk = 8
+        for (ax0, ay0, ax1, ay1) in [
+            (x0, y0, x1, y0 + tkk), (x0, y1 - tkk, x1, y1),
+            (x0, y0, x0 + tkk, y1), (x1 - tkk, y0, x1, y1)]:
+            c.create_rectangle(ax0, ay0, ax1, ay1, fill=wcol, outline=edge)
+        # crenellations along the top wall
+        for xx in range(int(x0), int(x1), 16):
+            c.create_rectangle(xx, y0 - 4, xx + 8, y0 + 2, fill=wcol, outline=edge)
+        # gate opening on the left wall
+        gx, gy = gate
+        c.create_rectangle(x0 - 2, gy - 18, x0 + tkk + 2, gy + 18, fill="#5a4a33", outline=edge)
+        c.create_text(x0 + 3, gy, text="🚪", font=("Segoe UI", 11))
+
+    def _tower(self, x, y):
+        c = self.canvas
+        c.create_rectangle(x - 9, y - 9, x + 9, y + 9, fill="#b0b0b0", outline="#6f6f6f", width=2)
+        c.create_polygon(x - 11, y - 7, x + 11, y - 7, x, y - 20, fill="#b0503f", outline="#7a3328")
+        c.create_oval(x - 2, y - 2, x + 2, y + 2, fill="#58a6ff", width=0)  # archer
+
+    def _house(self, x0, y0, x1, y1, down, burning):
+        c = self.canvas
+        if down:
+            c.create_rectangle(x0, y0, x1, y1, fill="#4a4a46", width=0)
+            for _ in range(5):
+                rx = random.randint(int(x0), int(x1) - 3)
+                ry = random.randint(int(y0), int(y1) - 3)
+                c.create_rectangle(rx, ry, rx + 3, ry + 3, fill="#5a5a55", width=0)
             return
-        stone = "#6ea8d8" if flashing else "#3b6ea5"
-        edge = "#8fc4ef" if flashing else "#28527a"
-        c.create_rectangle(x0, y0, x1, y1, fill=stone, outline=edge, width=2)
-        # crenellations
-        step = max(6, int((x1 - x0) / 5))
-        for xx in range(int(x0), int(x1) - 2, step * 2):
-            c.create_rectangle(xx, y0 - 6, xx + step, y0, fill=stone, outline=edge)
-        # archer on towers / keep
-        if name in ("tower_l", "tower_r", "keep"):
-            ax = (x0 + x1) / 2
-            c.create_rectangle(ax - 3, y0 - 14, ax + 3, y0 - 6, fill=pal["blue"], width=0)
-            c.create_oval(ax - 3, y0 - 20, ax + 3, y0 - 14, fill="#cfe6ff", width=0)
-        if name == "gate":
-            c.create_rectangle(x0 + 6, y0 + 8, x1 - 6, y1, fill="#24405e", outline=edge)
-            c.create_text((x0 + x1) / 2, (y0 + y1) / 2, text="🛡", font=("Segoe UI", 12))
+        c.create_rectangle(x0, y0, x1, y1, fill="#c9b79a", outline="#8a7a5f")  # walls
+        roof = "#c86a56" if burning else "#b0503f"
+        c.create_rectangle(x0 + 2, y0 + 2, x1 - 2, (y0 + y1) / 2, fill=roof, outline="#7a3328")
+        c.create_line(x0 + 2, (y0 + y1) / 2, x1 - 2, (y0 + y1) / 2, fill="#7a3328")
+        if burning:
+            for _ in range(4):
+                fx = random.randint(int(x0), int(x1))
+                fy = random.randint(int(y0) - 6, int(y0) + 4)
+                c.create_text(fx, fy, text=random.choice(["🔥", "🔥"]), font=("Segoe UI", 10))
 
-    def _draw_bolt(self, b, w, h, gy, rects):
-        key = b["agent"]
-        ax, ay = self._agent_pos(key, w, h, gy)
-        tx0, ty0, tx1, ty1 = rects.get(_AGENT_TARGET.get(key, "gate"))
-        tx, ty = (tx0 + tx1) / 2, (ty0 + ty1) / 2
-        t = b["t"]
-        x = ax + (tx - ax) * t
-        y = ay + (ty - ay) * t - math.sin(t * math.pi) * 40
-        col = "#8b949e" if b.get("leaked") else "#ff5a4f"
-        self.canvas.create_oval(x - 3, y - 3, x + 3, y + 3, fill=col, width=0)
-        if b.get("leaked") and t > 0.85:
-            self.canvas.create_text(x, y - 10, text="📄", font=("Segoe UI", 10))
+    def _soldier(self, s, now):
+        c = self.canvas
+        x, y = s["x"], s["y"]
+        bob = math.sin(now * 8 + s["phase"]) * 1.2
+        col = "#9aa0a6" if s["leaked"] else s["color"]
+        c.create_oval(x - 3, y - 3 + bob, x + 3, y + 3 + bob, fill=col, width=0)
+        c.create_oval(x - 1.5, y - 5 + bob, x + 1.5, y - 2 + bob, fill="#e8c9a0", width=0)
 
-    def _draw_arrow(self, ar, w, h, gy):
-        key = ar["target"]
-        ax, ay = self._agent_pos(key, w, h, gy)
-        # arrow comes from the right (castle) to the agent
-        sx, sy = w * 0.6, gy - 80
-        t = ar["t"]
-        x = sx + (ax - sx) * t
-        y = sy + (ay - sy) * t
-        self.canvas.create_line(x, y, x + 10, y - 3, fill=self.pal["blue"], width=2)
+    def _spark(self, sp):
+        c = self.canvas
+        x, y, t = sp["x"], sp["y"], sp["t"]
+        if sp["kind"] == "kill":
+            c.create_text(x, y - t * 10, text="✖", fill="#58a6ff", font=("Segoe UI", 11))
+        elif sp["kind"] == "leak":
+            c.create_text(x, y - t * 8, text="📄", font=("Segoe UI", 9))
+        else:
+            r = 3 + t * 6
+            c.create_oval(x - r, y - r, x + r, y + r, outline="#ffd33d", width=1)
 
-    def _draw_agent(self, key, a, now, w, h, gy):
+    def _commander(self, key, cm, now, w, h):
         c = self.canvas
         pal = self.pal
-        x, y = self._agent_pos(key, w, h, gy)
-        running = a["state"] == "running"
-        bob = math.sin(now * 4 + a["phase"]) * (4 if running else 2)
-        knock = a["knock"] * 18
-        img = self.sprites[key]["swing" if (running and int(now * 4) % 2 == 0) else "idle"]
-        c.create_image(x - knock, y + bob, image=img, anchor="center")
-        # nameplate + state dot
-        col = {"running": pal["green"], "queued": pal["amber"]}.get(a["state"], pal["idle"])
-        c.create_oval(x - 26, y + 26, x - 20, y + 32, fill=col, width=0)
-        c.create_text(x - 14, y + 29, text=a["label"], anchor="w",
-                      fill=pal["text"], font=("Segoe UI Semibold", 9))
-        # speech bubble
-        if a["bubble"] and a["bubble_t"] > now:
-            self._draw_bubble(x + 24, y - 34, a["bubble"], key)
+        x, y = self._cmd_pos(cm, w, h)
+        running = cm["state"] == "running"
+        bob = math.sin(now * 4 + cm["phase"]) * (2 if running else 1)
+        y += bob
+        col = cm["color"]
+        # body (top-down) + head + banner
+        c.create_rectangle(x - 7, y - 7, x + 7, y + 9, fill=col, outline="#1b1f24", width=1)
+        c.create_oval(x - 5, y - 11, x + 5, y - 1, fill="#e8c9a0", width=0)
+        c.create_line(x + 8, y - 14, x + 8, y + 8, fill="#6b4a2b", width=2)
+        c.create_polygon(x + 8, y - 14, x + 22, y - 11, x + 8, y - 6, fill=col, outline="#1b1f24")
+        # state dot + name
+        sc = {"running": pal["green"], "queued": pal["amber"]}.get(cm["state"], pal["idle"])
+        c.create_oval(x - 16, y + 12, x - 10, y + 18, fill=sc, width=0)
+        c.create_text(x - 7, y + 15, text=cm["label"], anchor="w",
+                      fill="#101418", font=("Segoe UI Semibold", 9))
+        if cm["bubble"] and cm["bubble_t"] > now:
+            self._bubble(x + 24, y - 40, cm["bubble"])
 
-    def _draw_bubble(self, x, y, text, key):
+    def _bubble(self, x, y, text):
         c = self.canvas
         pal = self.pal
-        bw = 240
-        c.create_rectangle(x, y, x + bw, y + 54, fill="#0c1622",
+        bw = 230
+        c.create_rectangle(x, y, x + bw, y + 50, fill="#0c1622",
                            outline=pal["accent"], width=1)
-        c.create_polygon(x, y + 40, x - 10, y + 48, x, y + 30,
+        c.create_polygon(x, y + 38, x - 9, y + 46, x, y + 28,
                          fill="#0c1622", outline=pal["accent"])
-        c.create_text(x + 8, y + 6, text=text, anchor="nw", width=bw - 16,
+        c.create_text(x + 7, y + 5, text=text, anchor="nw", width=bw - 14,
                       fill="#7ee787", font=("Consolas", 9))
 
-    def _draw_hud(self, now, w, h, cx, cw, gy):
+    def _hud(self, now, w, h, T):
         c = self.canvas
         pal = self.pal
         total = len(self.reachable) or 1
-        standing = total - len(self.captured_structs & self.reachable)
-        # castle HP bar
-        bx, by, bw = cx, 18, cw
-        c.create_text(bx, by - 4, text="CASTLE", anchor="w",
-                      fill=pal["blue"], font=("Segoe UI Semibold", 9))
-        c.create_rectangle(bx + 56, by - 8, bx + bw, by + 6, outline=pal["border"], width=1)
-        frac = standing / total
-        c.create_rectangle(bx + 56, by - 8, bx + 56 + (bw - 56) * frac, by + 6,
-                           fill=pal["blue"] if frac > 0.33 else pal["red"], width=0)
-        # score line
-        c.create_text(12, 16, text=f"🔴 {self.red}", anchor="w",
+        standing = total - len(self.captured & self.reachable)
+        # panel
+        c.create_rectangle(8, 8, 150, 86, fill="#0c1622", outline=pal["border"])
+        c.create_text(18, 24, text=f"🔴 {self.red}", anchor="w",
                       fill=pal["red"], font=("Segoe UI", 14, "bold"))
-        c.create_text(12, 40, text=f"🔵 {self.blue}", anchor="w",
+        c.create_text(18, 48, text=f"🔵 {self.blue}", anchor="w",
                       fill=pal["blue"], font=("Segoe UI", 14, "bold"))
+        frac = standing / total
+        c.create_text(18, 70, text=f"town {standing}/{total}", anchor="w",
+                      fill=pal["muted"], font=("Segoe UI", 9))
+        c.create_rectangle(78, 64, 142, 74, outline=pal["border"])
+        c.create_rectangle(78, 64, 78 + 64 * frac, 74,
+                           fill=pal["blue"] if frac > 0.34 else pal["red"], width=0)
         if self.won:
-            c.create_rectangle(w / 2 - 170, h / 2 - 36, w / 2 + 170, h / 2 + 36,
+            c.create_rectangle(w / 2 - 190, h / 2 - 32, w / 2 + 190, h / 2 + 32,
                                fill="#1a0b0b", outline=pal["red"], width=3)
-            c.create_text(w / 2, h / 2, text="⚔  THE CASTLE HAS FALLEN — RED WINS",
+            c.create_text(w / 2, h / 2, text="⚔  THE TOWN IS OVERRUN — RED WINS",
                           fill=pal["red"], font=("Segoe UI", 13, "bold"))
