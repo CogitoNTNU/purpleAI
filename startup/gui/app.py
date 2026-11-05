@@ -25,6 +25,11 @@ try:  # the Cogito logo, base64-embedded so it bundles into the exe
 except Exception:  # noqa: BLE001  (logo is cosmetic)
     LOGO_PNG_B64 = None
 
+try:  # ensure the Siege view is bundled by PyInstaller
+    import arena  # noqa: F401
+except Exception:  # noqa: BLE001
+    arena = None
+
 # --------------------------------------------------------------------------- #
 # CONFIG — edit to match your setup                                           #
 # --------------------------------------------------------------------------- #
@@ -590,6 +595,9 @@ class ComponentTab(ttk.Frame):
             w.delete("1.0", "end")
             w.configure(state="disabled")
 
+    def _arena(self):
+        return getattr(self.app, "arena", None) if self.app else None
+
     def _update_flag_title(self):
         known = len(self.flag_lights)
         self.flags_frame.configure(
@@ -607,6 +615,9 @@ class ComponentTab(ttk.Frame):
         self._update_flag_title()
         if self.app:
             self.app.set_red(0)
+        ar = self._arena()
+        if ar:
+            ar.reset()
 
     def _add_flag(self, flag: str, source_pane=None) -> str:
         """Score a flag only if captured through its owning vulnerability class.
@@ -638,6 +649,9 @@ class ComponentTab(ttk.Frame):
         self._blue += 1
         if self.app:
             self.app.set_blue(self._blue)
+        ar = self._arena()
+        if ar:
+            ar.block()
 
     # -- subagent lights + event feed -------------------------------------- #
     def _set_light(self, key: str, on: bool, status: str | None = None,
@@ -684,6 +698,11 @@ class ComponentTab(ttk.Frame):
             self._set_light(sub, running > 0,
                             f"{running} running / {queued} queued / {total} launched",
                             color=color)
+            ar = self._arena()
+            pane = self.pane_for.get(sub)
+            if ar and pane:
+                ar.set_state(pane, "running" if running else
+                             ("queued" if queued else "idle"))
             if is_new:
                 self.append(f"  ➕ launched scan (#{total}, task {str(tid)[:8]})\n",
                             pane=self.pane_for.get(sub, "boss"))
@@ -703,13 +722,18 @@ class ComponentTab(ttk.Frame):
             flag = ev.get("flag")
             pane = self.pane_for.get(tool, "boss")
             result = self._add_flag(flag, pane)
+            ar = self._arena()
             if result == "new":
                 self.append(f"  🚩 {flag}\n", pane=pane)
+                if ar:
+                    ar.capture(flag)
             elif result == "reject" and flag and flag not in self._leaked_seen:
                 # Seen here but not this agent's vuln (e.g. leaked via source
                 # disclosure): show it, but don't score it.
                 self._leaked_seen.add(flag)
                 self.append(f"  📄 leaked (not scored): {flag}\n", pane=pane)
+                if ar and pane:
+                    ar.leak(pane)
 
     def _handle_health(self, line: str):
         """Parse a 'SERVER <code>' health line and colour the Server light."""
@@ -781,6 +805,9 @@ class ComponentTab(ttk.Frame):
         if typ == "ai":
             if text:
                 self.append(f"  🧠 {text}\n", pane=pane)
+                ar = self._arena()
+                if ar:
+                    ar.say(pane, text)
             if tools:
                 self.append(f"  🧠 → {', '.join(tools)}\n", pane=pane)
         elif typ == "tool" and text:
@@ -934,6 +961,11 @@ class ComponentTab(ttk.Frame):
                             continue  # raw event JSON; shown via the events feed
                         if not self.reasoning_only.get() or self._keep_line(payload):
                             self.append(payload)
+                            ar = self._arena()
+                            if ar and self.cfg.get("panes"):
+                                s2 = payload.strip()
+                                if s2.startswith("[") or s2.startswith("====="):
+                                    ar.say("boss", s2)
                     else:
                         self.append(payload)
                 elif kind == "exit" and role == "action":
@@ -982,6 +1014,7 @@ class App(tk.Tk):
 
         self.red_score = 0
         self.blue_score = 0
+        self.arena = None
 
         # -- header: title + actions --------------------------------------- #
         header = ttk.Frame(self, padding=(14, 12, 14, 4))
@@ -1013,6 +1046,13 @@ class App(tk.Tk):
             tab = ComponentTab(nb, cfg, app=self)
             nb.add(tab, text=cfg["label"])
             self.tabs.append(tab)
+
+        try:
+            from arena import ArenaTab
+            self.arena = ArenaTab(nb, PAL, KNOWN_FLAGS)
+            nb.add(self.arena, text="⚔ Siege")
+        except Exception:  # noqa: BLE001  (arena is an extra view)
+            self.arena = None
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -1059,10 +1099,14 @@ class App(tk.Tk):
 
     def set_red(self, n: int):
         self.red_score = n
+        if self.arena:
+            self.arena.set_scores(self.red_score, self.blue_score)
         self._refresh_score()
 
     def set_blue(self, n: int):
         self.blue_score = n
+        if self.arena:
+            self.arena.set_scores(self.red_score, self.blue_score)
         self._refresh_score()
 
     def _refresh_score(self):
