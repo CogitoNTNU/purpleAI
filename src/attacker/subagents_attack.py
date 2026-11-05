@@ -31,3 +31,10 @@ ssti_agent = create_deep_agent(
     system_prompt=SSTI_PROMPT,
     name="ssti_agent",
 )
+xxe_agent = create_deep_agent(
+    model=get_model(),
+    tools=[xxe_scanner],
+    system_prompt=XXE_PROMPT,
+    name="xxe_agent",
+)
+
