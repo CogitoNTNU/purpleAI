@@ -682,6 +682,7 @@ class ComponentTab(ttk.Frame):
         proc.start()
 
     def on_start(self):
+        self.clear_flags()  # fresh run: reset the flags panel so re-finds show
         self._run_action("start")
 
     def on_stop(self):
