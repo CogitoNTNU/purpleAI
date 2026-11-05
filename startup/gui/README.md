@@ -81,8 +81,11 @@ starts automatically with the log stream. The 🧠 Reasoning button toggles it.
 On by default: the **Boss** pane shows just iteration headers and the Boss's
 reasoning, hiding raw tool-call/result chatter. Untick for the full console.
 
-### 🚩 Flags captured
-A deduplicated list of every `FLAG{…}` seen across all streams, with a count.
+### 🚩 Flags
+One light per flag planted in the vulnerable app (see
+`src/defender/vulnerable-app/VULNERABILITIES.md`). Each starts **blue**
+(defended / uncaptured) and turns **red** when the attacker captures it; the
+title shows `captured / total`. Resets on attacker Start/Clear.
 
 ## How a Start works (attacker)
 

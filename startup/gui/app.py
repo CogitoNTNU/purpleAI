@@ -20,6 +20,11 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
 
+try:  # the Cogito logo, base64-embedded so it bundles into the exe
+    from logo_data import LOGO_PNG_B64
+except Exception:  # noqa: BLE001  (logo is cosmetic)
+    LOGO_PNG_B64 = None
+
 # --------------------------------------------------------------------------- #
 # CONFIG — edit to match your setup                                           #
 # --------------------------------------------------------------------------- #
@@ -270,6 +275,19 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win3
 # FLAG{...} values are the objective; harvest them from the attacker's stream.
 FLAG_RE = re.compile(r"FLAG\{[^}\n]{0,200}\}")
 
+# The flags planted in the vulnerable app (see
+# src/defender/vulnerable-app/VULNERABILITIES.md). Each is a light that starts
+# blue (defended) and turns red when the attacker captures it.
+KNOWN_FLAGS = [
+    ("FLAG{sql_login_bypass_success}", "SQL login bypass"),
+    ("FLAG{sql_union_injection_found}", "SQL UNION"),
+    ("FLAG{reflected_xss}", "Reflected XSS"),
+    ("FLAG{stored_xss_dom}", "Stored XSS"),
+    ("FLAG{server_side_template_injection}", "SSTI"),
+    ("FLAG{broken_access_control_admin_panel}", "Admin access"),
+    ("FLAG{path_traversal_outside_reports_dir}", "Path traversal"),
+]
+
 # --------------------------------------------------------------------------- #
 # Theme                                                                       #
 # --------------------------------------------------------------------------- #
@@ -432,6 +450,7 @@ class ComponentTab(ttk.Frame):
         self.reasoning_only = tk.BooleanVar(value=bool(cfg.get("filterable")))
         self._show_block = False  # filter state: are we inside a shown block?
         self.flags: set[str] = set()  # unique FLAG{...} seen on this box
+        self.flag_lights: dict = {}  # flag string -> {canvas, oval, label}
         self.sub_tasks: dict = {}  # subagent name -> {task_id: status}
         self.panes: dict = {}  # pane key -> ScrolledText (multi-pane mode)
         # Route a subagent name / tool / label to its pane key.
@@ -506,22 +525,27 @@ class ComponentTab(ttk.Frame):
                 self.lights[sa["name"]] = entry
                 self.lights[sa["tool"]] = entry  # same light, keyed by tool too
 
-        # Flags overview (attacker): a running list of captured FLAG{...}.
-        self.flags_list = None
+        # Flags overview (attacker): one light per planted flag. Blue =
+        # defended/uncaptured, red = the attacker has captured it.
         if cfg.get("show_flags"):
-            self.flags_frame = ttk.LabelFrame(self, text=" 🚩 FLAGS CAPTURED (0) ")
+            self.flags_frame = ttk.LabelFrame(
+                self, text=f" 🚩 FLAGS  (0 / {len(KNOWN_FLAGS)} captured) ")
             self.flags_frame.pack(fill="x", pady=(0, 8))
-            row = ttk.Frame(self.flags_frame, style="Card.TFrame")
-            row.pack(fill="x", padx=8, pady=8)
-            self.flags_list = tk.Listbox(row, height=3, bg=PAL["log"],
-                                         fg=PAL["amber"], font=("Consolas", 10),
-                                         activestyle="none", relief="flat",
-                                         borderwidth=0, highlightthickness=1,
-                                         highlightbackground=PAL["border"],
-                                         selectbackground="#264f78")
-            self.flags_list.pack(side="left", fill="x", expand=True)
-            ttk.Button(row, text="Clear", width=6,
-                       command=self.clear_flags).pack(side="left", padx=(8, 0))
+            grid = ttk.Frame(self.flags_frame, style="Card.TFrame")
+            grid.pack(fill="x", padx=8, pady=8)
+            cols = 4
+            for idx, (flag, label) in enumerate(KNOWN_FLAGS):
+                cell = ttk.Frame(grid, style="Card.TFrame")
+                cell.grid(row=idx // cols, column=idx % cols, sticky="w",
+                          padx=(0, 20), pady=3)
+                cv = tk.Canvas(cell, width=14, height=14, highlightthickness=0,
+                               bg=PAL["panel"])
+                cv.pack(side="left", padx=(0, 7))
+                oval = cv.create_oval(2, 2, 12, 12, fill=PAL["blue"], outline="")
+                lbl = tk.Label(cell, text=label, bg=PAL["panel"], fg=PAL["muted"],
+                               font=("Segoe UI", 9))
+                lbl.pack(side="left")
+                self.flag_lights[flag] = {"canvas": cv, "oval": oval, "label": lbl}
 
         if cfg.get("panes"):
             # Live panes side by side (resizable).
@@ -560,22 +584,31 @@ class ComponentTab(ttk.Frame):
             w.delete("1.0", "end")
             w.configure(state="disabled")
 
+    def _update_flag_title(self):
+        known = len(self.flag_lights)
+        cap = sum(1 for f in self.flag_lights if f in self.flags)
+        self.flags_frame.configure(text=f" 🚩 FLAGS  ({cap} / {known} captured) ")
+
     def clear_flags(self):
-        if self.flags_list is None:
+        if not self.cfg.get("show_flags"):
             return
         self.flags.clear()
-        self.flags_list.delete(0, "end")
-        self.flags_frame.configure(text=" 🚩 FLAGS CAPTURED (0) ")
+        for e in self.flag_lights.values():
+            e["canvas"].itemconfig(e["oval"], fill=PAL["blue"])
+            e["label"].configure(fg=PAL["muted"])
+        self._update_flag_title()
         if self.app:
             self.app.set_red(0)
 
     def _add_flag(self, flag: str):
-        if self.flags_list is None or not flag or flag in self.flags:
+        if not self.cfg.get("show_flags") or not flag or flag in self.flags:
             return
         self.flags.add(flag)
-        self.flags_list.insert("end", flag)
-        self.flags_list.see("end")
-        self.flags_frame.configure(text=f" 🚩 FLAGS CAPTURED ({len(self.flags)}) ")
+        entry = self.flag_lights.get(flag)
+        if entry:  # a known planted flag: blue -> red
+            entry["canvas"].itemconfig(entry["oval"], fill=PAL["red"])
+            entry["label"].configure(fg=PAL["red"])
+        self._update_flag_title()
         if self.app:
             self.app.set_red(len(self.flags))
 
@@ -938,7 +971,16 @@ class App(tk.Tk):
         # -- header: title + actions --------------------------------------- #
         header = ttk.Frame(self, padding=(14, 12, 14, 4))
         header.pack(fill="x")
-        ttk.Label(header, text="💜  PurpleAI Control",
+        if LOGO_PNG_B64:
+            try:
+                img = tk.PhotoImage(data=LOGO_PNG_B64)
+                factor = max(1, img.height() // 38)
+                self._logo_img = img.subsample(factor, factor)
+                tk.Label(header, image=self._logo_img, bg="#ffffff",
+                         bd=0, padx=4, pady=2).pack(side="left", padx=(0, 10))
+            except Exception:  # noqa: BLE001  (logo is cosmetic)
+                pass
+        ttk.Label(header, text="PurpleAI Control",
                   style="Title.TLabel").pack(side="left")
         ttk.Button(header, text="■ Stop all", command=self.stop_all).pack(side="right", padx=3)
         ttk.Button(header, text="▶ Start all", command=self.start_all,
