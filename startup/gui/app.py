@@ -20,6 +20,11 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
 
+try:  # the Cogito logo, base64-embedded so it bundles into the exe
+    from logo_data import LOGO_PNG_B64
+except Exception:  # noqa: BLE001  (logo is cosmetic)
+    LOGO_PNG_B64 = None
+
 # --------------------------------------------------------------------------- #
 # CONFIG — edit to match your setup                                           #
 # --------------------------------------------------------------------------- #
@@ -246,6 +251,7 @@ COMPONENTS = [
         "label": "Defender + VulnApp  (blueai)",
         "host": "blueai",
         "color": "#2471A3",
+        "counts_blue": True,  # blocked requests in its log = blue team score
         "start":  with_pull(docker_start("docker-compose.full.yml", "docker-compose.app.yml")),
         "stop":   _dc("docker-compose.full.yml", "down"),
         "logs":   _dc("docker-compose.full.yml", "logs -f --tail=300"),
@@ -268,6 +274,83 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win3
 
 # FLAG{...} values are the objective; harvest them from the attacker's stream.
 FLAG_RE = re.compile(r"FLAG\{[^}\n]{0,200}\}")
+
+# The flags planted in the vulnerable app (see
+# src/defender/vulnerable-app/VULNERABILITIES.md). Each is a light that starts
+# blue (defended) and turns red when the attacker captures it THROUGH ITS OWN
+# vulnerability class (`owner` pane) — so a flag merely leaked via another bug
+# (e.g. SSTI reading app.py, which inlines the SQL/XSS flag strings) does not
+# count. `owner=None` = no current agent targets it, so it stays blue.
+KNOWN_FLAGS = [
+    ("FLAG{sql_login_bypass_success}", "SQL login bypass", "sql"),
+    ("FLAG{sql_union_injection_found}", "SQL UNION", "sql"),
+    ("FLAG{reflected_xss}", "Reflected XSS", "xss"),
+    ("FLAG{stored_xss_dom}", "Stored XSS", "xss"),
+    ("FLAG{server_side_template_injection}", "SSTI", "ssti"),
+    ("FLAG{broken_access_control_admin_panel}", "Admin access", None),
+    ("FLAG{path_traversal_outside_reports_dir}", "Path traversal", None),
+]
+
+# --------------------------------------------------------------------------- #
+# Theme                                                                       #
+# --------------------------------------------------------------------------- #
+PAL = {
+    "bg": "#0d1117",       # app background
+    "panel": "#161b22",    # cards
+    "log": "#0b0e13",      # log/console background
+    "border": "#30363d",
+    "text": "#e6edf3",
+    "muted": "#8b949e",
+    "red": "#f85149",      # attacker / red team
+    "blue": "#58a6ff",     # defender / blue team
+    "green": "#3fb950",
+    "amber": "#d29922",
+    "accent": "#a371f7",   # purple
+    "idle": "#30363d",
+}
+
+
+def apply_style(root: tk.Misc) -> None:
+    """A dark, modern-ish ttk theme built on 'clam'."""
+    style = ttk.Style(root)
+    try:
+        style.theme_use("clam")
+    except tk.TclError:
+        pass
+    p = PAL
+    style.configure(".", background=p["bg"], foreground=p["text"],
+                    fieldbackground=p["panel"], bordercolor=p["border"],
+                    focuscolor=p["accent"], font=("Segoe UI", 10))
+    style.configure("TFrame", background=p["bg"])
+    style.configure("Card.TFrame", background=p["panel"])
+    style.configure("TLabel", background=p["bg"], foreground=p["text"])
+    style.configure("Muted.TLabel", background=p["bg"], foreground=p["muted"])
+    style.configure("CardMuted.TLabel", background=p["panel"], foreground=p["muted"])
+    style.configure("Card.TLabel", background=p["panel"], foreground=p["text"])
+    style.configure("Title.TLabel", background=p["bg"], foreground=p["text"],
+                    font=("Segoe UI Semibold", 16))
+    style.configure("Score.TLabel", background=p["bg"], font=("Segoe UI", 9))
+    style.configure("TLabelframe", background=p["panel"], bordercolor=p["border"],
+                    relief="solid", borderwidth=1)
+    style.configure("TLabelframe.Label", background=p["panel"],
+                    foreground=p["muted"], font=("Segoe UI Semibold", 9))
+    style.configure("TNotebook", background=p["bg"], borderwidth=0, tabmargins=(4, 4, 4, 0))
+    style.configure("TNotebook.Tab", background=p["panel"], foreground=p["muted"],
+                    padding=(14, 7), borderwidth=0, font=("Segoe UI", 10))
+    style.map("TNotebook.Tab",
+              background=[("selected", p["bg"])],
+              foreground=[("selected", p["text"])])
+    style.configure("TButton", background=p["panel"], foreground=p["text"],
+                    bordercolor=p["border"], borderwidth=1, focusthickness=0,
+                    padding=(9, 5), relief="flat")
+    style.map("TButton",
+              background=[("active", "#21262d"), ("pressed", "#21262d")],
+              bordercolor=[("active", p["accent"])])
+    style.configure("Accent.TButton", background=p["accent"], foreground="#0d1117",
+                    bordercolor=p["accent"])
+    style.map("Accent.TButton", background=[("active", "#b586f9")])
+    style.configure("TCheckbutton", background=p["bg"], foreground=p["muted"])
+    style.map("TCheckbutton", foreground=[("selected", p["text"])])
 
 
 def ssh_inline_argv(host: str, remote_cmd: str) -> list[str]:
@@ -346,9 +429,12 @@ class Proc:
 
 
 class ComponentTab(ttk.Frame):
-    def __init__(self, master: tk.Misc, cfg: dict):
+    def __init__(self, master: tk.Misc, cfg: dict, app=None):
         super().__init__(master, padding=8)
         self.cfg = cfg
+        self.app = app  # for the Red-vs-Blue scoreboard
+        self._blue = 0  # defender: requests blocked (blue score)
+        self._blue_seen: set = set()
         self.q: "queue.Queue[tuple]" = queue.Queue()
         self.log_proc: Proc | None = None   # the long-lived `logs -f` stream
         self.events_proc: Proc | None = None  # the events.jsonl stream (attacker)
@@ -367,6 +453,9 @@ class ComponentTab(ttk.Frame):
         self.reasoning_only = tk.BooleanVar(value=bool(cfg.get("filterable")))
         self._show_block = False  # filter state: are we inside a shown block?
         self.flags: set[str] = set()  # unique FLAG{...} seen on this box
+        self.captured: set[str] = set()  # flags scored (attributed to their agent)
+        self._leaked_seen: set[str] = set()  # leaked-not-scored, for dedup
+        self.flag_lights: dict = {}  # flag string -> {canvas, oval, label, owner}
         self.sub_tasks: dict = {}  # subagent name -> {task_id: status}
         self.panes: dict = {}  # pane key -> ScrolledText (multi-pane mode)
         # Route a subagent name / tool / label to its pane key.
@@ -376,20 +465,30 @@ class ComponentTab(ttk.Frame):
                 for k in (sa["name"], sa["tool"], sa["label"]):
                     self.pane_for[k] = sa["pane"]
 
-        bar = ttk.Frame(self)
-        bar.pack(fill="x", pady=(0, 6))
+        def _text(parent, **kw):
+            t = ScrolledText(parent, bg=PAL["log"], fg=PAL["text"],
+                             insertbackground=PAL["text"], font=("Consolas", 10),
+                             state="disabled", relief="flat", borderwidth=0,
+                             highlightthickness=1, highlightbackground=PAL["border"],
+                             selectbackground="#264f78", padx=8, pady=6, **kw)
+            return t
 
-        dot = tk.Canvas(bar, width=14, height=14, highlightthickness=0)
+        bar = ttk.Frame(self)
+        bar.pack(fill="x", pady=(0, 8))
+
+        dot = tk.Canvas(bar, width=14, height=14, highlightthickness=0, bg=PAL["bg"])
         dot.pack(side="left", padx=(0, 6))
-        self._dot = dot.create_oval(2, 2, 12, 12, fill="#888", outline="")
+        self._dot = dot.create_oval(2, 2, 12, 12, fill=PAL["muted"], outline="")
         self._dot_canvas = dot
 
         self.status_var = tk.StringVar(value="idle")
-        ttk.Label(bar, textvariable=self.status_var, width=16).pack(side="left")
+        ttk.Label(bar, textvariable=self.status_var, width=15,
+                  style="Muted.TLabel").pack(side="left", padx=(0, 6))
 
-        ttk.Button(bar, text="▶ Start", command=self.on_start).pack(side="left", padx=2)
+        ttk.Button(bar, text="▶ Start", command=self.on_start,
+                   style="Accent.TButton").pack(side="left", padx=2)
         ttk.Button(bar, text="■ Stop", command=self.on_stop).pack(side="left", padx=2)
-        ttk.Button(bar, text="📜 View logs", command=self.start_logs).pack(side="left", padx=2)
+        ttk.Button(bar, text="📜 Logs", command=self.start_logs).pack(side="left", padx=2)
         if cfg.get("server_logs"):
             ttk.Button(bar, text="📄 Server log",
                        command=self.toggle_server_log).pack(side="left", padx=2)
@@ -405,68 +504,69 @@ class ComponentTab(ttk.Frame):
         # Subagent activity lights (attacker): green while that subagent / its
         # tool is running, grey when idle.
         if cfg.get("subagents"):
-            sframe = ttk.LabelFrame(self, text="Subagents")
-            sframe.pack(fill="x", pady=(0, 6))
-            inner = ttk.Frame(sframe)
-            inner.pack(fill="x", padx=6, pady=4)
+            sframe = ttk.LabelFrame(self, text=" SUBAGENTS ")
+            sframe.pack(fill="x", pady=(0, 8))
+            inner = ttk.Frame(sframe, style="Card.TFrame")
+            inner.pack(fill="x", padx=8, pady=8)
+
+            def _light_cell(label, status_init, label_w, status_w):
+                cell = ttk.Frame(inner, style="Card.TFrame")
+                cell.pack(side="left", padx=(0, 22))
+                c = tk.Canvas(cell, width=14, height=14, highlightthickness=0,
+                              bg=PAL["panel"])
+                c.pack(side="left", padx=(0, 7))
+                oval = c.create_oval(2, 2, 12, 12, fill=PAL["idle"], outline="")
+                ttk.Label(cell, text=label, width=label_w,
+                          style="Card.TLabel").pack(side="left")
+                sv = tk.StringVar(value=status_init)
+                ttk.Label(cell, textvariable=sv, width=status_w,
+                          style="CardMuted.TLabel").pack(side="left")
+                return {"canvas": c, "oval": oval, "status": sv, "label": label}
+
             if cfg.get("health"):
-                cell = ttk.Frame(inner)
-                cell.pack(side="left", padx=(0, 20))
-                c = tk.Canvas(cell, width=14, height=14, highlightthickness=0)
-                c.pack(side="left", padx=(0, 6))
-                oval = c.create_oval(2, 2, 12, 12, fill="#555", outline="")
-                ttk.Label(cell, text="Server", width=6).pack(side="left")
-                sv = tk.StringVar(value="?")
-                ttk.Label(cell, textvariable=sv, width=14).pack(side="left")
-                self.lights["server"] = {"canvas": c, "oval": oval,
-                                         "status": sv, "label": "Server"}
+                self.lights["server"] = _light_cell("Server", "?", 6, 14)
             for sa in cfg["subagents"]:
-                cell = ttk.Frame(inner)
-                cell.pack(side="left", padx=(0, 20))
-                c = tk.Canvas(cell, width=14, height=14, highlightthickness=0)
-                c.pack(side="left", padx=(0, 6))
-                oval = c.create_oval(2, 2, 12, 12, fill="#555", outline="")
-                ttk.Label(cell, text=sa["label"], width=5).pack(side="left")
-                sv = tk.StringVar(value="idle")
-                ttk.Label(cell, textvariable=sv, width=12).pack(side="left")
-                entry = {"canvas": c, "oval": oval, "status": sv, "label": sa["label"]}
+                entry = _light_cell(sa["label"], "idle", 5, 24)
                 self.lights[sa["name"]] = entry
                 self.lights[sa["tool"]] = entry  # same light, keyed by tool too
 
-        # Flags overview (attacker): a running list of captured FLAG{...}.
-        self.flags_list = None
+        # Flags overview (attacker): one light per planted flag. Blue =
+        # defended/uncaptured, red = the attacker has captured it.
         if cfg.get("show_flags"):
-            self.flags_frame = ttk.LabelFrame(self, text="🚩 Flags captured (0)")
-            self.flags_frame.pack(fill="x", pady=(0, 6))
-            row = ttk.Frame(self.flags_frame)
-            row.pack(fill="x", padx=4, pady=4)
-            self.flags_list = tk.Listbox(row, height=4, bg="#141414", fg="#f1c40f",
-                                         font=("Consolas", 10), activestyle="none",
-                                         selectbackground="#333")
-            self.flags_list.pack(side="left", fill="x", expand=True)
-            ttk.Button(row, text="Clear", width=6,
-                       command=self.clear_flags).pack(side="left", padx=(6, 0))
+            self.flags_frame = ttk.LabelFrame(
+                self, text=f" 🚩 FLAGS  (0 / {len(KNOWN_FLAGS)} captured) ")
+            self.flags_frame.pack(fill="x", pady=(0, 8))
+            grid = ttk.Frame(self.flags_frame, style="Card.TFrame")
+            grid.pack(fill="x", padx=8, pady=8)
+            cols = 4
+            for idx, (flag, label, owner) in enumerate(KNOWN_FLAGS):
+                cell = ttk.Frame(grid, style="Card.TFrame")
+                cell.grid(row=idx // cols, column=idx % cols, sticky="w",
+                          padx=(0, 20), pady=3)
+                cv = tk.Canvas(cell, width=14, height=14, highlightthickness=0,
+                               bg=PAL["panel"])
+                cv.pack(side="left", padx=(0, 7))
+                oval = cv.create_oval(2, 2, 12, 12, fill=PAL["blue"], outline="")
+                lbl = tk.Label(cell, text=label, bg=PAL["panel"], fg=PAL["muted"],
+                               font=("Segoe UI", 9))
+                lbl.pack(side="left")
+                self.flag_lights[flag] = {"canvas": cv, "oval": oval,
+                                          "label": lbl, "owner": owner}
 
         if cfg.get("panes"):
-            # Three live panes side by side (resizable).
+            # Live panes side by side (resizable).
             pw = ttk.PanedWindow(self, orient="horizontal")
             pw.pack(fill="both", expand=True)
             for p in cfg["panes"]:
-                frame = ttk.LabelFrame(pw, text=p["title"])
-                txt = ScrolledText(frame, height=18, width=30, bg="#0e0f12",
-                                   fg="#d6d6d6", insertbackground="#d6d6d6",
-                                   font=("Consolas", 10), wrap="word",
-                                   state="disabled")
-                txt.pack(fill="both", expand=True)
+                frame = ttk.LabelFrame(pw, text=f" {p['title']} ")
+                txt = _text(frame, height=18, width=28, wrap="word")
+                txt.pack(fill="both", expand=True, padx=2, pady=2)
                 pw.add(frame, weight=1)
                 self.panes[p["key"]] = txt
             # Default target for undirected output is the first pane (Boss).
             self.log = self.panes[cfg["panes"][0]["key"]]
         else:
-            self.log = ScrolledText(self, height=18, bg="#0e0f12", fg="#d6d6d6",
-                                    insertbackground="#d6d6d6",
-                                    font=("Consolas", 10), wrap="none",
-                                    state="disabled")
+            self.log = _text(self, height=18, wrap="none")
             self.log.pack(fill="both", expand=True)
 
         self.after(100, self._drain)
@@ -490,25 +590,54 @@ class ComponentTab(ttk.Frame):
             w.delete("1.0", "end")
             w.configure(state="disabled")
 
+    def _update_flag_title(self):
+        known = len(self.flag_lights)
+        self.flags_frame.configure(
+            text=f" 🚩 FLAGS  ({len(self.captured)} / {known} captured) ")
+
     def clear_flags(self):
-        if self.flags_list is None:
+        if not self.cfg.get("show_flags"):
             return
         self.flags.clear()
-        self.flags_list.delete(0, "end")
-        self.flags_frame.configure(text="🚩 Flags captured (0)")
+        self.captured.clear()
+        self._leaked_seen.clear()
+        for e in self.flag_lights.values():
+            e["canvas"].itemconfig(e["oval"], fill=PAL["blue"])
+            e["label"].configure(fg=PAL["muted"])
+        self._update_flag_title()
+        if self.app:
+            self.app.set_red(0)
 
-    def _add_flag(self, flag: str):
-        if self.flags_list is None or not flag or flag in self.flags:
-            return
+    def _add_flag(self, flag: str, source_pane=None) -> str:
+        """Score a flag only if captured through its owning vulnerability class.
+        Returns 'new' (just scored), 'dup' (already scored), or 'reject'
+        (unknown flag, or leaked via a different agent)."""
+        entry = self.flag_lights.get(flag) if flag else None
+        if entry is None or entry["owner"] != source_pane:
+            return "reject"
+        if flag in self.captured:
+            return "dup"
+        self.captured.add(flag)
         self.flags.add(flag)
-        self.flags_list.insert("end", flag)
-        self.flags_list.see("end")
-        self.flags_frame.configure(text=f"🚩 Flags captured ({len(self.flags)})")
+        entry["canvas"].itemconfig(entry["oval"], fill=PAL["red"])  # blue -> red
+        entry["label"].configure(fg=PAL["red"])
+        self._update_flag_title()
+        if self.app:
+            self.app.set_red(len(self.captured))
+        return "new"
 
-    def _harvest_flags(self, text: str):
-        """Pull any new FLAG{...} out of a streamed line into the overview."""
-        for flag in FLAG_RE.findall(text):
-            self._add_flag(flag)
+    def _count_blue(self, line: str):
+        """Defender: count blocked requests (blue score) from its log stream."""
+        if '"request_decision"' not in line or '"blocked"' not in line:
+            return
+        m = re.search(r'"event_id":\s*"([^"]+)"', line)
+        eid = m.group(1) if m else line
+        if eid in self._blue_seen:
+            return
+        self._blue_seen.add(eid)
+        self._blue += 1
+        if self.app:
+            self.app.set_blue(self._blue)
 
     # -- subagent lights + event feed -------------------------------------- #
     def _set_light(self, key: str, on: bool, status: str | None = None,
@@ -516,7 +645,7 @@ class ComponentTab(ttk.Frame):
         entry = self.lights.get(key)
         if not entry:
             return
-        fill = color or ("#2ECC71" if on else "#555")
+        fill = color or (PAL["green"] if on else PAL["idle"])
         entry["canvas"].itemconfig(entry["oval"], fill=fill)
         if status is not None:
             entry["status"].set(status)
@@ -526,7 +655,7 @@ class ComponentTab(ttk.Frame):
         self.tid_label.clear()
         self._seen_msgs.clear()
         for entry in self.lights.values():
-            entry["canvas"].itemconfig(entry["oval"], fill="#555")
+            entry["canvas"].itemconfig(entry["oval"], fill=PAL["idle"])
             entry["status"].set("idle")
 
     def _label_for(self, key: str) -> str:
@@ -551,7 +680,7 @@ class ComponentTab(ttk.Frame):
             total = len(tasks)
             # Server has 1 worker: green while one truly runs, amber if only
             # queued work is waiting, grey when nothing is outstanding.
-            color = "#2ECC71" if running else ("#E1B400" if queued else "#555")
+            color = PAL["green"] if running else (PAL["amber"] if queued else PAL["idle"])
             self._set_light(sub, running > 0,
                             f"{running} running / {queued} queued / {total} launched",
                             color=color)
@@ -572,8 +701,15 @@ class ComponentTab(ttk.Frame):
                         pane=self.pane_for.get(tool, "boss"))
         elif action == "flag_captured":
             flag = ev.get("flag")
-            self._add_flag(flag)
-            self.append(f"  🚩 {flag}\n", pane=self.pane_for.get(tool, "boss"))
+            pane = self.pane_for.get(tool, "boss")
+            result = self._add_flag(flag, pane)
+            if result == "new":
+                self.append(f"  🚩 {flag}\n", pane=pane)
+            elif result == "reject" and flag and flag not in self._leaked_seen:
+                # Seen here but not this agent's vuln (e.g. leaked via source
+                # disclosure): show it, but don't score it.
+                self._leaked_seen.add(flag)
+                self.append(f"  📄 leaked (not scored): {flag}\n", pane=pane)
 
     def _handle_health(self, line: str):
         """Parse a 'SERVER <code>' health line and colour the Server light."""
@@ -582,7 +718,7 @@ class ComponentTab(ttk.Frame):
             return
         code = line.split("SERVER", 1)[1].strip() or "000"
         up = code not in ("", "000")
-        entry["canvas"].itemconfig(entry["oval"], fill="#2ECC71" if up else "#E74C3C")
+        entry["canvas"].itemconfig(entry["oval"], fill=PAL["green"] if up else PAL["red"])
         entry["status"].set(f"connected ({code})" if up else "down (:2024)")
 
     def _poll_health(self):
@@ -668,7 +804,7 @@ class ComponentTab(ttk.Frame):
             self.append("… an action is already running; wait for it to finish.\n")
             return
         self.status_var.set(f"{which}…")
-        self.set_dot("#E1B400")
+        self.set_dot(PAL["amber"])
         spec = self.cfg[which]
         host = self.cfg["host"]
         if isinstance(spec, dict) and "script" in spec:
@@ -683,6 +819,10 @@ class ComponentTab(ttk.Frame):
 
     def on_start(self):
         self.clear_flags()  # fresh run: reset the flags panel so re-finds show
+        if self.cfg.get("counts_blue") and self.app:
+            self._blue = 0
+            self._blue_seen.clear()
+            self.app.set_blue(0)
         self._run_action("start")
 
     def on_stop(self):
@@ -787,7 +927,8 @@ class ComponentTab(ttk.Frame):
                     elif role == "events":
                         self._on_event_line(payload)
                     elif role == "logs":
-                        self._harvest_flags(payload)  # scan all log lines
+                        if self.cfg.get("counts_blue"):
+                            self._count_blue(payload)  # defender: blocked = blue
                         s = payload.strip()
                         if s.startswith("{") and '"action"' in s:
                             continue  # raw event JSON; shown via the events feed
@@ -812,14 +953,14 @@ class ComponentTab(ttk.Frame):
         if which == "start":
             if code == 0:
                 self.status_var.set("started")
-                self.set_dot("#2ECC71")
+                self.set_dot(PAL["green"])
                 self.start_logs()  # auto-attach the live log stream
             else:
                 self.status_var.set("start failed")
-                self.set_dot("#E74C3C")
+                self.set_dot(PAL["red"])
         elif which == "stop":
             self.status_var.set("stopped")
-            self.set_dot("#888888")
+            self.set_dot(PAL["muted"])
         elif which == "status":
             self.status_var.set("status shown")
         self.action_proc = None
@@ -834,25 +975,118 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("PurpleAI Control")
-        self.geometry("1200x680")
-        self.minsize(760, 480)
+        self.geometry("1240x720")
+        self.minsize(820, 520)
+        self.configure(bg=PAL["bg"])
+        apply_style(self)
 
-        header = ttk.Frame(self, padding=(10, 8))
+        self.red_score = 0
+        self.blue_score = 0
+
+        # -- header: title + actions --------------------------------------- #
+        header = ttk.Frame(self, padding=(14, 12, 14, 4))
         header.pack(fill="x")
-        ttk.Label(header, text="PurpleAI Control", font=("Segoe UI", 15, "bold")).pack(side="left")
-        ttk.Button(header, text="Start all", command=self.start_all).pack(side="right", padx=3)
-        ttk.Button(header, text="Stop all", command=self.stop_all).pack(side="right", padx=3)
-        ttk.Label(header, text=f"via {GAMEHOST}", foreground="#888").pack(side="right", padx=10)
+        if LOGO_PNG_B64:
+            try:
+                img = tk.PhotoImage(data=LOGO_PNG_B64)
+                factor = max(1, img.height() // 38)
+                self._logo_img = img.subsample(factor, factor)
+                tk.Label(header, image=self._logo_img, bg="#ffffff",
+                         bd=0, padx=4, pady=2).pack(side="left", padx=(0, 10))
+            except Exception:  # noqa: BLE001  (logo is cosmetic)
+                pass
+        ttk.Label(header, text="PurpleAI Control",
+                  style="Title.TLabel").pack(side="left")
+        ttk.Button(header, text="■ Stop all", command=self.stop_all).pack(side="right", padx=3)
+        ttk.Button(header, text="▶ Start all", command=self.start_all,
+                   style="Accent.TButton").pack(side="right", padx=3)
+        ttk.Label(header, text=f"via {GAMEHOST}",
+                  style="Muted.TLabel").pack(side="right", padx=12)
 
+        self._build_scoreboard()
+
+        # -- tabs ----------------------------------------------------------- #
         nb = ttk.Notebook(self)
-        nb.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        nb.pack(fill="both", expand=True, padx=12, pady=(4, 12))
         self.tabs: list[ComponentTab] = []
         for cfg in COMPONENTS:
-            tab = ComponentTab(nb, cfg)
+            tab = ComponentTab(nb, cfg, app=self)
             nb.add(tab, text=cfg["label"])
             self.tabs.append(tab)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    # -- Red vs Blue scoreboard -------------------------------------------- #
+    def _build_scoreboard(self):
+        card = ttk.Frame(self, style="Card.TFrame", padding=(16, 12))
+        card.pack(fill="x", padx=12, pady=(4, 0))
+
+        self.red_var = tk.StringVar(value="0")
+        self.blue_var = tk.StringVar(value="0")
+        self.leader_var = tk.StringVar(value="RED 0  –  0 BLUE")
+
+        # RED side
+        left = ttk.Frame(card, style="Card.TFrame")
+        left.pack(side="left")
+        tk.Label(left, text="🔴 RED", bg=PAL["panel"], fg=PAL["red"],
+                 font=("Segoe UI Semibold", 11)).pack(anchor="w")
+        tk.Label(left, text="flags captured", bg=PAL["panel"], fg=PAL["muted"],
+                 font=("Segoe UI", 8)).pack(anchor="w")
+        self._red_num = tk.Label(card, textvariable=self.red_var, bg=PAL["panel"],
+                                 fg=PAL["red"], font=("Segoe UI", 30, "bold"))
+        self._red_num.pack(side="left", padx=(10, 20))
+
+        # BLUE side (right-anchored)
+        right = ttk.Frame(card, style="Card.TFrame")
+        right.pack(side="right")
+        tk.Label(right, text="BLUE 🔵", bg=PAL["panel"], fg=PAL["blue"],
+                 font=("Segoe UI Semibold", 11)).pack(anchor="e")
+        tk.Label(right, text="attacks blocked", bg=PAL["panel"], fg=PAL["muted"],
+                 font=("Segoe UI", 8)).pack(anchor="e")
+        self._blue_num = tk.Label(card, textvariable=self.blue_var, bg=PAL["panel"],
+                                  fg=PAL["blue"], font=("Segoe UI", 30, "bold"))
+        self._blue_num.pack(side="right", padx=(20, 10))
+
+        # centre: proportion bar + leader text
+        mid = ttk.Frame(card, style="Card.TFrame")
+        mid.pack(fill="x", padx=8)
+        tk.Label(mid, textvariable=self.leader_var, bg=PAL["panel"],
+                 fg=PAL["muted"], font=("Segoe UI Semibold", 10)).pack()
+        self.score_canvas = tk.Canvas(mid, height=14, highlightthickness=0,
+                                      bg=PAL["log"])
+        self.score_canvas.pack(fill="x", pady=(6, 0))
+        self.score_canvas.bind("<Configure>", lambda e: self._draw_score_bar())
+
+    def set_red(self, n: int):
+        self.red_score = n
+        self._refresh_score()
+
+    def set_blue(self, n: int):
+        self.blue_score = n
+        self._refresh_score()
+
+    def _refresh_score(self):
+        self.red_var.set(str(self.red_score))
+        self.blue_var.set(str(self.blue_score))
+        r, b = self.red_score, self.blue_score
+        if r > b:
+            self.leader_var.set(f"🔴 RED leads  {r} – {b}")
+        elif b > r:
+            self.leader_var.set(f"🔵 BLUE leads  {r} – {b}")
+        else:
+            self.leader_var.set(f"TIED  {r} – {b}")
+        self._draw_score_bar()
+
+    def _draw_score_bar(self):
+        c = self.score_canvas
+        c.delete("all")
+        w = c.winfo_width() or 1
+        h = int(c["height"])
+        r, b = self.red_score, self.blue_score
+        tot = r + b
+        rw = w // 2 if tot == 0 else int(round(w * r / tot))
+        c.create_rectangle(0, 0, rw, h, fill=PAL["red"], width=0)
+        c.create_rectangle(rw, 0, w, h, fill=PAL["blue"], width=0)
 
     def _tab(self, key: str) -> ComponentTab:
         return next(t for t in self.tabs if t.cfg["key"] == key)
