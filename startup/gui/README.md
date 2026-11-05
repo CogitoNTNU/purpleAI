@@ -15,6 +15,18 @@ thread with the console window hidden, and output is streamed into the window.
 
 Double-click **`dist/PurpleAIControl.exe`**. No install, no console.
 
+## Red vs Blue scoreboard
+
+The header shows a live game between the teams:
+
+- **🔴 RED** = flags the attacker has captured this run.
+- **🔵 BLUE** = requests the defender has blocked this run
+  (`request_decision` events with `status: blocked`).
+
+A proportion bar and a "leads / tied" line update as each side scores. Red
+resets when you Start (or Clear) the attacker; Blue resets when you Start the
+defender.
+
 ## Build
 
 ```powershell
