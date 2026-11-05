@@ -15,6 +15,7 @@ Kjør:
 import os
 import sqlite3
 import subprocess
+import urllib.request
 from pathlib import Path
 
 from flask import (
@@ -375,6 +376,29 @@ def greet():
 
     return render_template("greet.html", greeting=greeting, user_input=user_input)
 
+@app.route("/fetch", methods=["GET", "POST"])
+def fetch_url():
+    # VULN: SSRF - the server fetches any URL the client supplies, with no
+    # validation of host/scheme/IP. Try ?url=file:///etc/passwd
+    url = request.args.get("url", "") or request.form.get("url", "")
+    if not url:
+        return "Usage: /fetch?url=<url>"
+    try:
+        with urllib.request.urlopen(url, timeout=3) as resp:
+            content = resp.read(4096).decode(errors="replace")
+    except Exception as e:
+        content = "Could not fetch: {}".format(e)
+    resp = make_response(content)
+    resp.headers["Content-Type"] = "text/plain; charset=utf-8"
+    return resp
+
+@app.route("/internal")
+def internal():
+    # Meant to be reachable only internally. SSRF via /fetch lets an attacker
+    # reach it anyway.
+    if request.remote_addr not in ("127.0.0.1", "::1"):
+        return "No access (403)", 403
+    return "FLAG{ssrf_internal_metadata_access}"
 
 @app.route("/robots.txt")
 def robots():
