@@ -124,7 +124,9 @@ tmux pipe-pane -o -t "$SESSION" "cat >> '$LOG'"
 #      watched project tree; with auto-reload on, every write reloads the dev
 #      server and interrupts the one worker, so subagent runs stick at "pending"
 #      forever and the Boss never advances past iteration 0.
-tmux send-keys -t "$SESSION" "BROWSER=true .venv/bin/langgraph dev --no-browser --no-reload > '$LOGDIR/langgraph.log' 2>&1 &" C-m
+#    --n-jobs-per-worker: run subagent scans concurrently (SQLi/XSS/SSTI at
+#      once) rather than serialised.
+tmux send-keys -t "$SESSION" "BROWSER=true .venv/bin/langgraph dev --no-browser --no-reload --n-jobs-per-worker 10 > '$LOGDIR/langgraph.log' 2>&1 &" C-m
 # 2) Give it time to boot (and you a chance to open the Server log) before Boss.
 tmux send-keys -t "$SESSION" "echo 'subagent server starting on :2024 (log: $LOGDIR/langgraph.log)'; echo 'open the Server log to watch it; Boss starts in ${START_DELAY}s...'; sleep ${START_DELAY}" C-m
 # 3) Then wait (bounded, ~60s) until it actually answers before starting Boss.
