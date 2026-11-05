@@ -178,3 +178,38 @@ async def ssti_scanner(
     ]
 
     return await run_logged_tool(cmd, target=full_url)
+
+@tool
+async def xxe_scanner(
+    payload: str,
+    endpoint: str = "/upload",
+    parameter: str = "file",
+    timeout: float = 30.0,
+) -> str:
+    """Test the configured target for XML External Entity (XXE) injection using curl.
+
+    The target URL is fixed (config.Target_url) and cannot be chosen here, by
+    design. You decide which payload to inject and where to inject it.
+
+    Args:
+        payload: the XXE payload to test.
+        endpoint: the endpoint to test (default: "/upload").
+        parameter: which parameter to inject the payload into.
+        timeout: request timeout in seconds.
+
+    Returns:
+        The HTTP response showing whether the XML was processed.
+    """
+    base_url = Target_url.rstrip("/")
+    full_url = f"{base_url}{endpoint}"
+
+    cmd = [
+        "curl",
+        "-X", "POST",
+        "-d", f"{parameter}={payload}",
+        "--max-time", str(int(timeout)),
+        "-i",  # include HTTP headers in output
+        full_url,
+    ]
+
+    return await run_logged_tool(cmd, target=full_url)
