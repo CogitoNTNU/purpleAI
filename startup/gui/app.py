@@ -196,17 +196,20 @@ COMPONENTS = [
         "color": "#C0392B",
         "filterable": True,   # adds the "Reasoning only" checkbox (on by default)
         "show_flags": True,   # adds the "Flags captured" overview
-        # Three live panes side by side: Boss, SQL, Cross-site.
+        # Live panes side by side: Boss, SQL, Cross-site, SSTI.
         "panes": [
             {"key": "boss", "title": "Boss"},
             {"key": "sql", "title": "SQL  (sql_injection_agent)"},
             {"key": "xss", "title": "Cross-site  (xss_agent)"},
+            {"key": "ssti", "title": "SSTI  (ssti_agent)"},
         ],
         # Subagents to show activity lights for; `tool` maps a tool event to its
-        # subagent (sqlmap -> SQLi, xsser -> XSS); `pane` routes its output.
+        # subagent (sqlmap -> SQLi, xsser -> XSS, curl -> SSTI's ssti_scanner);
+        # `pane` routes its output.
         "subagents": [
             {"name": "sql_injection_agent", "label": "SQLi", "tool": "sqlmap", "pane": "sql"},
             {"name": "xss_agent", "label": "XSS", "tool": "xsser", "pane": "xss"},
+            {"name": "ssti_agent", "label": "SSTI", "tool": "curl", "pane": "ssti"},
         ],
         # Structured event log (both Boss and subagent server append here).
         "events": f"mkdir -p {REPO}/src/Attacker/logs "
