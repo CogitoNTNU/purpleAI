@@ -751,24 +751,32 @@ class ComponentTab(ttk.Frame):
 
     # -- reasoning-only filter --------------------------------------------- #
     # Boss output per turn:
-    #   "===== iteration N ====="   -> boundary (show)
+    #   "===== iteration N ====="   -> boundary (hide; resets block state)
     #   "  [node] reasoning..."      -> reasoning (show; may wrap to more lines)
     #   "  -> tool(args)" / "  <- tool: result"  -> tool chatter (hide)
+    #   "  … 3 subagent(s) running"  -> structural noise (hide)
     #   "  🚩 CAPTURED FLAG: ..."    -> always show
     _RE_ITER = re.compile(r"^\s*=+\s*iteration\b", re.IGNORECASE)
     _RE_REASON = re.compile(r"^\s*\[")          # "  [node] ..."
     _RE_TOOL = re.compile(r"^\s*[→←>←<]")       # tool call "→"/">" or result "←"/"<"
+    _RE_NOISE = re.compile(r"^\s*[…]")          # structural status lines
 
     def _keep_line(self, line: str) -> bool:
-        """Stateful filter: True to show this line, False to drop it."""
+        """Show only Boss reasoning and flags; hide everything else."""
         if "🚩" in line or "CAPTURED FLAG" in line or "FLAG{" in line:
             return True
-        if self._RE_ITER.match(line) or self._RE_REASON.match(line):
-            self._show_block = True
-            return True
+        if self._RE_ITER.match(line):
+            self._show_block = False   # reset at iteration boundary
+            return False               # hide the header itself
+        if self._RE_NOISE.match(line):
+            self._show_block = False
+            return False
         if self._RE_TOOL.match(line):
             self._show_block = False
             return False
+        if self._RE_REASON.match(line):
+            self._show_block = True
+            return True
         # Continuation / blank line: follow the current block's visibility.
         return self._show_block
 
