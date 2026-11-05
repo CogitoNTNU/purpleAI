@@ -277,15 +277,18 @@ FLAG_RE = re.compile(r"FLAG\{[^}\n]{0,200}\}")
 
 # The flags planted in the vulnerable app (see
 # src/defender/vulnerable-app/VULNERABILITIES.md). Each is a light that starts
-# blue (defended) and turns red when the attacker captures it.
+# blue (defended) and turns red when the attacker captures it THROUGH ITS OWN
+# vulnerability class (`owner` pane) — so a flag merely leaked via another bug
+# (e.g. SSTI reading app.py, which inlines the SQL/XSS flag strings) does not
+# count. `owner=None` = no current agent targets it, so it stays blue.
 KNOWN_FLAGS = [
-    ("FLAG{sql_login_bypass_success}", "SQL login bypass"),
-    ("FLAG{sql_union_injection_found}", "SQL UNION"),
-    ("FLAG{reflected_xss}", "Reflected XSS"),
-    ("FLAG{stored_xss_dom}", "Stored XSS"),
-    ("FLAG{server_side_template_injection}", "SSTI"),
-    ("FLAG{broken_access_control_admin_panel}", "Admin access"),
-    ("FLAG{path_traversal_outside_reports_dir}", "Path traversal"),
+    ("FLAG{sql_login_bypass_success}", "SQL login bypass", "sql"),
+    ("FLAG{sql_union_injection_found}", "SQL UNION", "sql"),
+    ("FLAG{reflected_xss}", "Reflected XSS", "xss"),
+    ("FLAG{stored_xss_dom}", "Stored XSS", "xss"),
+    ("FLAG{server_side_template_injection}", "SSTI", "ssti"),
+    ("FLAG{broken_access_control_admin_panel}", "Admin access", None),
+    ("FLAG{path_traversal_outside_reports_dir}", "Path traversal", None),
 ]
 
 # --------------------------------------------------------------------------- #
@@ -450,7 +453,9 @@ class ComponentTab(ttk.Frame):
         self.reasoning_only = tk.BooleanVar(value=bool(cfg.get("filterable")))
         self._show_block = False  # filter state: are we inside a shown block?
         self.flags: set[str] = set()  # unique FLAG{...} seen on this box
-        self.flag_lights: dict = {}  # flag string -> {canvas, oval, label}
+        self.captured: set[str] = set()  # flags scored (attributed to their agent)
+        self._leaked_seen: set[str] = set()  # leaked-not-scored, for dedup
+        self.flag_lights: dict = {}  # flag string -> {canvas, oval, label, owner}
         self.sub_tasks: dict = {}  # subagent name -> {task_id: status}
         self.panes: dict = {}  # pane key -> ScrolledText (multi-pane mode)
         # Route a subagent name / tool / label to its pane key.
@@ -534,7 +539,7 @@ class ComponentTab(ttk.Frame):
             grid = ttk.Frame(self.flags_frame, style="Card.TFrame")
             grid.pack(fill="x", padx=8, pady=8)
             cols = 4
-            for idx, (flag, label) in enumerate(KNOWN_FLAGS):
+            for idx, (flag, label, owner) in enumerate(KNOWN_FLAGS):
                 cell = ttk.Frame(grid, style="Card.TFrame")
                 cell.grid(row=idx // cols, column=idx % cols, sticky="w",
                           padx=(0, 20), pady=3)
@@ -545,7 +550,8 @@ class ComponentTab(ttk.Frame):
                 lbl = tk.Label(cell, text=label, bg=PAL["panel"], fg=PAL["muted"],
                                font=("Segoe UI", 9))
                 lbl.pack(side="left")
-                self.flag_lights[flag] = {"canvas": cv, "oval": oval, "label": lbl}
+                self.flag_lights[flag] = {"canvas": cv, "oval": oval,
+                                          "label": lbl, "owner": owner}
 
         if cfg.get("panes"):
             # Live panes side by side (resizable).
@@ -586,13 +592,15 @@ class ComponentTab(ttk.Frame):
 
     def _update_flag_title(self):
         known = len(self.flag_lights)
-        cap = sum(1 for f in self.flag_lights if f in self.flags)
-        self.flags_frame.configure(text=f" 🚩 FLAGS  ({cap} / {known} captured) ")
+        self.flags_frame.configure(
+            text=f" 🚩 FLAGS  ({len(self.captured)} / {known} captured) ")
 
     def clear_flags(self):
         if not self.cfg.get("show_flags"):
             return
         self.flags.clear()
+        self.captured.clear()
+        self._leaked_seen.clear()
         for e in self.flag_lights.values():
             e["canvas"].itemconfig(e["oval"], fill=PAL["blue"])
             e["label"].configure(fg=PAL["muted"])
@@ -600,17 +608,23 @@ class ComponentTab(ttk.Frame):
         if self.app:
             self.app.set_red(0)
 
-    def _add_flag(self, flag: str):
-        if not self.cfg.get("show_flags") or not flag or flag in self.flags:
-            return
+    def _add_flag(self, flag: str, source_pane=None) -> str:
+        """Score a flag only if captured through its owning vulnerability class.
+        Returns 'new' (just scored), 'dup' (already scored), or 'reject'
+        (unknown flag, or leaked via a different agent)."""
+        entry = self.flag_lights.get(flag) if flag else None
+        if entry is None or entry["owner"] != source_pane:
+            return "reject"
+        if flag in self.captured:
+            return "dup"
+        self.captured.add(flag)
         self.flags.add(flag)
-        entry = self.flag_lights.get(flag)
-        if entry:  # a known planted flag: blue -> red
-            entry["canvas"].itemconfig(entry["oval"], fill=PAL["red"])
-            entry["label"].configure(fg=PAL["red"])
+        entry["canvas"].itemconfig(entry["oval"], fill=PAL["red"])  # blue -> red
+        entry["label"].configure(fg=PAL["red"])
         self._update_flag_title()
         if self.app:
-            self.app.set_red(len(self.flags))
+            self.app.set_red(len(self.captured))
+        return "new"
 
     def _count_blue(self, line: str):
         """Defender: count blocked requests (blue score) from its log stream."""
@@ -624,11 +638,6 @@ class ComponentTab(ttk.Frame):
         self._blue += 1
         if self.app:
             self.app.set_blue(self._blue)
-
-    def _harvest_flags(self, text: str):
-        """Pull any new FLAG{...} out of a streamed line into the overview."""
-        for flag in FLAG_RE.findall(text):
-            self._add_flag(flag)
 
     # -- subagent lights + event feed -------------------------------------- #
     def _set_light(self, key: str, on: bool, status: str | None = None,
@@ -692,8 +701,15 @@ class ComponentTab(ttk.Frame):
                         pane=self.pane_for.get(tool, "boss"))
         elif action == "flag_captured":
             flag = ev.get("flag")
-            self._add_flag(flag)
-            self.append(f"  🚩 {flag}\n", pane=self.pane_for.get(tool, "boss"))
+            pane = self.pane_for.get(tool, "boss")
+            result = self._add_flag(flag, pane)
+            if result == "new":
+                self.append(f"  🚩 {flag}\n", pane=pane)
+            elif result == "reject" and flag and flag not in self._leaked_seen:
+                # Seen here but not this agent's vuln (e.g. leaked via source
+                # disclosure): show it, but don't score it.
+                self._leaked_seen.add(flag)
+                self.append(f"  📄 leaked (not scored): {flag}\n", pane=pane)
 
     def _handle_health(self, line: str):
         """Parse a 'SERVER <code>' health line and colour the Server light."""
@@ -911,7 +927,6 @@ class ComponentTab(ttk.Frame):
                     elif role == "events":
                         self._on_event_line(payload)
                     elif role == "logs":
-                        self._harvest_flags(payload)  # scan all log lines
                         if self.cfg.get("counts_blue"):
                             self._count_blue(payload)  # defender: blocked = blue
                         s = payload.strip()
