@@ -79,7 +79,8 @@ def with_pull(cmd: str) -> str:
 ATTACKER_START_SH = r"""
 set -euo pipefail
 REPO="${PURPLE_REPO:-$HOME/purpleAI}"
-ATT="$REPO/src/Attacker"
+ATT="$REPO/src/attacker"
+[ -d "$ATT" ] || ATT="$REPO/src/Attacker"   # repo was renamed lowercase on main
 SESSION="attacker"
 LOGDIR="$REPO/startup/logs"
 LOG="$LOGDIR/attacker.log"
@@ -114,19 +115,44 @@ mkdir -p "$ATT/logs"
 rm -rf "$ATT/.langgraph_api" 2>/dev/null || true
 echo "[attacker] cleared previous run state (events rotated, server threads wiped)."
 
-if [ ! -x "$ATT/.venv/bin/langgraph" ]; then
-  echo "[attacker] .venv not set up; bootstrapping with uv..."
+# The lowercase rename on main split the source (src/attacker) from the
+# pre-existing venv and the gitignored .env, which were left behind in the old
+# src/Attacker. Carry the .env over and reuse whichever venv already has
+# langgraph (uv is often not on the non-interactive PATH).
+if [ ! -f "$ATT/.env" ]; then
+  for alt in "$REPO/src/Attacker/.env" "$REPO/src/attacker/.env"; do
+    if [ -f "$alt" ] && [ "$alt" != "$ATT/.env" ]; then
+      cp "$alt" "$ATT/.env" && echo "[attacker] copied .env from $alt"; break
+    fi
+  done
+fi
+
+VENV="$ATT/.venv"
+if [ ! -x "$VENV/bin/langgraph" ]; then
+  for alt in "$REPO/src/attacker/.venv" "$REPO/src/Attacker/.venv"; do
+    if [ -x "$alt/bin/langgraph" ]; then VENV="$alt"; break; fi
+  done
+fi
+if [ ! -x "$VENV/bin/langgraph" ]; then
+  echo "[attacker] no venv with langgraph; bootstrapping with uv..."
   if command -v uv >/dev/null 2>&1; then
     ( cd "$ATT" && uv venv && uv pip install --python .venv/bin/python -r requirements.txt )
+    VENV="$ATT/.venv"
   else
-    echo "ERROR: no .venv and uv missing; see $ATT/README.md" >&2; exit 1
+    echo "ERROR: no usable .venv and uv not on PATH. In $ATT run: uv venv && uv pip install -r requirements.txt" >&2
+    exit 1
   fi
 fi
+echo "[attacker] using venv: $VENV"
 
 : > "$LOG"
 START_DELAY="${PURPLE_ATTACKER_DELAY:-10}"
 tmux new-session -d -s "$SESSION" -c "$ATT"
 tmux pipe-pane -o -t "$SESSION" "cat >> '$LOG'"
+# Load the env into the pane so the server + Boss get LLM_API_KEY. The rename
+# left an .env with the wrong schema in src/attacker, so if LLM_API_KEY is still
+# unset, also source the leftover .env (which has it).
+tmux send-keys -t "$SESSION" "set -a; [ -f .env ] && . ./.env; [ -z \"\${LLM_API_KEY:-}\" ] && [ -f '$REPO/src/Attacker/.env' ] && . '$REPO/src/Attacker/.env'; set +a" C-m
 # 1) Start the subagent server (langgraph dev) in the background, own log.
 #    --no-browser: on a headless box, opening LangGraph Studio launches a
 #      text-mode browser that grabs the tmux pane's tty and suspends the server.
@@ -136,12 +162,12 @@ tmux pipe-pane -o -t "$SESSION" "cat >> '$LOG'"
 #      forever and the Boss never advances past iteration 0.
 #    --n-jobs-per-worker: run subagent scans concurrently (SQLi/XSS/SSTI at
 #      once) rather than serialised.
-tmux send-keys -t "$SESSION" "BROWSER=true .venv/bin/langgraph dev --no-browser --no-reload --n-jobs-per-worker 10 > '$LOGDIR/langgraph.log' 2>&1 &" C-m
+tmux send-keys -t "$SESSION" "BROWSER=true $VENV/bin/langgraph dev --no-browser --no-reload --n-jobs-per-worker 10 > '$LOGDIR/langgraph.log' 2>&1 &" C-m
 # 2) Give it time to boot (and you a chance to open the Server log) before Boss.
 tmux send-keys -t "$SESSION" "echo 'subagent server starting on :2024 (log: $LOGDIR/langgraph.log)'; echo 'open the Server log to watch it; Boss starts in ${START_DELAY}s...'; sleep ${START_DELAY}" C-m
 # 3) Then wait (bounded, ~60s) until it actually answers before starting Boss.
 tmux send-keys -t "$SESSION" "n=0; until curl -s http://localhost:2024/ok >/dev/null 2>&1 || curl -s http://localhost:2024/ >/dev/null 2>&1; do n=\$((n+1)); [ \$n -ge 30 ] && break; sleep 2; done" C-m
-tmux send-keys -t "$SESSION" "if curl -s http://localhost:2024/ok >/dev/null 2>&1 || curl -s http://localhost:2024/ >/dev/null 2>&1; then echo 'server up; starting Boss'; else echo 'WARNING: server not responding on :2024 - check the Server log'; fi; .venv/bin/python redagent.py" C-m
+tmux send-keys -t "$SESSION" "if curl -s http://localhost:2024/ok >/dev/null 2>&1 || curl -s http://localhost:2024/ >/dev/null 2>&1; then echo 'server up; starting Boss'; else echo 'WARNING: server not responding on :2024 - check the Server log'; fi; $VENV/bin/python redagent.py" C-m
 echo "[attacker] started (detached). Server booting; Boss starts after ${START_DELAY}s. Logs -> $LOG"
 """
 
@@ -224,9 +250,9 @@ COMPONENTS = [
             {"name": "ssti_agent", "label": "SSTI", "tool": "curl", "pane": "ssti"},
         ],
         # Structured event log (both Boss and subagent server append here).
-        "events": f"mkdir -p {REPO}/src/Attacker/logs "
-                  f"&& touch {REPO}/src/Attacker/logs/events.jsonl "
-                  f"&& tail -n 200 -F {REPO}/src/Attacker/logs/events.jsonl",
+        "events": (f"D={REPO}/src/attacker; [ -d \"$D\" ] || D={REPO}/src/Attacker; "
+                   "mkdir -p $D/logs && touch $D/logs/events.jsonl "
+                   "&& tail -n 200 -F $D/logs/events.jsonl"),
         # The subagent server's own stdout/stderr (why it did/didn't start).
         "server_logs": f"mkdir -p {REPO}/startup/logs "
                        f"&& touch {REPO}/startup/logs/langgraph.log "
@@ -449,6 +475,7 @@ class ComponentTab(ttk.Frame):
         self.reason_proc: Proc | None = None  # subagent-reasoning poll
         self._reason_after = None             # pending reasoning-poll timer id
         self._reason_on = False               # reasoning stream toggled on?
+        self._reason_err_shown = False        # throttle "server unreachable"
         self._seen_msgs: set = set()          # (tid, i) already shown
         self.tid_label: dict = {}             # thread id -> subagent label
         self.action_proc: Proc | None = None  # one-shot start/stop/status
@@ -784,7 +811,10 @@ class ComponentTab(ttk.Frame):
     def _handle_reasoning(self, line: str):
         line = line.strip()
         if line.startswith("REASON_ERR"):
-            self.append("  [reason] " + line + "\n")
+            if not self._reason_err_shown:  # show once, not every poll
+                self.append("  [reason] subagent server not reachable on :2024 "
+                            "(is it up? check the Server light / 📄 Server log)\n")
+                self._reason_err_shown = True
             return
         if not line.startswith("{"):
             return
@@ -792,6 +822,7 @@ class ComponentTab(ttk.Frame):
             m = json.loads(line)
         except (ValueError, TypeError):
             return
+        self._reason_err_shown = False  # a good poll; re-arm the error notice
         tid, i = m.get("tid"), m.get("i")
         key = (tid, i)
         if key in self._seen_msgs:
