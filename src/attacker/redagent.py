@@ -68,6 +68,18 @@ subagents = [
         "graph_id": "ssti_agent",
         "url": SUBAGENT_SERVER_URL,
     },
+    {
+        "name": "xxe_agent",
+        "description": (
+            "XML External Entity (XXE) specialist. Uses xxe_scanner to inject "
+            "XML payloads with external entities against the authorized target "
+            "(e.g. file-upload / XML endpoints). Give it a focused task "
+            "describing the endpoint, parameter, and which entity/payload to "
+            "test."
+        ),
+        "graph_id": "xxe_agent",
+        "url": SUBAGENT_SERVER_URL,
+    },
 ]
 
 # Checkpointer persists the conversation across loop iterations (in memory,
@@ -103,11 +115,12 @@ def _print_trace_pointer() -> None:
 # to pick up where it left off — check running tasks, act on finished ones, and
 # decide the next move — so the engagement advances on its own.
 INITIAL_OBJECTIVE = (
-    f"Begin a penetration test of {Target_url}. Launch three focused scans in "
+    f"Begin a penetration test of {Target_url}. Launch four focused scans in "
     "parallel right away, since they are independent: delegate a SQL injection "
     "scan to the sql_injection_agent, a cross-site scripting scan to the "
-    "xss_agent, and a server-side template injection scan to the ssti_agent. "
-    "Give each a specific task for its specialty."
+    "xss_agent, a server-side template injection scan to the ssti_agent, and an "
+    "XML External Entity (XXE) scan to the xxe_agent. Give each a specific task "
+    "for its specialty."
 )
 CONTINUE_NUDGE = (
     "Continue the engagement. First check the status of every task you have "
