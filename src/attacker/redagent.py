@@ -37,6 +37,19 @@ SUBAGENT_SERVER_URL = "http://localhost:2024"
 # subagents here as new graphs are registered on the server.
 subagents = [
     {
+        "name": "recon_agent",
+        "description": (
+            "Reconnaissance specialist. Crawls the authorized target to "
+            "enumerate endpoints, query parameters, forms, which parameters "
+            "reflect input unescaped, and the backend tech stack. Launch this "
+            "FIRST and read its map before attacking: it tells you where the "
+            "attack surface is and which vulnerability class fits each lead. "
+            "Exploits nothing."
+        ),
+        "graph_id": "recon_agent",
+        "url": SUBAGENT_SERVER_URL,
+    },
+    {
         "name": "sql_injection_agent",
         "description": (
             "SQL injection specialist. Runs sqlmap against the authorized "
@@ -115,12 +128,15 @@ def _print_trace_pointer() -> None:
 # to pick up where it left off — check running tasks, act on finished ones, and
 # decide the next move — so the engagement advances on its own.
 INITIAL_OBJECTIVE = (
-    f"Begin a penetration test of {Target_url}. Launch four focused scans in "
-    "parallel right away, since they are independent: delegate a SQL injection "
-    "scan to the sql_injection_agent, a cross-site scripting scan to the "
-    "xss_agent, a server-side template injection scan to the ssti_agent, and an "
-    "XML External Entity (XXE) scan to the xxe_agent. Give each a specific task "
-    "for its specialty."
+    f"Begin a penetration test of {Target_url}. Start with RECONNAISSANCE: "
+    "delegate a crawl to the recon_agent and WAIT for its map of endpoints, "
+    "parameters, forms, input reflection, and the backend stack. Do not attack "
+    "blind before it returns. Once you have the map, ROUTE each lead to the "
+    "specialist its evidence fits - reflected-raw parameters to the xss_agent "
+    "and ssti_agent, numeric/non-reflected ids and login forms to the "
+    "sql_injection_agent, XML/upload endpoints to the xxe_agent - naming the "
+    "exact endpoint and parameter and the recon finding that justifies it. Then "
+    "fan those focused scans out in parallel."
 )
 CONTINUE_NUDGE = (
     "Continue the engagement. First check the status of every task you have "
@@ -134,12 +150,15 @@ CONTINUE_NUDGE = (
 # engagement is NOT over, so push it to find a fresh angle rather than idling.
 PROBE_NUDGE = (
     "Every task has finished and nothing is running, but the engagement is NOT "
-    "over. Look for a new angle to capture more FLAG{...}: an untested endpoint, "
-    "parameter, form, cookie, or a different vulnerability class, and delegate a "
-    "focused new scan to the specialist that fits (sql_injection_agent or "
-    "xss_agent). Do not repeat a scan already run or already answered. Only if "
-    "you have genuinely exhausted every reasonable avenue, say so in one line - "
-    "you will be asked again until the operator stops you."
+    "over. Look for a new angle to capture more FLAG{...}: revisit the recon "
+    "map for an untested endpoint, parameter, or form; re-task the recon_agent "
+    "to crawl deeper or map surface a previous result revealed (an admin path, "
+    "a cookie, leaked credentials); or try a different vulnerability class on a "
+    "known lead. Delegate a focused new scan to the specialist that fits "
+    "(recon_agent, sql_injection_agent, xss_agent, ssti_agent, or xxe_agent), "
+    "citing the evidence behind it. Do not repeat a scan already run or already "
+    "answered. Only if you have genuinely exhausted every reasonable avenue, say "
+    "so in one line - you will be asked again until the operator stops you."
 )
 # Sent once as the loop exits (any reason) to get a final findings report. The
 # Boss still has the whole engagement in memory, so it can summarise from it.

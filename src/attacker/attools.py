@@ -1,8 +1,13 @@
+import os
 import re
 
 from config import Target_url
 from event_logging import run_logged_tool
 from langchain_core.tools import tool
+
+# Absolute path to the stdlib recon crawler shipped next to this module, so the
+# web_recon tool resolves it regardless of the server's working directory.
+_RECON_CRAWLER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recon_crawl.py")
 
 # Only these sqlmap injection techniques may be requested by the agent.
 # B=Boolean, E=Error, U=Union, S=Stacked, T=Time, Q=inline Query.
@@ -213,3 +218,38 @@ async def xxe_scanner(
     ]
 
     return await run_logged_tool(cmd, target=full_url)
+@tool
+async def web_recon(depth: int = 2, max_pages: int = 40, fingerprint: bool = True) -> str:
+    """Map the authorized target's attack surface for the other specialists.
+
+    Crawls the fixed target (config.Target_url) to enumerate reachable
+    endpoints, their query parameters, and HTML forms, and probes each GET
+    parameter with a harmless canary to see whether input is reflected
+    unescaped. Reflected-raw params are prime XSS/SSTI leads; numeric,
+    non-reflected ids are SQLi leads. Optionally fingerprints the backend
+    stack with whatweb. The target is fixed by design — you choose only HOW
+    far to crawl. This tool exploits NOTHING; hand its map to the Boss so each
+    specialist gets a concrete endpoint + parameter instead of guessing.
+
+    Args:
+        depth: crawl depth (1-4). Start at 2; go deeper only if the map is thin.
+        max_pages: safety cap on pages fetched (default 40).
+        fingerprint: also run whatweb to identify the server/framework/engine.
+
+    Returns:
+        A readable recon map: endpoints, parameters (with reflection verdict),
+        forms, ranked leads, and (optionally) the tech fingerprint.
+    """
+    depth = max(1, min(4, int(depth)))
+    max_pages = max(1, min(200, int(max_pages)))
+    cmd = ["python3", _RECON_CRAWLER, Target_url, str(depth), str(max_pages)]
+    # Log under "recon" rather than the bare "python3" interpreter name.
+    report = await run_logged_tool(cmd, target=Target_url, timeout=300, tool_name="recon")
+
+    if fingerprint:
+        fp = await run_logged_tool(
+            ["whatweb", "-a", "1", "--color=never", Target_url],
+            target=Target_url, timeout=120, tool_name="whatweb",
+        )
+        report += "\n\n=== tech fingerprint (whatweb) ===\n" + fp
+    return report

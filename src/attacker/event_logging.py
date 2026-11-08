@@ -104,12 +104,17 @@ def log_agent_update(update):
             )
 
 
-async def run_logged_tool(cmd, *, target, timeout=1800):
-    """Run a tool and log metadata, preserving its text result for the agent."""
+async def run_logged_tool(cmd, *, target, timeout=1800, tool_name=None):
+    """Run a tool and log metadata, preserving its text result for the agent.
+
+    tool_name overrides the label the tool is logged under; by default it is the
+    basename of cmd[0]. Pass it when the real binary (e.g. ``python3`` running a
+    helper script) would otherwise log an unhelpful name.
+    """
     # Read the server's current task context without changing the tool schema.
     from langchain_core.runnables.config import ensure_config
 
-    tool = Path(cmd[0]).name
+    tool = tool_name or Path(cmd[0]).name
     fields = {
         "tool": tool,
         "target": target,
