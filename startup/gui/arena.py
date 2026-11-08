@@ -360,8 +360,7 @@ class ArenaTab(ttk.Frame):
         c.create_oval(x - 22, y + 28, x - 16, y + 34, fill=sc, width=0)
         c.create_text(x - 12, y + 31, text=cm["label"], anchor="w",
                       fill="#e6edf3", font=("Segoe UI Semibold", 9))
-        if cm["bubble"] and cm["bubble_t"] > now:
-            self._bubble(x + 20, y - 54, cm["bubble"])
+        # Reasoning is shown in the War Room chat, not as on-map bubbles.
 
     def _bubble(self, x, y, text):
         c = self.canvas
