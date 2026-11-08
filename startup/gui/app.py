@@ -210,7 +210,9 @@ for t in ths:
         if not isinstance(m, dict):
             continue
         typ = m.get("type")
-        if typ not in ("ai", "tool"):
+        # "human" = the task the Boss handed this subagent when it launched the
+        # thread (its marching orders); "ai"/"tool" = the subagent's own work.
+        if typ not in ("ai", "tool", "human"):
             continue
         c = m.get("content")
         if isinstance(c, list):
@@ -845,7 +847,15 @@ class ComponentTab(ttk.Frame):
         pane = self.pane_for.get(label, "boss")
         akey = self.tid_arena.get(tid)
         typ, text, tools = m.get("type"), m.get("text") or "", m.get("tools") or []
-        if typ == "ai":
+        if typ == "human":
+            # The Boss's delegation to this subagent: show it in the Boss's
+            # voice in the War Room, addressed to the subagent it launched.
+            if text:
+                self.append(f"  👑 → {label}: {text}\n", pane="boss")
+                ar = self._arena()
+                if ar:
+                    ar.say("boss", f"→ {label}: {text}")
+        elif typ == "ai":
             if text:
                 self.append(f"  🧠 {text}\n", pane=pane)
                 ar = self._arena()
