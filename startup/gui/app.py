@@ -11,6 +11,7 @@ since this GUI runs ssh non-interactively.
 from __future__ import annotations
 
 import json
+import os
 import queue
 import re
 import subprocess
@@ -347,17 +348,27 @@ PAL = {
     "amber": "#d29922",
     "accent": "#a371f7",   # purple
     "idle": "#30363d",
+    "hover": "#1f2630",    # chrome: hover fill (tabs, ghost buttons)
+    "track": "#0b0e13",    # chrome: scoreboard proportion-bar track
 }
 
 
 def apply_style(root: tk.Misc) -> None:
-    """A dark, modern-ish ttk theme built on 'clam'."""
+    """A dark, flat, modern ttk theme built on 'clam'.
+
+    Only the outer chrome is restyled: the header, the scoreboard, the Notebook
+    tab switcher, and dedicated header buttons. The in-tab styles (Card.*,
+    TLabelframe, the base TButton/Accent.TButton used *inside* the tabs, the
+    checkbutton) are kept exactly as before so the tab bodies are unchanged.
+    """
     style = ttk.Style(root)
     try:
         style.theme_use("clam")
     except tk.TclError:
         pass
     p = PAL
+
+    # ---- base (unchanged) ------------------------------------------------ #
     style.configure(".", background=p["bg"], foreground=p["text"],
                     fieldbackground=p["panel"], bordercolor=p["border"],
                     focuscolor=p["accent"], font=("Segoe UI", 10))
@@ -374,12 +385,8 @@ def apply_style(root: tk.Misc) -> None:
                     relief="solid", borderwidth=1)
     style.configure("TLabelframe.Label", background=p["panel"],
                     foreground=p["muted"], font=("Segoe UI Semibold", 9))
-    style.configure("TNotebook", background=p["bg"], borderwidth=0, tabmargins=(4, 4, 4, 0))
-    style.configure("TNotebook.Tab", background=p["panel"], foreground=p["muted"],
-                    padding=(14, 7), borderwidth=0, font=("Segoe UI", 10))
-    style.map("TNotebook.Tab",
-              background=[("selected", p["bg"])],
-              foreground=[("selected", p["text"])])
+
+    # base buttons used *inside* the tab bodies — kept as before
     style.configure("TButton", background=p["panel"], foreground=p["text"],
                     bordercolor=p["border"], borderwidth=1, focusthickness=0,
                     padding=(9, 5), relief="flat")
@@ -391,6 +398,47 @@ def apply_style(root: tk.Misc) -> None:
     style.map("Accent.TButton", background=[("active", "#b586f9")])
     style.configure("TCheckbutton", background=p["bg"], foreground=p["muted"])
     style.map("TCheckbutton", foreground=[("selected", p["text"])])
+
+    # ---- chrome: header -------------------------------------------------- #
+    style.configure("Header.TFrame", background=p["bg"])
+    style.configure("HeaderTitle.TLabel", background=p["bg"], foreground=p["text"],
+                    font=("Segoe UI Semibold", 17))
+    style.configure("HeaderSub.TLabel", background=p["bg"], foreground=p["muted"],
+                    font=("Segoe UI", 10))
+
+    # header buttons (distinct from the in-tab ones so tab bodies stay as-is)
+    style.configure("Primary.TButton", background=p["accent"], foreground="#0d1117",
+                    bordercolor=p["accent"], borderwidth=0, focusthickness=0,
+                    padding=(16, 9), relief="flat", font=("Segoe UI Semibold", 10))
+    style.map("Primary.TButton",
+              background=[("active", "#b183f9"), ("pressed", "#9a6cf0")],
+              foreground=[("disabled", p["muted"])])
+    style.configure("Ghost.TButton", background=p["panel"], foreground=p["text"],
+                    bordercolor=p["border"], borderwidth=1, focusthickness=0,
+                    padding=(16, 9), relief="flat", font=("Segoe UI", 10))
+    style.map("Ghost.TButton",
+              background=[("active", p["hover"]), ("pressed", p["hover"])],
+              bordercolor=[("active", p["muted"])])
+
+    # ---- chrome: scoreboard ---------------------------------------------- #
+    style.configure("Scorecard.TFrame", background=p["panel"])
+    style.configure("ScoreTeam.TLabel", background=p["panel"],
+                    font=("Segoe UI Semibold", 11))
+    style.configure("ScoreSub.TLabel", background=p["panel"], foreground=p["muted"],
+                    font=("Segoe UI", 9))
+    style.configure("Leader.TLabel", background=p["panel"], foreground=p["text"],
+                    font=("Segoe UI Semibold", 11))
+
+    # ---- chrome: Notebook tab switcher (flat, segmented pills) ------------ #
+    style.configure("TNotebook", background=p["bg"], borderwidth=0,
+                    tabmargins=(0, 6, 0, 0))
+    style.configure("TNotebook.Tab", background=p["bg"], foreground=p["muted"],
+                    padding=(18, 10), borderwidth=0, font=("Segoe UI", 10))
+    style.map("TNotebook.Tab",
+              background=[("selected", p["accent"]), ("active", p["hover"])],
+              foreground=[("selected", "#0d1117"), ("active", p["text"])],
+              # keep the selected tab the same size as the rest (no clam jitter)
+              expand=[("selected", (0, 0, 0, 0))])
 
 
 def ssh_inline_argv(host: str, remote_cmd: str) -> list[str]:
@@ -1065,29 +1113,44 @@ class App(tk.Tk):
         self.configure(bg=PAL["bg"])
         apply_style(self)
 
+        # Window / taskbar icon (Cogito brain) while the app is running. The
+        # .ico is bundled via --add-data; _MEIPASS is set inside the frozen exe.
+        try:
+            _base = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
+            self.iconbitmap(os.path.join(_base, "assets", "cogito.ico"))
+        except Exception:  # noqa: BLE001  (icon is cosmetic)
+            pass
+
         self.red_score = 0
         self.blue_score = 0
         self.arena = None
 
-        # -- header: title + actions --------------------------------------- #
-        header = ttk.Frame(self, padding=(14, 12, 14, 4))
+        # -- header: logo, title, host + global actions -------------------- #
+        header = ttk.Frame(self, style="Header.TFrame", padding=(18, 14, 18, 14))
         header.pack(fill="x")
         if LOGO_PNG_B64:
             try:
                 img = tk.PhotoImage(data=LOGO_PNG_B64)
-                factor = max(1, img.height() // 38)
+                factor = max(1, img.height() // 34)
                 self._logo_img = img.subsample(factor, factor)
-                tk.Label(header, image=self._logo_img, bg="#ffffff",
-                         bd=0, padx=4, pady=2).pack(side="left", padx=(0, 10))
+                # transparent PNG composites over the header bg — no white box
+                tk.Label(header, image=self._logo_img, bg=PAL["bg"],
+                         bd=0).pack(side="left", padx=(0, 12))
             except Exception:  # noqa: BLE001  (logo is cosmetic)
                 pass
         ttk.Label(header, text="PurpleAI Control",
-                  style="Title.TLabel").pack(side="left")
-        ttk.Button(header, text="■ Stop all", command=self.stop_all).pack(side="right", padx=3)
-        ttk.Button(header, text="▶ Start all", command=self.start_all,
-                   style="Accent.TButton").pack(side="right", padx=3)
+                  style="HeaderTitle.TLabel").pack(side="left")
+
+        # right cluster: Stop (secondary) · Start (primary) · host (muted)
+        ttk.Button(header, text="■  Stop all", command=self.stop_all,
+                   style="Ghost.TButton").pack(side="right", padx=(8, 0))
+        ttk.Button(header, text="▶  Start all", command=self.start_all,
+                   style="Primary.TButton").pack(side="right", padx=(8, 0))
         ttk.Label(header, text=f"via {GAMEHOST}",
-                  style="Muted.TLabel").pack(side="right", padx=12)
+                  style="HeaderSub.TLabel").pack(side="right", padx=(0, 16))
+
+        # hairline divider between the header and the scoreboard
+        tk.Frame(self, height=1, bg=PAL["border"]).pack(fill="x")
 
         self._build_scoreboard()
 
@@ -1111,44 +1174,69 @@ class App(tk.Tk):
 
     # -- Red vs Blue scoreboard -------------------------------------------- #
     def _build_scoreboard(self):
-        card = ttk.Frame(self, style="Card.TFrame", padding=(16, 12))
-        card.pack(fill="x", padx=12, pady=(4, 0))
+        wrap = ttk.Frame(self, style="Header.TFrame", padding=(12, 12, 12, 0))
+        wrap.pack(fill="x")
+
+        # crisp hairline-bordered flat card (ttk frames can't round corners)
+        card = tk.Frame(wrap, bg=PAL["panel"], highlightthickness=1,
+                        highlightbackground=PAL["border"],
+                        highlightcolor=PAL["border"])
+        card.pack(fill="x")
+        inner = ttk.Frame(card, style="Scorecard.TFrame", padding=(22, 16))
+        inner.pack(fill="both", expand=True)
+        inner.columnconfigure(0, weight=0, minsize=150)
+        inner.columnconfigure(1, weight=1)
+        inner.columnconfigure(2, weight=0, minsize=150)
 
         self.red_var = tk.StringVar(value="0")
         self.blue_var = tk.StringVar(value="0")
-        self.leader_var = tk.StringVar(value="RED 0  –  0 BLUE")
+        self.leader_var = tk.StringVar(value="TIED  0 – 0")
 
-        # RED side
-        left = ttk.Frame(card, style="Card.TFrame")
-        left.pack(side="left")
-        tk.Label(left, text="🔴 RED", bg=PAL["panel"], fg=PAL["red"],
-                 font=("Segoe UI Semibold", 11)).pack(anchor="w")
+        # RED (left, left-aligned stat block)
+        left = ttk.Frame(inner, style="Scorecard.TFrame")
+        left.grid(row=0, column=0, sticky="nw")
+        rl = ttk.Frame(left, style="Scorecard.TFrame")
+        rl.pack(anchor="w")
+        tk.Label(rl, text="●", bg=PAL["panel"], fg=PAL["red"],
+                 font=("Segoe UI", 10)).pack(side="left", padx=(0, 6))
+        tk.Label(rl, text="RED", bg=PAL["panel"], fg=PAL["red"],
+                 font=("Segoe UI Semibold", 11)).pack(side="left")
+        self._red_num = tk.Label(left, textvariable=self.red_var, bg=PAL["panel"],
+                                 fg=PAL["red"], font=("Segoe UI", 34, "bold"))
+        self._red_num.pack(anchor="w", pady=(2, 0))
         tk.Label(left, text="flags captured", bg=PAL["panel"], fg=PAL["muted"],
-                 font=("Segoe UI", 8)).pack(anchor="w")
-        self._red_num = tk.Label(card, textvariable=self.red_var, bg=PAL["panel"],
-                                 fg=PAL["red"], font=("Segoe UI", 30, "bold"))
-        self._red_num.pack(side="left", padx=(10, 20))
+                 font=("Segoe UI", 9)).pack(anchor="w")
 
-        # BLUE side (right-anchored)
-        right = ttk.Frame(card, style="Card.TFrame")
-        right.pack(side="right")
-        tk.Label(right, text="BLUE 🔵", bg=PAL["panel"], fg=PAL["blue"],
-                 font=("Segoe UI Semibold", 11)).pack(anchor="e")
+        # BLUE (right, right-aligned stat block)
+        right = ttk.Frame(inner, style="Scorecard.TFrame")
+        right.grid(row=0, column=2, sticky="ne")
+        bl = ttk.Frame(right, style="Scorecard.TFrame")
+        bl.pack(anchor="e")
+        tk.Label(bl, text="BLUE", bg=PAL["panel"], fg=PAL["blue"],
+                 font=("Segoe UI Semibold", 11)).pack(side="left")
+        tk.Label(bl, text="●", bg=PAL["panel"], fg=PAL["blue"],
+                 font=("Segoe UI", 10)).pack(side="left", padx=(6, 0))
+        self._blue_num = tk.Label(right, textvariable=self.blue_var, bg=PAL["panel"],
+                                  fg=PAL["blue"], font=("Segoe UI", 34, "bold"))
+        self._blue_num.pack(anchor="e", pady=(2, 0))
         tk.Label(right, text="attacks blocked", bg=PAL["panel"], fg=PAL["muted"],
-                 font=("Segoe UI", 8)).pack(anchor="e")
-        self._blue_num = tk.Label(card, textvariable=self.blue_var, bg=PAL["panel"],
-                                  fg=PAL["blue"], font=("Segoe UI", 30, "bold"))
-        self._blue_num.pack(side="right", padx=(20, 10))
+                 font=("Segoe UI", 9)).pack(anchor="e")
 
-        # centre: proportion bar + leader text
-        mid = ttk.Frame(card, style="Card.TFrame")
-        mid.pack(fill="x", padx=8)
-        tk.Label(mid, textvariable=self.leader_var, bg=PAL["panel"],
-                 fg=PAL["muted"], font=("Segoe UI Semibold", 10)).pack()
-        self.score_canvas = tk.Canvas(mid, height=14, highlightthickness=0,
-                                      bg=PAL["log"])
-        self.score_canvas.pack(fill="x", pady=(6, 0))
+        # CENTER (leader text + proportion bar + end captions)
+        mid = ttk.Frame(inner, style="Scorecard.TFrame")
+        mid.grid(row=0, column=1, sticky="nsew", padx=18)
+        tk.Label(mid, textvariable=self.leader_var, bg=PAL["panel"], fg=PAL["text"],
+                 font=("Segoe UI Semibold", 11)).pack(pady=(6, 0))
+        self.score_canvas = tk.Canvas(mid, height=16, highlightthickness=0,
+                                      bg=PAL["panel"], bd=0)
+        self.score_canvas.pack(fill="x", pady=(10, 2))
         self.score_canvas.bind("<Configure>", lambda e: self._draw_score_bar())
+        cap = ttk.Frame(mid, style="Scorecard.TFrame")
+        cap.pack(fill="x")
+        tk.Label(cap, text="attacker", bg=PAL["panel"], fg=PAL["muted"],
+                 font=("Segoe UI", 8)).pack(side="left")
+        tk.Label(cap, text="defender", bg=PAL["panel"], fg=PAL["muted"],
+                 font=("Segoe UI", 8)).pack(side="right")
 
     def set_red(self, n: int):
         self.red_score = n
@@ -1179,11 +1267,32 @@ class App(tk.Tk):
         c.delete("all")
         w = c.winfo_width() or 1
         h = int(c["height"])
+        if w <= 2:
+            return
+        rad = h // 2  # capsule radius
+
+        def capsule(x0, x1, fill):
+            """A rounded-end (capsule) bar segment from x0..x1, full height."""
+            if x1 - x0 < 1:
+                return
+            rr = min(rad, (x1 - x0) / 2)
+            c.create_oval(x0, 0, x0 + 2 * rr, h, fill=fill, outline="")
+            c.create_oval(x1 - 2 * rr, 0, x1, h, fill=fill, outline="")
+            c.create_rectangle(x0 + rr, 0, x1 - rr, h, fill=fill, outline="")
+
+        # inset track
+        capsule(0, w, PAL["track"])
+
         r, b = self.red_score, self.blue_score
         tot = r + b
-        rw = w // 2 if tot == 0 else int(round(w * r / tot))
-        c.create_rectangle(0, 0, rw, h, fill=PAL["red"], width=0)
-        c.create_rectangle(rw, 0, w, h, fill=PAL["blue"], width=0)
+        if tot == 0:
+            return  # neutral track only until the first point lands
+        split = int(round(w * r / tot))
+        gap = 2  # tiny divider where the two colours meet
+        if split > 0:
+            capsule(0, max(split - gap, 1), PAL["red"])
+        if split < w:
+            capsule(min(split + gap, w - 1), w, PAL["blue"])
 
     def _tab(self, key: str) -> ComponentTab:
         return next(t for t in self.tabs if t.cfg["key"] == key)

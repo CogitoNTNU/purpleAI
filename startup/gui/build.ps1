@@ -22,6 +22,7 @@ if ($Clean) {
 uv run --no-project --python 3.12 --with pyinstaller pyinstaller `
     --noconsole --onefile --name PurpleAIControl `
     --distpath dist --workpath build --specpath . `
+    --icon "assets\cogito.ico" `
     --add-data "assets;assets" `
     app.py
 
