@@ -15,7 +15,7 @@ Public API (called by the control panel):
     reset()
     set_scores(red, blue)
 
-`agent` is one of: "boss", "sql", "xss", "ssti", "xxe".
+`agent` is one of: "boss", "recon", "sql", "xss", "ssti", "xxe".
 """
 from __future__ import annotations
 
@@ -29,17 +29,21 @@ from tkinter import ttk
 
 FRAME_W, FRAME_H = 40, 44
 
-# agent -> (elite strip file, team color, label, field position fraction)
+# agent -> (elite strip file, team color, label, field position fraction).
+# The recon scout rides out FRONT (nearest the gate) — it maps the way in
+# before the army commits.
 _COMMANDERS = {
-    "boss": ("king_anim_strip_1x.png", "#d2a8ff", "Boss", (0.47, 0.90)),
-    "sql":  ("crimson_berserker_anim_strip_1x.png", "#f85149", "SQLi", (0.17, 0.80)),
-    "xss":  ("ember_warden_anim_strip_1x.png", "#ff9f1c", "XSS", (0.32, 0.86)),
-    "ssti": ("void_battlemage_anim_strip_1x.png", "#a371f7", "SSTI", (0.62, 0.86)),
-    "xxe":  ("frost_halberdier_anim_strip_1x.png", "#58d6c0", "XXE", (0.78, 0.80)),
+    "boss":  ("king_anim_strip_1x.png", "#d2a8ff", "Boss", (0.47, 0.90)),
+    "recon": ("emerald_ninja_anim_strip_1x.png", "#2ec27e", "Recon", (0.47, 0.70)),
+    "sql":   ("crimson_berserker_anim_strip_1x.png", "#f85149", "SQLi", (0.17, 0.80)),
+    "xss":   ("ember_warden_anim_strip_1x.png", "#ff9f1c", "XSS", (0.32, 0.86)),
+    "ssti":  ("void_battlemage_anim_strip_1x.png", "#a371f7", "SSTI", (0.62, 0.86)),
+    "xxe":   ("frost_halberdier_anim_strip_1x.png", "#58d6c0", "XXE", (0.78, 0.80)),
 }
 # agent -> 48x48 portrait for the war-room chat
 _PORTRAIT = {
     "boss": "king_portrait_1x.png",
+    "recon": "emerald_ninja_portrait_1x.png",
     "sql": "crimson_berserker_portrait_1x.png",
     "xss": "ember_warden_portrait_1x.png",
     "ssti": "void_battlemage_portrait_1x.png",
@@ -47,6 +51,7 @@ _PORTRAIT = {
 }
 # agent -> foot soldier walk strip
 _SOLDIER = {
+    "recon": "green_shinobi_walk_strip_1x.png",
     "sql": "red_axeman_walk_strip_1x.png",
     "xss": "ember_torchbearer_walk_strip_1x.png",
     "ssti": "violet_acolyte_walk_strip_1x.png",
