@@ -164,6 +164,28 @@ def _lead_hint(reflect: str, sample: str) -> str:
     return "not reflected -> try SQLi / other"
 
 
+# Field/path name -> (vulnerability class, rank, reason). Lower rank = probe first.
+def _classify_form(path: str, inputs: list[str], method: str, reflect: str) -> tuple[int, str]:
+    names = " ".join(inputs).lower() + " " + path.lower()
+    if reflect == "reflected-raw":
+        return 0, "input reflected UNESCAPED -> prime XSS + SSTI lead"
+    if any(w in names for w in ("upload", "file", "filename", "xml", "import", "doc")):
+        return 1, "file/XML input -> XXE and file-upload lead (xxe_agent)"
+    if any(w in names for w in ("download", "path", "read", "include")):
+        return 1, "file path input -> path-traversal / LFI lead"
+    if any(w in names for w in ("body", "content", "template", "message", "comment",
+                                "bio", "description", "render")):
+        return 2, "free-text field rendered back -> SSTI lead (ssti_agent)"
+    if any(w in names for w in ("search", "query", "/q", " q", "keyword")):
+        return 2, "search field -> XSS / SSTI lead (reflects results)"
+    if any(w in names for w in ("login", "register", "user", "password", "email",
+                                "auth", "signin")):
+        return 3, "auth form -> SQL injection lead (sql_injection_agent)"
+    if any(w in names for w in ("price", "product", "amount", "qty", "checkout")):
+        return 3, "commerce field -> SQLi / business-logic lead"
+    return 4, "untyped input -> try SQLi then XSS"
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print("recon_crawl: missing base_url", file=sys.stderr)
@@ -204,22 +226,44 @@ def main() -> int:
             leads.append((path, param, reflect, hint))
             out.append(f"       - {param}={sample or '∅'}  [{reflect}]  {hint}")
 
+    # Unified lead list the Boss can route from (query params + forms).
+    all_leads: list[tuple[int, str, str]] = []  # (rank, target, hint)
+    for path, param, reflect, hint in leads:
+        r = {"reflected-raw": 0, "reflected-encoded": 1}.get(reflect, 2)
+        all_leads.append((r, f"[GET] {path}?{param}=", hint))
+
+    # Dedupe forms (the same form appears on every page that renders it).
     out.append("\n-- forms --")
-    if not forms:
-        out.append("  (none found)")
+    seen_forms: set = set()
+    uniq_forms = []
     for f in forms:
         pu = urllib.parse.urlparse(f["action"])
-        out.append(f"  [{f['method']}] {pu.path}   inputs: "
-                   f"{', '.join(f['inputs']) or '(none named)'}")
+        key = (f["method"], pu.path, tuple(f["inputs"]))
+        if key in seen_forms:
+            continue
+        seen_forms.add(key)
+        uniq_forms.append((pu.path, f))
+    if not uniq_forms:
+        out.append("  (none found)")
+    for pth, f in sorted(uniq_forms):
+        # Reflection-probe GET forms by submitting the canary in each input.
+        reflect = "n/a (POST)"
+        if f["method"] == "GET" and f["inputs"] and probes < MAX_REFLECT_PROBES:
+            qs = {inp: CANARY for inp in f["inputs"]}
+            reflect = _reflects(pth + "?" + urllib.parse.urlencode(qs), base)
+            probes += 1
+        rnk, hint = _classify_form(pth, f["inputs"], f["method"], reflect)
+        out.append(f"  [{f['method']}] {pth}   inputs: "
+                   f"{', '.join(f['inputs']) or '(none named)'}   [{reflect}]")
+        tgt = f"[{f['method']}] {pth} ({', '.join(f['inputs']) or 'body'})"
+        all_leads.append((rnk, tgt, hint))
 
-    # Ranked leads for the Boss: reflected-raw first, then encoded, then numeric.
-    rank = {"reflected-raw": 0, "reflected-encoded": 1}
-    ranked = sorted(leads, key=lambda t: (rank.get(t[2], 2), t[0]))
     out.append("\n-- ranked leads (hand these to the specialists) --")
+    ranked = sorted(all_leads, key=lambda t: (t[0], t[1]))
     if not ranked:
-        out.append("  (no parameterized leads; consider forms above or deeper crawl)")
-    for path, param, reflect, hint in ranked[:8]:
-        out.append(f"  {path}?{param}=  -> {hint}")
+        out.append("  (no leads found; try a deeper crawl)")
+    for _rnk, tgt, hint in ranked[:10]:
+        out.append(f"  {tgt}  ->  {hint}")
 
     # Tech fingerprint is added by the web_recon tool (whatweb), not here.
     print("\n".join(out))
