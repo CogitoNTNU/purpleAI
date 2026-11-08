@@ -15,6 +15,24 @@ thread with the console window hidden, and output is streamed into the window.
 
 Double-click **`dist/PurpleAIControl.exe`**. No install, no console.
 
+## ⚔ Siege (Arena tab)
+
+A pixel-art castle-defence view of the same live data. The defender is a castle;
+each flag is a structure (gate / walls / towers / keep). The red agents (Boss,
+SQLi, XSS, SSTI) besiege it and speak their live reasoning in bubbles:
+
+- **running** agent → attacks the wall (bolts) with a reasoning bubble; **queued**
+  → waits; state shown by a green/amber dot.
+- **flag captured** (scored) → its structure **crumbles**; castle HP drops; all
+  five reachable flags → **the castle falls (RED WINS)**.
+- **leaked, not scored** → a grey bolt pings off (📄), no damage.
+- **defender blocks** (blue point) → a volley fires from the walls and knocks an
+  attacker back.
+
+Drawn procedurally (no assets) and driven entirely by the attacker/defender
+streams — Start both components and watch it play out. It's an extra tab; the
+text panes stay as they were.
+
 ## Red vs Blue scoreboard
 
 The header shows a live game between the teams:

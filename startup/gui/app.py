@@ -25,6 +25,11 @@ try:  # the Cogito logo, base64-embedded so it bundles into the exe
 except Exception:  # noqa: BLE001  (logo is cosmetic)
     LOGO_PNG_B64 = None
 
+try:  # ensure the Siege view is bundled by PyInstaller
+    import arena  # noqa: F401
+except Exception:  # noqa: BLE001
+    arena = None
+
 # --------------------------------------------------------------------------- #
 # CONFIG — edit to match your setup                                           #
 # --------------------------------------------------------------------------- #
@@ -74,7 +79,8 @@ def with_pull(cmd: str) -> str:
 ATTACKER_START_SH = r"""
 set -euo pipefail
 REPO="${PURPLE_REPO:-$HOME/purpleAI}"
-ATT="$REPO/src/Attacker"
+ATT="$REPO/src/attacker"
+[ -d "$ATT" ] || ATT="$REPO/src/Attacker"   # repo was renamed lowercase on main
 SESSION="attacker"
 LOGDIR="$REPO/startup/logs"
 LOG="$LOGDIR/attacker.log"
@@ -109,19 +115,44 @@ mkdir -p "$ATT/logs"
 rm -rf "$ATT/.langgraph_api" 2>/dev/null || true
 echo "[attacker] cleared previous run state (events rotated, server threads wiped)."
 
-if [ ! -x "$ATT/.venv/bin/langgraph" ]; then
-  echo "[attacker] .venv not set up; bootstrapping with uv..."
+# The lowercase rename on main split the source (src/attacker) from the
+# pre-existing venv and the gitignored .env, which were left behind in the old
+# src/Attacker. Carry the .env over and reuse whichever venv already has
+# langgraph (uv is often not on the non-interactive PATH).
+if [ ! -f "$ATT/.env" ]; then
+  for alt in "$REPO/src/Attacker/.env" "$REPO/src/attacker/.env"; do
+    if [ -f "$alt" ] && [ "$alt" != "$ATT/.env" ]; then
+      cp "$alt" "$ATT/.env" && echo "[attacker] copied .env from $alt"; break
+    fi
+  done
+fi
+
+VENV="$ATT/.venv"
+if [ ! -x "$VENV/bin/langgraph" ]; then
+  for alt in "$REPO/src/attacker/.venv" "$REPO/src/Attacker/.venv"; do
+    if [ -x "$alt/bin/langgraph" ]; then VENV="$alt"; break; fi
+  done
+fi
+if [ ! -x "$VENV/bin/langgraph" ]; then
+  echo "[attacker] no venv with langgraph; bootstrapping with uv..."
   if command -v uv >/dev/null 2>&1; then
     ( cd "$ATT" && uv venv && uv pip install --python .venv/bin/python -r requirements.txt )
+    VENV="$ATT/.venv"
   else
-    echo "ERROR: no .venv and uv missing; see $ATT/README.md" >&2; exit 1
+    echo "ERROR: no usable .venv and uv not on PATH. In $ATT run: uv venv && uv pip install -r requirements.txt" >&2
+    exit 1
   fi
 fi
+echo "[attacker] using venv: $VENV"
 
 : > "$LOG"
 START_DELAY="${PURPLE_ATTACKER_DELAY:-10}"
 tmux new-session -d -s "$SESSION" -c "$ATT"
 tmux pipe-pane -o -t "$SESSION" "cat >> '$LOG'"
+# Load the env into the pane so the server + Boss get LLM_API_KEY. The rename
+# left an .env with the wrong schema in src/attacker, so if LLM_API_KEY is still
+# unset, also source the leftover .env (which has it).
+tmux send-keys -t "$SESSION" "set -a; [ -f .env ] && . ./.env; [ -z \"\${LLM_API_KEY:-}\" ] && [ -f '$REPO/src/Attacker/.env' ] && . '$REPO/src/Attacker/.env'; set +a" C-m
 # 1) Start the subagent server (langgraph dev) in the background, own log.
 #    --no-browser: on a headless box, opening LangGraph Studio launches a
 #      text-mode browser that grabs the tmux pane's tty and suspends the server.
@@ -131,12 +162,12 @@ tmux pipe-pane -o -t "$SESSION" "cat >> '$LOG'"
 #      forever and the Boss never advances past iteration 0.
 #    --n-jobs-per-worker: run subagent scans concurrently (SQLi/XSS/SSTI at
 #      once) rather than serialised.
-tmux send-keys -t "$SESSION" "BROWSER=true .venv/bin/langgraph dev --no-browser --no-reload --n-jobs-per-worker 10 > '$LOGDIR/langgraph.log' 2>&1 &" C-m
+tmux send-keys -t "$SESSION" "BROWSER=true $VENV/bin/langgraph dev --no-browser --no-reload --n-jobs-per-worker 10 > '$LOGDIR/langgraph.log' 2>&1 &" C-m
 # 2) Give it time to boot (and you a chance to open the Server log) before Boss.
 tmux send-keys -t "$SESSION" "echo 'subagent server starting on :2024 (log: $LOGDIR/langgraph.log)'; echo 'open the Server log to watch it; Boss starts in ${START_DELAY}s...'; sleep ${START_DELAY}" C-m
 # 3) Then wait (bounded, ~60s) until it actually answers before starting Boss.
 tmux send-keys -t "$SESSION" "n=0; until curl -s http://localhost:2024/ok >/dev/null 2>&1 || curl -s http://localhost:2024/ >/dev/null 2>&1; do n=\$((n+1)); [ \$n -ge 30 ] && break; sleep 2; done" C-m
-tmux send-keys -t "$SESSION" "if curl -s http://localhost:2024/ok >/dev/null 2>&1 || curl -s http://localhost:2024/ >/dev/null 2>&1; then echo 'server up; starting Boss'; else echo 'WARNING: server not responding on :2024 - check the Server log'; fi; .venv/bin/python redagent.py" C-m
+tmux send-keys -t "$SESSION" "if curl -s http://localhost:2024/ok >/dev/null 2>&1 || curl -s http://localhost:2024/ >/dev/null 2>&1; then echo 'server up; starting Boss'; else echo 'WARNING: server not responding on :2024 - check the Server log'; fi; $VENV/bin/python redagent.py" C-m
 echo "[attacker] started (detached). Server booting; Boss starts after ${START_DELAY}s. Logs -> $LOG"
 """
 
@@ -219,9 +250,9 @@ COMPONENTS = [
             {"name": "ssti_agent", "label": "SSTI", "tool": "curl", "pane": "ssti"},
         ],
         # Structured event log (both Boss and subagent server append here).
-        "events": f"mkdir -p {REPO}/src/Attacker/logs "
-                  f"&& touch {REPO}/src/Attacker/logs/events.jsonl "
-                  f"&& tail -n 200 -F {REPO}/src/Attacker/logs/events.jsonl",
+        "events": (f"D={REPO}/src/attacker; [ -d \"$D\" ] || D={REPO}/src/Attacker; "
+                   "mkdir -p $D/logs && touch $D/logs/events.jsonl "
+                   "&& tail -n 200 -F $D/logs/events.jsonl"),
         # The subagent server's own stdout/stderr (why it did/didn't start).
         "server_logs": f"mkdir -p {REPO}/startup/logs "
                        f"&& touch {REPO}/startup/logs/langgraph.log "
@@ -274,6 +305,13 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win3
 
 # FLAG{...} values are the objective; harvest them from the attacker's stream.
 FLAG_RE = re.compile(r"FLAG\{[^}\n]{0,200}\}")
+
+# Subagent graph name -> Siege arena commander key (includes xxe, which has no
+# text pane but does get a commander on the battlefield).
+AGENT_ARENA = {
+    "sql_injection_agent": "sql", "xss_agent": "xss",
+    "ssti_agent": "ssti", "xxe_agent": "xxe",
+}
 
 # The flags planted in the vulnerable app (see
 # src/defender/vulnerable-app/VULNERABILITIES.md). Each is a light that starts
@@ -444,8 +482,10 @@ class ComponentTab(ttk.Frame):
         self.reason_proc: Proc | None = None  # subagent-reasoning poll
         self._reason_after = None             # pending reasoning-poll timer id
         self._reason_on = False               # reasoning stream toggled on?
+        self._reason_err_shown = False        # throttle "server unreachable"
         self._seen_msgs: set = set()          # (tid, i) already shown
         self.tid_label: dict = {}             # thread id -> subagent label
+        self.tid_arena: dict = {}             # thread id -> arena commander key
         self.action_proc: Proc | None = None  # one-shot start/stop/status
         self.lights: dict = {}  # subagent name AND tool -> light entry
         # "Reasoning only" filter (attacker): show iteration headers + the
@@ -590,6 +630,9 @@ class ComponentTab(ttk.Frame):
             w.delete("1.0", "end")
             w.configure(state="disabled")
 
+    def _arena(self):
+        return getattr(self.app, "arena", None) if self.app else None
+
     def _update_flag_title(self):
         known = len(self.flag_lights)
         self.flags_frame.configure(
@@ -607,6 +650,9 @@ class ComponentTab(ttk.Frame):
         self._update_flag_title()
         if self.app:
             self.app.set_red(0)
+        ar = self._arena()
+        if ar:
+            ar.reset()
 
     def _add_flag(self, flag: str, source_pane=None) -> str:
         """Score a flag only if captured through its owning vulnerability class.
@@ -638,6 +684,9 @@ class ComponentTab(ttk.Frame):
         self._blue += 1
         if self.app:
             self.app.set_blue(self._blue)
+        ar = self._arena()
+        if ar:
+            ar.block()
 
     # -- subagent lights + event feed -------------------------------------- #
     def _set_light(self, key: str, on: bool, status: str | None = None,
@@ -653,6 +702,7 @@ class ComponentTab(ttk.Frame):
     def _reset_lights(self):
         self.sub_tasks.clear()
         self.tid_label.clear()
+        self.tid_arena.clear()
         self._seen_msgs.clear()
         for entry in self.lights.values():
             entry["canvas"].itemconfig(entry["oval"], fill=PAL["idle"])
@@ -672,9 +722,12 @@ class ComponentTab(ttk.Frame):
             status = ev.get("status") or ""
             tasks = self.sub_tasks.setdefault(sub, {})
             is_new = tid is not None and tid not in tasks
+            akey = AGENT_ARENA.get(sub)
             if tid is not None:
                 tasks[tid] = status
                 self.tid_label[tid] = self._label_for(sub)
+                if akey:
+                    self.tid_arena[tid] = akey
             running = sum(1 for s in tasks.values() if s in ("running", "busy"))
             queued = sum(1 for s in tasks.values() if s == "pending")
             total = len(tasks)
@@ -684,6 +737,10 @@ class ComponentTab(ttk.Frame):
             self._set_light(sub, running > 0,
                             f"{running} running / {queued} queued / {total} launched",
                             color=color)
+            ar = self._arena()
+            if ar and akey:
+                ar.set_state(akey, "running" if running else
+                             ("queued" if queued else "idle"))
             if is_new:
                 self.append(f"  ➕ launched scan (#{total}, task {str(tid)[:8]})\n",
                             pane=self.pane_for.get(sub, "boss"))
@@ -703,13 +760,18 @@ class ComponentTab(ttk.Frame):
             flag = ev.get("flag")
             pane = self.pane_for.get(tool, "boss")
             result = self._add_flag(flag, pane)
+            ar = self._arena()
             if result == "new":
                 self.append(f"  🚩 {flag}\n", pane=pane)
+                if ar:
+                    ar.capture(flag)
             elif result == "reject" and flag and flag not in self._leaked_seen:
                 # Seen here but not this agent's vuln (e.g. leaked via source
                 # disclosure): show it, but don't score it.
                 self._leaked_seen.add(flag)
                 self.append(f"  📄 leaked (not scored): {flag}\n", pane=pane)
+                if ar and pane:
+                    ar.leak(pane)
 
     def _handle_health(self, line: str):
         """Parse a 'SERVER <code>' health line and colour the Server light."""
@@ -760,7 +822,10 @@ class ComponentTab(ttk.Frame):
     def _handle_reasoning(self, line: str):
         line = line.strip()
         if line.startswith("REASON_ERR"):
-            self.append("  [reason] " + line + "\n")
+            if not self._reason_err_shown:  # show once, not every poll
+                self.append("  [reason] subagent server not reachable on :2024 "
+                            "(is it up? check the Server light / 📄 Server log)\n")
+                self._reason_err_shown = True
             return
         if not line.startswith("{"):
             return
@@ -768,6 +833,7 @@ class ComponentTab(ttk.Frame):
             m = json.loads(line)
         except (ValueError, TypeError):
             return
+        self._reason_err_shown = False  # a good poll; re-arm the error notice
         tid, i = m.get("tid"), m.get("i")
         key = (tid, i)
         if key in self._seen_msgs:
@@ -777,10 +843,14 @@ class ComponentTab(ttk.Frame):
         if not label:
             return  # a thread not launched in this session; skip
         pane = self.pane_for.get(label, "boss")
+        akey = self.tid_arena.get(tid)
         typ, text, tools = m.get("type"), m.get("text") or "", m.get("tools") or []
         if typ == "ai":
             if text:
                 self.append(f"  🧠 {text}\n", pane=pane)
+                ar = self._arena()
+                if ar and akey:
+                    ar.say(akey, text)
             if tools:
                 self.append(f"  🧠 → {', '.join(tools)}\n", pane=pane)
         elif typ == "tool" and text:
@@ -934,6 +1004,11 @@ class ComponentTab(ttk.Frame):
                             continue  # raw event JSON; shown via the events feed
                         if not self.reasoning_only.get() or self._keep_line(payload):
                             self.append(payload)
+                            ar = self._arena()
+                            if ar and self.cfg.get("panes"):
+                                s2 = payload.strip()
+                                if s2.startswith("[") or s2.startswith("====="):
+                                    ar.say("boss", s2)
                     else:
                         self.append(payload)
                 elif kind == "exit" and role == "action":
@@ -982,6 +1057,7 @@ class App(tk.Tk):
 
         self.red_score = 0
         self.blue_score = 0
+        self.arena = None
 
         # -- header: title + actions --------------------------------------- #
         header = ttk.Frame(self, padding=(14, 12, 14, 4))
@@ -1013,6 +1089,13 @@ class App(tk.Tk):
             tab = ComponentTab(nb, cfg, app=self)
             nb.add(tab, text=cfg["label"])
             self.tabs.append(tab)
+
+        try:
+            from arena import ArenaTab
+            self.arena = ArenaTab(nb, PAL, KNOWN_FLAGS)
+            nb.add(self.arena, text="⚔ Siege")
+        except Exception:  # noqa: BLE001  (arena is an extra view)
+            self.arena = None
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -1059,10 +1142,14 @@ class App(tk.Tk):
 
     def set_red(self, n: int):
         self.red_score = n
+        if self.arena:
+            self.arena.set_scores(self.red_score, self.blue_score)
         self._refresh_score()
 
     def set_blue(self, n: int):
         self.blue_score = n
+        if self.arena:
+            self.arena.set_scores(self.red_score, self.blue_score)
         self._refresh_score()
 
     def _refresh_score(self):
