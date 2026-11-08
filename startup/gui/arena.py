@@ -37,6 +37,14 @@ _COMMANDERS = {
     "ssti": ("void_battlemage_anim_strip_1x.png", "#a371f7", "SSTI", (0.62, 0.86)),
     "xxe":  ("frost_halberdier_anim_strip_1x.png", "#58d6c0", "XXE", (0.78, 0.80)),
 }
+# agent -> 48x48 portrait for the war-room chat
+_PORTRAIT = {
+    "boss": "king_portrait_1x.png",
+    "sql": "crimson_berserker_portrait_1x.png",
+    "xss": "ember_warden_portrait_1x.png",
+    "ssti": "void_battlemage_portrait_1x.png",
+    "xxe": "frost_halberdier_portrait_1x.png",
+}
 # agent -> foot soldier walk strip
 _SOLDIER = {
     "sql": "red_axeman_walk_strip_1x.png",
@@ -57,8 +65,31 @@ class ArenaTab(ttk.Frame):
     def __init__(self, master, pal, flags):
         super().__init__(master)
         self.pal = pal
+
         self.canvas = tk.Canvas(self, bg="#3f7a34", highlightthickness=0)
-        self.canvas.pack(fill="both", expand=True)
+        self.canvas.pack(side="left", fill="both", expand=True)
+
+        # War-room chat on the right: a running feed of what the agents think.
+        chat_frame = tk.Frame(self, width=330, bg=pal["panel"])
+        chat_frame.pack(side="right", fill="y")
+        chat_frame.pack_propagate(False)
+        tk.Label(chat_frame, text="  💬  WAR ROOM", bg=pal["panel"], fg=pal["muted"],
+                 font=("Segoe UI Semibold", 10), anchor="w").pack(fill="x", pady=(8, 4))
+        wrap = tk.Frame(chat_frame, bg=pal["panel"])
+        wrap.pack(fill="both", expand=True)
+        sb = tk.Scrollbar(wrap)
+        sb.pack(side="right", fill="y")
+        self.chat = tk.Text(wrap, bg=pal["log"], fg=pal["text"], wrap="word",
+                            relief="flat", borderwidth=0, font=("Segoe UI", 9),
+                            state="disabled", yscrollcommand=sb.set,
+                            padx=8, pady=8, spacing1=2, spacing3=6)
+        self.chat.pack(side="left", fill="both", expand=True)
+        sb.config(command=self.chat.yview)
+        self.chat.tag_configure("msg", foreground="#c9d1d9", lmargin1=6, lmargin2=6)
+        for key, (_, color, label, _pos) in _COMMANDERS.items():
+            self.chat.tag_configure(f"name_{key}", foreground=color,
+                                    font=("Segoe UI Semibold", 9))
+        self._chat_lines = 0
 
         self.reachable_total = len(flags) if flags else 5
         self.captured: set[str] = set()
@@ -82,11 +113,16 @@ class ArenaTab(ttk.Frame):
         self.cmd_frames = {}
         self.sol_frames = {}
         self.maps_raw = {}
+        self.portraits = {}
         try:
             for key, (strip, *_rest) in _COMMANDERS.items():
                 self.cmd_frames[key] = self._slice(_asset(strip), 8)
             for key, strip in _SOLDIER.items():
                 self.sol_frames[key] = self._slice(_asset(strip), 4)
+            for key, pfile in _PORTRAIT.items():
+                img = tk.PhotoImage(file=_asset(pfile))
+                self._keep.append(img)
+                self.portraits[key] = img
             for i, nm in enumerate(["stage1_army_arrives_1x.png",
                                     "stage2_siege_1x.png", "stage3_ruins_1x.png"]):
                 img = tk.PhotoImage(file=_asset(nm))
@@ -138,8 +174,26 @@ class ArenaTab(ttk.Frame):
     def say(self, agent, text):
         c = self.commanders.get(agent)
         if c and text:
-            c["bubble"] = " ".join(str(text).split())[:120]
+            clean = " ".join(str(text).split())
+            c["bubble"] = clean[:120]
             c["bubble_t"] = time.time() + 9.0
+            self._chat(agent, clean)
+
+    def _chat(self, agent, text):
+        c = self.commanders.get(agent)
+        if not c:
+            return
+        self.chat.configure(state="normal")
+        if self.portraits.get(agent):
+            self.chat.image_create("end", image=self.portraits[agent], padx=2)
+        self.chat.insert("end", f"  {c['label']}\n", (f"name_{agent}",))
+        self.chat.insert("end", f"{text}\n\n", ("msg",))
+        self._chat_lines += 1
+        if self._chat_lines > 120:  # trim old history
+            self.chat.delete("1.0", "40.0")
+            self._chat_lines -= 20
+        self.chat.see("end")
+        self.chat.configure(state="disabled")
 
     def capture(self, flag):
         if flag and flag not in self.captured:
@@ -166,6 +220,10 @@ class ArenaTab(ttk.Frame):
         for c in self.commanders.values():
             c["state"] = "idle"
             c["bubble"] = ""
+        self.chat.configure(state="normal")
+        self.chat.delete("1.0", "end")
+        self.chat.configure(state="disabled")
+        self._chat_lines = 0
 
     # -- geometry ---------------------------------------------------------- #
     def _mapcoord(self, fx, fy):
