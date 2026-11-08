@@ -306,6 +306,13 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win3
 # FLAG{...} values are the objective; harvest them from the attacker's stream.
 FLAG_RE = re.compile(r"FLAG\{[^}\n]{0,200}\}")
 
+# Subagent graph name -> Siege arena commander key (includes xxe, which has no
+# text pane but does get a commander on the battlefield).
+AGENT_ARENA = {
+    "sql_injection_agent": "sql", "xss_agent": "xss",
+    "ssti_agent": "ssti", "xxe_agent": "xxe",
+}
+
 # The flags planted in the vulnerable app (see
 # src/defender/vulnerable-app/VULNERABILITIES.md). Each is a light that starts
 # blue (defended) and turns red when the attacker captures it THROUGH ITS OWN
@@ -478,6 +485,7 @@ class ComponentTab(ttk.Frame):
         self._reason_err_shown = False        # throttle "server unreachable"
         self._seen_msgs: set = set()          # (tid, i) already shown
         self.tid_label: dict = {}             # thread id -> subagent label
+        self.tid_arena: dict = {}             # thread id -> arena commander key
         self.action_proc: Proc | None = None  # one-shot start/stop/status
         self.lights: dict = {}  # subagent name AND tool -> light entry
         # "Reasoning only" filter (attacker): show iteration headers + the
@@ -694,6 +702,7 @@ class ComponentTab(ttk.Frame):
     def _reset_lights(self):
         self.sub_tasks.clear()
         self.tid_label.clear()
+        self.tid_arena.clear()
         self._seen_msgs.clear()
         for entry in self.lights.values():
             entry["canvas"].itemconfig(entry["oval"], fill=PAL["idle"])
@@ -713,9 +722,12 @@ class ComponentTab(ttk.Frame):
             status = ev.get("status") or ""
             tasks = self.sub_tasks.setdefault(sub, {})
             is_new = tid is not None and tid not in tasks
+            akey = AGENT_ARENA.get(sub)
             if tid is not None:
                 tasks[tid] = status
                 self.tid_label[tid] = self._label_for(sub)
+                if akey:
+                    self.tid_arena[tid] = akey
             running = sum(1 for s in tasks.values() if s in ("running", "busy"))
             queued = sum(1 for s in tasks.values() if s == "pending")
             total = len(tasks)
@@ -726,9 +738,8 @@ class ComponentTab(ttk.Frame):
                             f"{running} running / {queued} queued / {total} launched",
                             color=color)
             ar = self._arena()
-            pane = self.pane_for.get(sub)
-            if ar and pane:
-                ar.set_state(pane, "running" if running else
+            if ar and akey:
+                ar.set_state(akey, "running" if running else
                              ("queued" if queued else "idle"))
             if is_new:
                 self.append(f"  ➕ launched scan (#{total}, task {str(tid)[:8]})\n",
@@ -832,13 +843,14 @@ class ComponentTab(ttk.Frame):
         if not label:
             return  # a thread not launched in this session; skip
         pane = self.pane_for.get(label, "boss")
+        akey = self.tid_arena.get(tid)
         typ, text, tools = m.get("type"), m.get("text") or "", m.get("tools") or []
         if typ == "ai":
             if text:
                 self.append(f"  🧠 {text}\n", pane=pane)
                 ar = self._arena()
-                if ar:
-                    ar.say(pane, text)
+                if ar and akey:
+                    ar.say(akey, text)
             if tools:
                 self.append(f"  🧠 → {', '.join(tools)}\n", pane=pane)
         elif typ == "tool" and text:

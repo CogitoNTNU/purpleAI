@@ -18,9 +18,11 @@ if ($Clean) {
 
 # --no-project: the GUI uses only the stdlib (tkinter), so we skip syncing the
 # project's heavy deps. PyInstaller is pulled in ephemerally with --with.
+# --add-data bundles the Siege (Medieval_Pixel_Pack) sprites into the exe.
 uv run --no-project --python 3.12 --with pyinstaller pyinstaller `
     --noconsole --onefile --name PurpleAIControl `
     --distpath dist --workpath build --specpath . `
+    --add-data "assets;assets" `
     app.py
 
 $exe = Join-Path $PSScriptRoot 'dist\PurpleAIControl.exe'
