@@ -240,6 +240,7 @@ COMPONENTS = [
         # Live panes side by side: Boss, SQL, Cross-site, SSTI.
         "panes": [
             {"key": "boss", "title": "Boss"},
+            {"key": "recon", "title": "Recon  (recon_agent)"},
             {"key": "sql", "title": "SQL  (sql_injection_agent)"},
             {"key": "xss", "title": "Cross-site  (xss_agent)"},
             {"key": "ssti", "title": "SSTI  (ssti_agent)"},
@@ -248,6 +249,8 @@ COMPONENTS = [
         # subagent (sqlmap -> SQLi, xsser -> XSS, curl -> SSTI's ssti_scanner);
         # `pane` routes its output.
         "subagents": [
+            {"name": "recon_agent", "label": "Recon", "tool": "recon",
+             "tools": ["whatweb"], "pane": "recon"},
             {"name": "sql_injection_agent", "label": "SQLi", "tool": "sqlmap", "pane": "sql"},
             {"name": "xss_agent", "label": "XSS", "tool": "xsser", "pane": "xss"},
             {"name": "ssti_agent", "label": "SSTI", "tool": "curl", "pane": "ssti"},
@@ -312,6 +315,7 @@ FLAG_RE = re.compile(r"FLAG\{[^}\n]{0,200}\}")
 # Subagent graph name -> Siege arena commander key (includes xxe, which has no
 # text pane but does get a commander on the battlefield).
 AGENT_ARENA = {
+    "recon_agent": "recon",
     "sql_injection_agent": "sql", "xss_agent": "xss",
     "ssti_agent": "ssti", "xxe_agent": "xxe",
 }
@@ -552,7 +556,7 @@ class ComponentTab(ttk.Frame):
         self.pane_for: dict = {}
         for sa in cfg.get("subagents", []):
             if sa.get("pane"):
-                for k in (sa["name"], sa["tool"], sa["label"]):
+                for k in (sa["name"], sa["tool"], sa["label"], *sa.get("tools", [])):
                     self.pane_for[k] = sa["pane"]
 
         def _text(parent, **kw):
@@ -619,6 +623,8 @@ class ComponentTab(ttk.Frame):
                 entry = _light_cell(sa["label"], "idle", 5, 24)
                 self.lights[sa["name"]] = entry
                 self.lights[sa["tool"]] = entry  # same light, keyed by tool too
+                for extra in sa.get("tools", []):  # e.g. recon also runs whatweb
+                    self.lights[extra] = entry
 
         # Flags overview (attacker): one light per planted flag. Blue =
         # defended/uncaptured, red = the attacker has captured it.
