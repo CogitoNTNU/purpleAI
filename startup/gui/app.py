@@ -152,6 +152,15 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
   echo "[attacker] restarting instance $SESSION..."
   tmux kill-session -t "$SESSION" 2>/dev/null || true
 fi
+tmux kill-session -t attacker 2>/dev/null || true   # legacy pre-instance session
+# Free THIS instance's port from ANY stale server, including a legacy run
+# started without --port (which the per-port pkill below would miss) — that
+# squatter is exactly what makes a new server fail to bind and the Boss talk to
+# a stale server.
+command -v fuser >/dev/null 2>&1 && fuser -k "${SRVPORT}/tcp" 2>/dev/null || true
+for pid in $(ss -ltnp 2>/dev/null | grep "127.0.0.1:$SRVPORT " | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u); do
+  kill "$pid" 2>/dev/null || true
+done
 pkill -f "langgraph dev --port $SRVPORT" 2>/dev/null || true
 sleep 1
 
@@ -203,9 +212,13 @@ ATTACKER_STOP_TMPL = r"""
 set -uo pipefail
 SESSION="__SESSION__"
 SRVPORT="__SRVPORT__"
-# Kill only THIS instance: its tmux session (which holds the Boss) and the
-# langgraph server scoped to this instance's port. Other instances untouched.
+# Kill only THIS instance: its tmux session (which holds the Boss) and whatever
+# server is bound to this instance's port. Other instances are untouched.
 tmux kill-session -t "$SESSION" 2>/dev/null && echo "killed tmux '$SESSION'" || echo "no tmux session '$SESSION'"
+command -v fuser >/dev/null 2>&1 && fuser -k "${SRVPORT}/tcp" 2>/dev/null || true
+for pid in $(ss -ltnp 2>/dev/null | grep "127.0.0.1:$SRVPORT " | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u); do
+  kill "$pid" 2>/dev/null || true
+done
 pkill -f "langgraph dev --port $SRVPORT" 2>/dev/null && echo "stopped langgraph server :$SRVPORT" || true
 echo "[attacker:$SESSION] stop done."
 """
