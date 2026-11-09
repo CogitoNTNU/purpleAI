@@ -71,10 +71,13 @@ _DOCKER_PICK = (
 
 
 def with_pull(cmd: str) -> str:
-    """Pull the latest main on the remote before running `cmd`. Uses `;` so a
-    pull hiccup (no network, non-fast-forward) is reported but doesn't block
-    the start."""
-    return f"cd {REPO} && git pull --ff-only origin main; {cmd}"
+    """Bring the main checkout to the latest origin/main before running `cmd`
+    (defender/vulnapp build from it). A hard reset is robust even when the box
+    left the checkout on a detached HEAD (worktrees do that). Uses `;` so a
+    network hiccup is reported but doesn't block the start."""
+    return (f"cd {REPO} && git fetch origin --quiet 2>/dev/null; "
+            f"git checkout -f main 2>/dev/null; "
+            f"git reset --hard --quiet origin/main 2>/dev/null; {cmd}")
 
 
 # ---- per-instance docker (vulnerable app / defender on blueai) ------------ #
