@@ -251,6 +251,10 @@ for t in ths:
     tid = t.get("thread_id")
     if not tid:
         continue
+    # The subagent graph this thread belongs to (e.g. "sql_injection_agent"),
+    # so the GUI can route its reasoning without depending on the event feed.
+    meta = t.get("metadata") or {}
+    graph = meta.get("graph_id") or meta.get("assistant_id") or ""
     try:
         st = jget(BASE + "/threads/%s/state" % tid)
     except Exception:
@@ -273,7 +277,7 @@ for t in ths:
         if not c and not tools:
             continue
         print(json.dumps({"tid": tid, "i": i, "type": typ,
-                          "text": c[:500], "tools": tools}))
+                          "text": c[:500], "tools": tools, "graph": graph}))
 PY
 """
 
@@ -305,8 +309,11 @@ def att_events(inst):
     # lowercase src/attacker, so pin it (no capital-A fallback) to avoid a
     # path-resolution race when the tail starts before the worktree exists.
     a = f"{inst_worktree(inst)}/src/attacker"
+    # A wide window so that on an instance switch the replayed events repopulate
+    # every thread's subagent -> pane mapping (the fallback for reasoning
+    # routing), not just the most recent ones.
     return (f"mkdir -p {a}/logs && touch {a}/logs/events.jsonl "
-            f"&& tail -n 200 -F {a}/logs/events.jsonl")
+            f"&& tail -n 1500 -F {a}/logs/events.jsonl")
 
 def att_serverlog(inst):
     wt = inst_worktree(inst)
@@ -1047,12 +1054,20 @@ class ComponentTab(ttk.Frame):
         key = (tid, i)
         if key in self._seen_msgs:
             return
-        self._seen_msgs.add(key)
+        # Map the thread to its subagent. Prefer the graph_id the server reports
+        # (robust and immediate); fall back to tid_label from the event feed.
+        # Do NOT mark the message seen until we can place it, so a message that
+        # arrives before the mapping is ready is retried on the next poll rather
+        # than dropped (the bug that lost reasoning on switched-to instances).
+        graph = m.get("graph") or ""
         label = self.tid_label.get(tid)
+        if not label and graph in self.lights:
+            label = self._label_for(graph)
         if not label:
-            return  # a thread not launched in this session; skip
-        pane = self.pane_for.get(label, "boss")
-        akey = self.tid_arena.get(tid)
+            return  # not mapped yet (or not ours) — retry next poll, keep unseen
+        self._seen_msgs.add(key)
+        pane = self.pane_for.get(graph) or self.pane_for.get(label, "boss")
+        akey = self.tid_arena.get(tid) or AGENT_ARENA.get(graph)
         typ, text, tools = m.get("type"), m.get("text") or "", m.get("tools") or []
         if typ == "human":
             # The Boss's delegation to this subagent: show it in the Boss's
