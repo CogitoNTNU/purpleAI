@@ -132,6 +132,13 @@ if [ -e "$WT/.git" ]; then
     || git -C "$WT" checkout --detach --quiet "$BRANCH" || true
   git -C "$WT" reset --hard --quiet "origin/$BRANCH" 2>/dev/null || true
 else
+  # $WT is not a registered worktree. A leftover skeleton dir can exist here
+  # (the log viewer's `mkdir -p` creates it when you just switch to this
+  # instance before ever starting it), which would block `worktree add`. Clear
+  # it — guarded to the expected $HOME/purpleAI-<id> path — and prune stale
+  # worktree metadata, then create it fresh.
+  case "$WT" in "$HOME"/purpleAI-?) [ -d "$WT" ] && rm -rf "$WT" ;; esac
+  git -C "$MAIN" worktree prune 2>/dev/null || true
   git -C "$MAIN" worktree add --detach "$WT" "origin/$BRANCH" 2>/dev/null \
     || git -C "$MAIN" worktree add --detach "$WT" "$BRANCH" \
     || { echo "ERROR: could not create worktree $WT on $BRANCH" >&2; exit 1; }
