@@ -25,7 +25,8 @@ import random
 import sys
 import time
 import tkinter as tk
-from tkinter import ttk
+from datetime import datetime
+from tkinter import filedialog, messagebox, ttk
 
 FRAME_W, FRAME_H = 40, 44
 
@@ -78,8 +79,14 @@ class ArenaTab(ttk.Frame):
         chat_frame = tk.Frame(self, width=330, bg=pal["panel"])
         chat_frame.pack(side="right", fill="y")
         chat_frame.pack_propagate(False)
-        tk.Label(chat_frame, text="  💬  WAR ROOM", bg=pal["panel"], fg=pal["muted"],
-                 font=("Segoe UI Semibold", 10), anchor="w").pack(fill="x", pady=(8, 4))
+        head = tk.Frame(chat_frame, bg=pal["panel"])
+        head.pack(fill="x", pady=(8, 4))
+        tk.Label(head, text="  💬  WAR ROOM", bg=pal["panel"], fg=pal["muted"],
+                 font=("Segoe UI Semibold", 10), anchor="w").pack(side="left")
+        tk.Button(head, text="⤓ Export", command=self._export_chat,
+                  bg=pal["panel"], fg=pal["text"], activebackground=pal["log"],
+                  activeforeground=pal["text"], relief="flat", borderwidth=0,
+                  font=("Segoe UI", 8), cursor="hand2", padx=8).pack(side="right", padx=6)
         wrap = tk.Frame(chat_frame, bg=pal["panel"])
         wrap.pack(fill="both", expand=True)
         sb = tk.Scrollbar(wrap)
@@ -183,6 +190,33 @@ class ArenaTab(ttk.Frame):
             c["bubble"] = clean[:120]
             c["bubble_t"] = time.time() + 9.0
             self._chat(agent, clean)
+
+    def _export_chat(self):
+        """Save the War Room feed to a .txt the operator picks."""
+        try:
+            text = self.chat.get("1.0", "end").strip()
+        except Exception:  # noqa: BLE001
+            text = ""
+        if not text:
+            messagebox.showinfo("Export chat log", "The War Room is empty — "
+                                "nothing to export yet.")
+            return
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = filedialog.asksaveasfilename(
+            title="Export War Room chat log",
+            defaultextension=".txt",
+            initialfile=f"warroom_{stamp}.txt",
+            filetypes=[("Text file", "*.txt"), ("All files", "*.*")])
+        if not path:
+            return
+        header = f"PurpleAI War Room chat — exported {datetime.now():%Y-%m-%d %H:%M:%S}\n"
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(header + "=" * len(header.strip()) + "\n\n" + text + "\n")
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Export chat log", f"Could not save:\n{exc}")
+            return
+        messagebox.showinfo("Export chat log", f"Saved to:\n{path}")
 
     def _chat(self, agent, text):
         c = self.commanders.get(agent)
