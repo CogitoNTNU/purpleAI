@@ -18,7 +18,7 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 try:  # the Cogito logo, base64-embedded so it bundles into the exe
@@ -320,6 +320,50 @@ def att_health(inst):
 def att_status(inst):
     return (f"tmux has-session -t {inst_session(inst)} 2>/dev/null "
             "&& echo RUNNING || echo STOPPED")
+
+
+# ---- full reset: stop EVERYTHING and clear all logs (every instance) ------ #
+# Run as a one-shot on each host by the "Reset all" button. Leaves other users'
+# tmux sessions (e.g. testVegard) and non-purpleai containers alone.
+RESET_REDAI_SH = r"""
+set -uo pipefail
+echo "[reset] stopping every attacker instance on redai..."
+for s in $(tmux ls 2>/dev/null | cut -d: -f1 | grep -E '^attacker'); do
+  tmux kill-session -t "$s" 2>/dev/null && echo "  killed tmux $s"
+done
+pkill -f 'langgraph dev' 2>/dev/null && echo "  killed langgraph servers" || true
+pkill -f 'redagent.py'   2>/dev/null && echo "  killed Boss processes" || true
+sleep 1
+echo "[reset] clearing attacker logs + server state (main checkout + worktrees)..."
+for d in "$HOME/purpleAI" "$HOME"/purpleAI-?; do
+  [ -d "$d" ] || continue
+  rm -f "$d"/startup/logs/*.log 2>/dev/null || true
+  rm -f "$d"/src/attacker/logs/*.jsonl "$d"/src/Attacker/logs/*.jsonl 2>/dev/null || true
+  rm -rf "$d"/src/attacker/.langgraph_api "$d"/src/Attacker/.langgraph_api 2>/dev/null || true
+done
+echo "[reset] redai clean — ready for a fresh setup."
+"""
+
+RESET_BLUEAI_SH = r"""
+set -uo pipefail
+cd "$HOME/purpleAI/src/defender" 2>/dev/null || { echo "[reset] no defender dir"; exit 0; }
+if docker info >/dev/null 2>&1; then DC=docker;
+elif sudo -n docker info >/dev/null 2>&1; then DC="sudo -n docker";
+else echo "[reset] no docker access on blueai"; exit 0; fi
+echo "[reset] bringing down all vulnerable-app/defender compose projects..."
+for proj in purpleai-a purpleai-b purpleai-c purpleai-d defender src defender_default; do
+  for f in docker-compose.full.yml docker-compose.app.yml; do
+    COMPOSE_PROJECT_NAME="$proj" $DC compose -f "$f" down --remove-orphans 2>/dev/null || true
+  done
+done
+echo "[reset] removing any leftover vulnerable-app/defender containers..."
+for c in $($DC ps -a --format '{{.Names}}' 2>/dev/null | grep -E 'vulnerable-app|defender'); do
+  $DC rm -f "$c" 2>/dev/null && echo "  removed $c"
+done
+echo "[reset] clearing defender logs..."
+rm -f logs/*.jsonl logs-*/*.jsonl 2>/dev/null || true
+echo "[reset] blueai clean — ready for a fresh setup."
+"""
 
 
 # Each component's instance-varying scripts are produced by its `build(inst)`;
@@ -1056,6 +1100,16 @@ class ComponentTab(ttk.Frame):
         self.action_proc = proc
         proc.start()
 
+    def run_oneoff(self, script: str, host: str):
+        """Ship a one-shot script to a host and stream its output into this tab
+        (used by the global Reset). Not tied to the single action_proc slot."""
+        self.append(f"\n$ [reset] on {host}\n")
+        proc = Proc(ssh_script_argv(host), self.q, stdin_data=script, role="reset")
+        self._oneoffs = getattr(self, "_oneoffs", [])
+        self._oneoffs = [p for p in self._oneoffs if p.is_running()]
+        self._oneoffs.append(proc)
+        proc.start()
+
     def on_start(self):
         self.clear_flags()  # fresh run: reset the flags panel so re-finds show
         if self.cfg.get("counts_blue") and self.app:
@@ -1301,7 +1355,9 @@ class App(tk.Tk):
         branch_cb.bind("<Return>", self._on_branch_change)
         branch_cb.bind("<FocusOut>", self._on_branch_change)
 
-        # right cluster: Stop (secondary) · Start (primary) · host (muted)
+        # right cluster: Reset · Stop (secondary) · Start (primary) · host (muted)
+        ttk.Button(header, text="🧹  Reset all", command=self.reset_all,
+                   style="Ghost.TButton").pack(side="right", padx=(8, 0))
         ttk.Button(header, text="■  Stop all", command=self.stop_all,
                    style="Ghost.TButton").pack(side="right", padx=(8, 0))
         ttk.Button(header, text="▶  Start all", command=self.start_all,
@@ -1489,6 +1545,36 @@ class App(tk.Tk):
     def stop_all(self):
         for t in self.tabs:
             t.on_stop()
+
+    def reset_all(self):
+        """Clean slate: stop EVERY instance (all attacker sessions/servers and
+        all vulnerable-app/defender containers) and clear all logs, then reset
+        the view. Affects every instance A-D, not just the current one."""
+        if not messagebox.askyesno(
+                "Reset everything",
+                "Stop ALL instances (every attacker session + server) and ALL "
+                "vulnerable-app / defender containers, and clear all logs?\n\n"
+                "This affects every instance (A–D) and leaves you a clean slate "
+                "for a fresh setup."):
+            return
+        # Tear down the local view first so nothing fights the cleanup.
+        for t in self.tabs:
+            t.stop_logs()
+            t.clear_log()
+            if t.cfg.get("show_flags"):
+                t.clear_flags()
+            t._reset_lights()
+            t.set_dot(PAL["muted"])
+            t.status_var.set("reset")
+        if self.arena:
+            self.arena.reset()
+        self.set_red(0)
+        self.set_blue(0)
+        # Remote cleanup, streamed into the attacker tab.
+        att = self._tab("attacker")
+        att.append("=== RESET: stopping everything + clearing logs ===\n")
+        att.run_oneoff(RESET_REDAI_SH, "redai")
+        att.run_oneoff(RESET_BLUEAI_SH, "blueai")
 
     def _on_close(self):
         for t in self.tabs:
