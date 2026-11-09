@@ -36,6 +36,24 @@ except Exception:  # noqa: BLE001
 # --------------------------------------------------------------------------- #
 GAMEHOST = "gamehost"          # ssh alias of the jump host (reached from this PC)
 REPO = "~/purpleAI"            # repo path on redai and blueai
+BLUEAI_IP = "192.168.0.120"    # LAN IP of blueai (where the vulnerable app listens)
+
+# Isolated instances you can run in parallel to compare configs (e.g. main vs
+# recon-agent). Each gets its own attacker server port, vulnerable-app port,
+# tmux session, and git worktree on redai, so they never collide. `branch` is
+# editable at runtime from the header; defaults set up the common A/B compare.
+INSTANCES = [
+    {"id": "a", "label": "A", "server_port": 2024, "app_port": 8080, "branch": "main"},
+    {"id": "b", "label": "B", "server_port": 2025, "app_port": 8081, "branch": "recon-agent"},
+    {"id": "c", "label": "C", "server_port": 2026, "app_port": 8082, "branch": "main"},
+    {"id": "d", "label": "D", "server_port": 2027, "app_port": 8083, "branch": "main"},
+]
+
+
+def inst_session(inst):   return f"attacker-{inst['id']}"
+def inst_worktree(inst):  return f"$HOME/purpleAI-{inst['id']}"
+def inst_target(inst):    return f"http://{BLUEAI_IP}:{inst['app_port']}/"
+def inst_project(inst):   return f"purpleai-{inst['id']}"
 
 
 # Picks how to call docker: plain `docker` if the socket is reachable,
@@ -52,21 +70,6 @@ _DOCKER_PICK = (
 )
 
 
-def _dc(compose: str, action: str) -> str:
-    """A single docker-compose action (stop/logs/status) on one compose file."""
-    return f"cd {REPO}/src/defender && {_DOCKER_PICK} && $DC compose -f {compose} {action}"
-
-
-def docker_start(target: str, other: str) -> str:
-    """Start `target`, first bringing `other` down so the two compose files
-    don't fight over port 8080 / the `vulnerable-app` container name."""
-    return (
-        f"cd {REPO}/src/defender && {_DOCKER_PICK} && "
-        f"$DC compose -f {other} down --remove-orphans; "
-        f"$DC compose -f {target} up -d --build --remove-orphans"
-    )
-
-
 def with_pull(cmd: str) -> str:
     """Pull the latest main on the remote before running `cmd`. Uses `;` so a
     pull hiccup (no network, non-fast-forward) is reported but doesn't block
@@ -74,120 +77,143 @@ def with_pull(cmd: str) -> str:
     return f"cd {REPO} && git pull --ff-only origin main; {cmd}"
 
 
+# ---- per-instance docker (vulnerable app / defender on blueai) ------------ #
+# The vulnerable-app/defender code is identical across branches, so instances
+# build from the one main checkout but run isolated containers: a per-instance
+# compose project, host port, container names, and logs dir. The compose files
+# read these env vars (defaulting to the single-run values when unset).
+def _dc_env(inst: dict) -> str:
+    return (f"COMPOSE_PROJECT_NAME={inst_project(inst)} APP_PORT={inst['app_port']} "
+            f"APP_CONTAINER=vulnerable-app-{inst['id']} "
+            f"DEF_CONTAINER=defender-{inst['id']} APP_LOGS=./logs-{inst['id']}")
+
+
+def _dc_inst(inst: dict, compose: str, action: str) -> str:
+    """A docker-compose action for one instance (its own project/port/names)."""
+    return (f"cd {REPO}/src/defender && {_DOCKER_PICK} && export {_dc_env(inst)} && "
+            f"$DC compose -f {compose} {action}")
+
+
+def docker_start_inst(inst: dict, target: str, other: str) -> str:
+    """Start `target` for one instance, bringing its sibling compose down first
+    so the two files don't fight over this instance's port / container names."""
+    return (f"cd {REPO}/src/defender && {_DOCKER_PICK} && export {_dc_env(inst)} && "
+            f"$DC compose -f {other} down --remove-orphans; "
+            f"$DC compose -f {target} up -d --build --remove-orphans")
+
+
 # The attacker has a multi-step launch (tmux + venv). Rather than require these
 # scripts to already be on redai, the GUI ships them over ssh via `bash -s` on
 # stdin, so the box only needs the repo itself — not these helper files.
-ATTACKER_START_SH = r"""
+# Template: one ISOLATED attacker instance. Placeholders (__SESSION__ etc.) are
+# filled per-instance by _fill(). Each instance runs from its OWN git worktree
+# (so different branches run in parallel), on its OWN server port, against its
+# OWN vulnerable-app port via TARGET_URL — nothing is shared between instances.
+ATTACKER_START_TMPL = r"""
 set -euo pipefail
-REPO="${PURPLE_REPO:-$HOME/purpleAI}"
-ATT="$REPO/src/attacker"
-[ -d "$ATT" ] || ATT="$REPO/src/Attacker"   # repo was renamed lowercase on main
-SESSION="attacker"
-LOGDIR="$REPO/startup/logs"
+MAIN="${PURPLE_REPO:-$HOME/purpleAI}"
+SESSION="__SESSION__"
+SRVPORT="__SRVPORT__"
+BRANCH="__BRANCH__"
+WT="__WT__"
+export TARGET_URL="__TARGET__"
+export SUBAGENT_SERVER_URL="http://localhost:$SRVPORT"
+LOGDIR="$WT/startup/logs"
 LOG="$LOGDIR/attacker.log"
-mkdir -p "$LOGDIR"
 
-# Pull latest main first (non-fatal if it can't fast-forward).
-( cd "$REPO" && git pull --ff-only origin main ) || echo "[attacker] git pull skipped/failed."
+# --- set up / refresh this instance's worktree on the chosen branch --------
+( cd "$MAIN" && git fetch origin --quiet ) || echo "[attacker] git fetch skipped/failed."
+if [ -e "$WT/.git" ]; then
+  git -C "$WT" fetch origin --quiet || true
+  git -C "$WT" checkout --detach --quiet "origin/$BRANCH" 2>/dev/null \
+    || git -C "$WT" checkout --detach --quiet "$BRANCH" || true
+  git -C "$WT" reset --hard --quiet "origin/$BRANCH" 2>/dev/null || true
+else
+  git -C "$MAIN" worktree add --detach "$WT" "origin/$BRANCH" 2>/dev/null \
+    || git -C "$MAIN" worktree add --detach "$WT" "$BRANCH" \
+    || { echo "ERROR: could not create worktree $WT on $BRANCH" >&2; exit 1; }
+fi
+ATT="$WT/src/attacker"
+[ -d "$ATT" ] || ATT="$WT/src/Attacker"
+[ -d "$ATT" ] || { echo "ERROR: $ATT not found in worktree." >&2; exit 1; }
+mkdir -p "$LOGDIR"
 
 if ! command -v tmux >/dev/null 2>&1; then
   echo "[attacker] installing tmux..."
   sudo -n apt-get update -y && sudo -n apt-get install -y tmux \
-    || { echo "ERROR: tmux missing and cannot sudo-install it. Run: sudo apt-get install -y tmux"; exit 1; }
+    || { echo "ERROR: tmux missing and cannot sudo-install it."; exit 1; }
 fi
 
-# Always restart clean: end any existing attacker before starting a new one.
+# Restart THIS instance clean (scoped to its own session + server port).
 if tmux has-session -t "$SESSION" 2>/dev/null; then
-  echo "[attacker] ending existing attacker session before restart..."
+  echo "[attacker] restarting instance $SESSION..."
   tmux kill-session -t "$SESSION" 2>/dev/null || true
 fi
-pkill -f 'langgraph dev' 2>/dev/null || true
-pkill -f 'redagent.py'   2>/dev/null || true
+pkill -f "langgraph dev --port $SRVPORT" 2>/dev/null || true
 sleep 1
 
-[ -d "$ATT" ] || { echo "ERROR: $ATT not found." >&2; exit 1; }
-
-# Fresh state each run so earlier runs' tasks don't carry over into the UI or
-# keep draining the single worker:
-#  - rotate events.jsonl (the GUI tails it; it otherwise accumulates across runs)
-#  - wipe .langgraph_api (the dev server persists subagent threads/runs to disk)
+# Fresh state each run (rotate events, wipe this worktree's server threads).
 mkdir -p "$ATT/logs"
 [ -s "$ATT/logs/events.jsonl" ] && mv -f "$ATT/logs/events.jsonl" "$ATT/logs/events.prev.jsonl" 2>/dev/null || true
 rm -rf "$ATT/.langgraph_api" 2>/dev/null || true
-echo "[attacker] cleared previous run state (events rotated, server threads wiped)."
+echo "[attacker] cleared previous run state."
 
-# The lowercase rename on main split the source (src/attacker) from the
-# pre-existing venv and the gitignored .env, which were left behind in the old
-# src/Attacker. Carry the .env over and reuse whichever venv already has
-# langgraph (uv is often not on the non-interactive PATH).
+# Carry the gitignored .env + reuse a venv with langgraph from the main checkout.
 if [ ! -f "$ATT/.env" ]; then
-  for alt in "$REPO/src/Attacker/.env" "$REPO/src/attacker/.env"; do
-    if [ -f "$alt" ] && [ "$alt" != "$ATT/.env" ]; then
-      cp "$alt" "$ATT/.env" && echo "[attacker] copied .env from $alt"; break
-    fi
+  for alt in "$MAIN/src/Attacker/.env" "$MAIN/src/attacker/.env"; do
+    [ -f "$alt" ] && cp "$alt" "$ATT/.env" && echo "[attacker] copied .env from $alt" && break
   done
 fi
-
-VENV="$ATT/.venv"
-if [ ! -x "$VENV/bin/langgraph" ]; then
-  for alt in "$REPO/src/attacker/.venv" "$REPO/src/Attacker/.venv"; do
-    if [ -x "$alt/bin/langgraph" ]; then VENV="$alt"; break; fi
-  done
-fi
-if [ ! -x "$VENV/bin/langgraph" ]; then
+VENV=""
+for alt in "$ATT/.venv" "$MAIN/src/attacker/.venv" "$MAIN/src/Attacker/.venv"; do
+  if [ -x "$alt/bin/langgraph" ]; then VENV="$alt"; break; fi
+done
+if [ -z "$VENV" ]; then
   echo "[attacker] no venv with langgraph; bootstrapping with uv..."
   if command -v uv >/dev/null 2>&1; then
     ( cd "$ATT" && uv venv && uv pip install --python .venv/bin/python -r requirements.txt )
     VENV="$ATT/.venv"
   else
-    echo "ERROR: no usable .venv and uv not on PATH. In $ATT run: uv venv && uv pip install -r requirements.txt" >&2
-    exit 1
+    echo "ERROR: no usable .venv and uv not on PATH." >&2; exit 1
   fi
 fi
-echo "[attacker] using venv: $VENV"
+echo "[attacker] venv=$VENV  target=$TARGET_URL  server=:$SRVPORT  branch=$BRANCH"
 
 : > "$LOG"
 START_DELAY="${PURPLE_ATTACKER_DELAY:-10}"
 tmux new-session -d -s "$SESSION" -c "$ATT"
 tmux pipe-pane -o -t "$SESSION" "cat >> '$LOG'"
-# Load the env into the pane so the server + Boss get LLM_API_KEY. The rename
-# left an .env with the wrong schema in src/attacker, so if LLM_API_KEY is still
-# unset, also source the leftover .env (which has it).
-tmux send-keys -t "$SESSION" "set -a; [ -f .env ] && . ./.env; [ -z \"\${LLM_API_KEY:-}\" ] && [ -f '$REPO/src/Attacker/.env' ] && . '$REPO/src/Attacker/.env'; set +a" C-m
-# 1) Start the subagent server (langgraph dev) in the background, own log.
-#    --no-browser: on a headless box, opening LangGraph Studio launches a
-#      text-mode browser that grabs the tmux pane's tty and suspends the server.
-#    --no-reload: the attacker writes its event log and scan reports INSIDE the
-#      watched project tree; with auto-reload on, every write reloads the dev
-#      server and interrupts the one worker, so subagent runs stick at "pending"
-#      forever and the Boss never advances past iteration 0.
-#    --n-jobs-per-worker: run subagent scans concurrently (SQLi/XSS/SSTI at
-#      once) rather than serialised.
-tmux send-keys -t "$SESSION" "BROWSER=true $VENV/bin/langgraph dev --no-browser --no-reload --n-jobs-per-worker 10 > '$LOGDIR/langgraph.log' 2>&1 &" C-m
-# 2) Give it time to boot (and you a chance to open the Server log) before Boss.
-tmux send-keys -t "$SESSION" "echo 'subagent server starting on :2024 (log: $LOGDIR/langgraph.log)'; echo 'open the Server log to watch it; Boss starts in ${START_DELAY}s...'; sleep ${START_DELAY}" C-m
-# 3) Then wait (bounded, ~60s) until it actually answers before starting Boss.
-tmux send-keys -t "$SESSION" "n=0; until curl -s http://localhost:2024/ok >/dev/null 2>&1 || curl -s http://localhost:2024/ >/dev/null 2>&1; do n=\$((n+1)); [ \$n -ge 30 ] && break; sleep 2; done" C-m
-tmux send-keys -t "$SESSION" "if curl -s http://localhost:2024/ok >/dev/null 2>&1 || curl -s http://localhost:2024/ >/dev/null 2>&1; then echo 'server up; starting Boss'; else echo 'WARNING: server not responding on :2024 - check the Server log'; fi; $VENV/bin/python redagent.py" C-m
-echo "[attacker] started (detached). Server booting; Boss starts after ${START_DELAY}s. Logs -> $LOG"
+# Export this instance's target + server URL, then load the .env (LLM_API_KEY).
+tmux send-keys -t "$SESSION" "export TARGET_URL='$TARGET_URL' SUBAGENT_SERVER_URL='$SUBAGENT_SERVER_URL'" C-m
+tmux send-keys -t "$SESSION" "set -a; [ -f .env ] && . ./.env; [ -z \"\${LLM_API_KEY:-}\" ] && [ -f '$MAIN/src/Attacker/.env' ] && . '$MAIN/src/Attacker/.env'; set +a" C-m
+# 1) Subagent server (langgraph dev) on this instance's port, backgrounded.
+#    --no-browser/--no-reload/--n-jobs-per-worker: see history; needed headless.
+tmux send-keys -t "$SESSION" "BROWSER=true $VENV/bin/langgraph dev --port $SRVPORT --no-browser --no-reload --n-jobs-per-worker 10 > '$LOGDIR/langgraph.log' 2>&1 &" C-m
+# 2) Boot delay, then wait until the server answers before launching the Boss.
+tmux send-keys -t "$SESSION" "echo 'server starting on :$SRVPORT'; echo 'Boss starts in ${START_DELAY}s...'; sleep ${START_DELAY}" C-m
+tmux send-keys -t "$SESSION" "n=0; until curl -s http://localhost:$SRVPORT/ok >/dev/null 2>&1 || curl -s http://localhost:$SRVPORT/ >/dev/null 2>&1; do n=\$((n+1)); [ \$n -ge 30 ] && break; sleep 2; done" C-m
+tmux send-keys -t "$SESSION" "if curl -s http://localhost:$SRVPORT/ok >/dev/null 2>&1 || curl -s http://localhost:$SRVPORT/ >/dev/null 2>&1; then echo 'server up; starting Boss'; else echo 'WARNING: server not responding on :$SRVPORT'; fi; $VENV/bin/python redagent.py" C-m
+echo "[attacker:$SESSION] started on $BRANCH (server :$SRVPORT, target $TARGET_URL)."
 """
 
-ATTACKER_STOP_SH = r"""
+ATTACKER_STOP_TMPL = r"""
 set -uo pipefail
-SESSION="attacker"
+SESSION="__SESSION__"
+SRVPORT="__SRVPORT__"
+# Kill only THIS instance: its tmux session (which holds the Boss) and the
+# langgraph server scoped to this instance's port. Other instances untouched.
 tmux kill-session -t "$SESSION" 2>/dev/null && echo "killed tmux '$SESSION'" || echo "no tmux session '$SESSION'"
-pkill -f 'langgraph dev' 2>/dev/null && echo "stopped langgraph server" || true
-pkill -f 'redagent.py'   2>/dev/null && echo "stopped Boss" || true
-echo "[attacker] stop done."
+pkill -f "langgraph dev --port $SRVPORT" 2>/dev/null && echo "stopped langgraph server :$SRVPORT" || true
+echo "[attacker:$SESSION] stop done."
 """
 
 # Dump each subagent thread's message trail (its reasoning) from the langgraph
 # server as JSON lines. Shipped to redai via bash -s and run on each poll; the
 # GUI dedupes by (tid, index) and maps tid -> subagent via subagent_status.
-REASONING_SCRIPT = r"""
+REASONING_TMPL = r"""
 python3 - <<'PY'
 import json, urllib.request
-BASE = "http://localhost:2024"
+BASE = "http://localhost:__SRVPORT__"
 def jget(u):
     return json.load(urllib.request.urlopen(u, timeout=6))
 def jpost(u, d):
@@ -229,6 +255,93 @@ PY
 """
 
 
+def _fill(tmpl: str, inst: dict) -> str:
+    """Substitute an instance's parameters into a shell/script template."""
+    return (tmpl
+            .replace("__SESSION__", inst_session(inst))
+            .replace("__SRVPORT__", str(inst["server_port"]))
+            .replace("__APPPORT__", str(inst["app_port"]))
+            .replace("__BRANCH__", inst["branch"])
+            .replace("__WT__", inst_worktree(inst))
+            .replace("__TARGET__", inst_target(inst))
+            .replace("__ID__", inst["id"]))
+
+
+# ---- per-instance script builders (attacker on redai) --------------------- #
+def att_start(inst):  return _fill(ATTACKER_START_TMPL, inst)
+def att_stop(inst):   return _fill(ATTACKER_STOP_TMPL, inst)
+def att_reason(inst): return _fill(REASONING_TMPL, inst)
+
+def att_logs(inst):
+    wt = inst_worktree(inst)
+    return (f"mkdir -p {wt}/startup/logs && touch {wt}/startup/logs/attacker.log "
+            f"&& tail -n 300 -F {wt}/startup/logs/attacker.log")
+
+def att_events(inst):
+    # A fresh worktree is always a checkout of a branch where the dir is the
+    # lowercase src/attacker, so pin it (no capital-A fallback) to avoid a
+    # path-resolution race when the tail starts before the worktree exists.
+    a = f"{inst_worktree(inst)}/src/attacker"
+    return (f"mkdir -p {a}/logs && touch {a}/logs/events.jsonl "
+            f"&& tail -n 200 -F {a}/logs/events.jsonl")
+
+def att_serverlog(inst):
+    wt = inst_worktree(inst)
+    return (f"mkdir -p {wt}/startup/logs && touch {wt}/startup/logs/langgraph.log "
+            f"&& tail -n 200 -F {wt}/startup/logs/langgraph.log")
+
+def att_health(inst):
+    p = inst["server_port"]
+    return (
+        'c=$(curl -s -o /dev/null -w "%{http_code}" --max-time 4 '
+        f"http://localhost:{p}/ok 2>/dev/null); "
+        'if [ -z "$c" ] || [ "$c" = "000" ]; then '
+        'c=$(curl -s -o /dev/null -w "%{http_code}" --max-time 4 '
+        f"http://localhost:{p}/ 2>/dev/null); fi; "
+        'echo "SERVER $c"'
+    )
+
+def att_status(inst):
+    return (f"tmux has-session -t {inst_session(inst)} 2>/dev/null "
+            "&& echo RUNNING || echo STOPPED")
+
+
+# Each component's instance-varying scripts are produced by its `build(inst)`;
+# the static fields (panes, subagent lights, colours) are the same for every
+# instance. ComponentTab merges build(inst) into its cfg and re-tails on switch.
+def _attacker_build(inst):
+    return {
+        "start": {"script": att_start(inst),
+                  "desc": f"inst {inst['label']}: worktree {inst['branch']} + start server/Boss"},
+        "stop":  {"script": att_stop(inst),
+                  "desc": f"stop attacker instance {inst['label']}"},
+        "logs": att_logs(inst),
+        "events": att_events(inst),
+        "server_logs": att_serverlog(inst),
+        "reasoning_script": att_reason(inst),
+        "health": att_health(inst),
+        "status": att_status(inst),
+    }
+
+
+def _defender_build(inst):
+    return {
+        "start":  with_pull(docker_start_inst(inst, "docker-compose.full.yml", "docker-compose.app.yml")),
+        "stop":   _dc_inst(inst, "docker-compose.full.yml", "down"),
+        "logs":   _dc_inst(inst, "docker-compose.full.yml", "logs -f --tail=300"),
+        "status": _dc_inst(inst, "docker-compose.full.yml", "ps"),
+    }
+
+
+def _vulnapp_build(inst):
+    return {
+        "start":  with_pull(docker_start_inst(inst, "docker-compose.app.yml", "docker-compose.full.yml")),
+        "stop":   _dc_inst(inst, "docker-compose.app.yml", "down"),
+        "logs":   _dc_inst(inst, "docker-compose.app.yml", "logs -f --tail=300"),
+        "status": _dc_inst(inst, "docker-compose.app.yml", "ps"),
+    }
+
+
 COMPONENTS = [
     {
         "key": "attacker",
@@ -237,7 +350,7 @@ COMPONENTS = [
         "color": "#C0392B",
         "filterable": True,   # adds the "Reasoning only" checkbox (on by default)
         "show_flags": True,   # adds the "Flags captured" overview
-        # Live panes side by side: Boss, SQL, Cross-site, SSTI.
+        # Live panes side by side: Boss, Recon, SQL, Cross-site, SSTI.
         "panes": [
             {"key": "boss", "title": "Boss"},
             {"key": "recon", "title": "Recon  (recon_agent)"},
@@ -255,33 +368,7 @@ COMPONENTS = [
             {"name": "xss_agent", "label": "XSS", "tool": "xsser", "pane": "xss"},
             {"name": "ssti_agent", "label": "SSTI", "tool": "curl", "pane": "ssti"},
         ],
-        # Structured event log (both Boss and subagent server append here).
-        "events": (f"D={REPO}/src/attacker; [ -d \"$D\" ] || D={REPO}/src/Attacker; "
-                   "mkdir -p $D/logs && touch $D/logs/events.jsonl "
-                   "&& tail -n 200 -F $D/logs/events.jsonl"),
-        # The subagent server's own stdout/stderr (why it did/didn't start).
-        "server_logs": f"mkdir -p {REPO}/startup/logs "
-                       f"&& touch {REPO}/startup/logs/langgraph.log "
-                       f"&& tail -n 200 -F {REPO}/startup/logs/langgraph.log",
-        # Subagent reasoning: pull each subagent thread's message trail from the
-        # server (shipped via bash -s, so no quoting worries).
-        "reasoning_script": REASONING_SCRIPT,
-        # One-shot health probe of the subagent server (langgraph dev :2024),
-        # polled on a timer. Prints "SERVER <http_code>" (000 = unreachable).
-        "health": (
-            'c=$(curl -s -o /dev/null -w "%{http_code}" --max-time 4 '
-            "http://localhost:2024/ok 2>/dev/null); "
-            'if [ -z "$c" ] || [ "$c" = "000" ]; then '
-            'c=$(curl -s -o /dev/null -w "%{http_code}" --max-time 4 '
-            "http://localhost:2024/ 2>/dev/null); fi; "
-            'echo "SERVER $c"'
-        ),
-        "start": {"script": ATTACKER_START_SH, "desc": "pull main + start Boss/server in tmux"},
-        "stop":  {"script": ATTACKER_STOP_SH, "desc": "stop attacker (kill tmux + procs)"},
-        "logs":  f"mkdir -p {REPO}/startup/logs && touch {REPO}/startup/logs/attacker.log "
-                 f"&& tail -n 300 -F {REPO}/startup/logs/attacker.log",
-        "status": "tmux has-session -t attacker 2>/dev/null "
-                  "&& echo RUNNING || echo STOPPED",
+        "build": _attacker_build,
     },
     {
         "key": "defender",
@@ -289,20 +376,14 @@ COMPONENTS = [
         "host": "blueai",
         "color": "#2471A3",
         "counts_blue": True,  # blocked requests in its log = blue team score
-        "start":  with_pull(docker_start("docker-compose.full.yml", "docker-compose.app.yml")),
-        "stop":   _dc("docker-compose.full.yml", "down"),
-        "logs":   _dc("docker-compose.full.yml", "logs -f --tail=300"),
-        "status": _dc("docker-compose.full.yml", "ps"),
+        "build": _defender_build,
     },
     {
         "key": "vulnapp",
         "label": "Vulnerable app only  (blueai)",
         "host": "blueai",
         "color": "#7D3C98",
-        "start":  with_pull(docker_start("docker-compose.app.yml", "docker-compose.full.yml")),
-        "stop":   _dc("docker-compose.app.yml", "down"),
-        "logs":   _dc("docker-compose.app.yml", "logs -f --tail=300"),
-        "status": _dc("docker-compose.app.yml", "ps"),
+        "build": _vulnapp_build,
     },
 ]
 
@@ -521,9 +602,15 @@ class Proc:
 
 
 class ComponentTab(ttk.Frame):
-    def __init__(self, master: tk.Misc, cfg: dict, app=None):
+    def __init__(self, master: tk.Misc, cfg: dict, app=None, instance: dict | None = None):
         super().__init__(master, padding=8)
-        self.cfg = cfg
+        # cfg carries static metadata; build(instance) fills the instance-varying
+        # scripts (ports/branch/worktree/target). Merge them so the rest of the
+        # tab reads self.cfg["start"/"logs"/…] exactly as before.
+        self.cfg = dict(cfg)
+        self.instance = instance or INSTANCES[0]
+        if callable(self.cfg.get("build")):
+            self.cfg.update(self.cfg["build"](self.instance))
         self.app = app  # for the Red-vs-Blue scoreboard
         self._blue = 0  # defender: requests blocked (blue score)
         self._blue_seen: set = set()
@@ -837,7 +924,8 @@ class ComponentTab(ttk.Frame):
         code = line.split("SERVER", 1)[1].strip() or "000"
         up = code not in ("", "000")
         entry["canvas"].itemconfig(entry["oval"], fill=PAL["green"] if up else PAL["red"])
-        entry["status"].set(f"connected ({code})" if up else "down (:2024)")
+        port = self.instance["server_port"]
+        entry["status"].set(f"connected ({code})" if up else f"down (:{port})")
 
     def _poll_health(self):
         """Fire a one-shot health probe, then reschedule while streaming."""
@@ -879,7 +967,8 @@ class ComponentTab(ttk.Frame):
         line = line.strip()
         if line.startswith("REASON_ERR"):
             if not self._reason_err_shown:  # show once, not every poll
-                self.append("  [reason] subagent server not reachable on :2024 "
+                self.append(f"  [reason] subagent server not reachable on "
+                            f":{self.instance['server_port']} "
                             "(is it up? check the Server light / 📄 Server log)\n")
                 self._reason_err_shown = True
             return
@@ -1023,6 +1112,33 @@ class ComponentTab(ttk.Frame):
             self.reason_proc.kill()
             self.reason_proc = None
 
+    def set_instance(self, instance: dict):
+        """Point this tab at another isolated instance: stop its current
+        viewers, rebuild its per-instance scripts, reset the view, and re-tail
+        the newly-selected instance's live logs."""
+        self.stop_logs()
+        if self.action_proc and self.action_proc.is_running():
+            self.action_proc.kill()
+        self.instance = instance
+        if callable(self.cfg.get("build")):
+            self.cfg.update(self.cfg["build"](instance))
+        self.clear_log()
+        if self.cfg.get("show_flags"):
+            self.clear_flags()
+            ar = self._arena()
+            if ar:
+                ar.reset()
+            if self.app:
+                self.app.set_red(0)
+        if self.cfg.get("counts_blue") and self.app:
+            self._blue = 0
+            self._blue_seen.clear()
+            self.app.set_blue(0)
+        self.status_var.set("idle")
+        self.set_dot(PAL["muted"])
+        # Re-attach viewers so the selected instance's live logs stream in.
+        self.start_logs()
+
     # -- reasoning-only filter --------------------------------------------- #
     # Boss output per turn:
     #   "===== iteration N ====="   -> boundary (show)
@@ -1130,6 +1246,7 @@ class App(tk.Tk):
         self.red_score = 0
         self.blue_score = 0
         self.arena = None
+        self.current_instance = INSTANCES[0]
 
         # -- header: logo, title, host + global actions -------------------- #
         header = ttk.Frame(self, style="Header.TFrame", padding=(18, 14, 18, 14))
@@ -1146,6 +1263,27 @@ class App(tk.Tk):
                 pass
         ttk.Label(header, text="PurpleAI Control",
                   style="HeaderTitle.TLabel").pack(side="left")
+
+        # Instance + branch selectors: pick which isolated run you're viewing /
+        # starting, and which branch that instance pulls. Instances are fully
+        # isolated (own server port, vulnerable-app port, tmux session, worktree)
+        # so you can run several at once and compare.
+        sel = ttk.Frame(header, style="Header.TFrame")
+        sel.pack(side="left", padx=(24, 0))
+        ttk.Label(sel, text="Instance", style="HeaderSub.TLabel").pack(side="left", padx=(0, 6))
+        self.inst_var = tk.StringVar(value=INSTANCES[0]["label"])
+        inst_cb = ttk.Combobox(sel, textvariable=self.inst_var, state="readonly",
+                               width=3, values=[i["label"] for i in INSTANCES])
+        inst_cb.pack(side="left")
+        inst_cb.bind("<<ComboboxSelected>>", self._on_instance_change)
+        ttk.Label(sel, text="Branch", style="HeaderSub.TLabel").pack(side="left", padx=(14, 6))
+        self.branch_var = tk.StringVar(value=INSTANCES[0]["branch"])
+        branch_cb = ttk.Combobox(sel, textvariable=self.branch_var, width=16,
+                                 values=["main", "recon-agent"])
+        branch_cb.pack(side="left")
+        branch_cb.bind("<<ComboboxSelected>>", self._on_branch_change)
+        branch_cb.bind("<Return>", self._on_branch_change)
+        branch_cb.bind("<FocusOut>", self._on_branch_change)
 
         # right cluster: Stop (secondary) · Start (primary) · host (muted)
         ttk.Button(header, text="■  Stop all", command=self.stop_all,
@@ -1165,7 +1303,7 @@ class App(tk.Tk):
         nb.pack(fill="both", expand=True, padx=12, pady=(4, 12))
         self.tabs: list[ComponentTab] = []
         for cfg in COMPONENTS:
-            tab = ComponentTab(nb, cfg, app=self)
+            tab = ComponentTab(nb, cfg, app=self, instance=self.current_instance)
             nb.add(tab, text=cfg["label"])
             self.tabs.append(tab)
 
@@ -1303,8 +1441,32 @@ class App(tk.Tk):
     def _tab(self, key: str) -> ComponentTab:
         return next(t for t in self.tabs if t.cfg["key"] == key)
 
+    # -- instance / branch selection --------------------------------------- #
+    def _instance_by_label(self, label: str) -> dict:
+        return next((i for i in INSTANCES if i["label"] == label), INSTANCES[0])
+
+    def _on_instance_change(self, _evt=None):
+        """Switch the whole view (all tabs + arena) to the chosen instance."""
+        inst = self._instance_by_label(self.inst_var.get())
+        self.current_instance = inst
+        self.branch_var.set(inst["branch"])
+        self.title(f"PurpleAI Control — instance {inst['label']}")
+        for t in self.tabs:
+            t.set_instance(inst)
+
+    def _on_branch_change(self, _evt=None):
+        """Set the current instance's branch; takes effect on its next Start."""
+        branch = self.branch_var.get().strip()
+        if not branch or branch == self.current_instance.get("branch"):
+            return
+        self.current_instance["branch"] = branch
+        # Rebuild each tab's scripts so the next Start pulls the new branch.
+        for t in self.tabs:
+            if callable(t.cfg.get("build")):
+                t.cfg.update(t.cfg["build"](t.instance))
+
     def start_all(self):
-        # Attacker + defender (defender already includes the vuln app).
+        # Current instance's attacker + defender (defender includes the vuln app).
         self._tab("attacker").on_start()
         self._tab("defender").on_start()
 
