@@ -1,11 +1,12 @@
 services:
   vulnerable-app:
     build: ./vulnerable-app
-    container_name: vulnerable-app
+    # Overridable for multi-instance isolation; defaults keep single-run values.
+    container_name: ${APP_CONTAINER:-vulnerable-app}
     environment:
       - PURPLEAI_LOG_FILE=/var/log/purpleai/vulnshop.jsonl
     volumes:
-      - ./logs:/var/log/purpleai
+      - ${APP_LOGS:-./logs}:/var/log/purpleai
       - ../purpleai_logging.py:/app/purpleai_logging.py:ro
     networks:
       - backend-network
@@ -14,16 +15,16 @@ services:
     build:
       context: ..
       dockerfile: defender/defender-agent/Dockerfile
-    container_name: defender
+    container_name: ${DEF_CONTAINER:-defender}
     ports:
-      - "8080:8080"
+      - "${APP_PORT:-8080}:8080"
     env_file:
       - ../.env
     environment:
       - TARGET=http://vulnerable-app:5000
       - PURPLEAI_LOG_FILE=/var/log/purpleai/events.jsonl
     volumes:
-      - ./logs:/var/log/purpleai
+      - ${APP_LOGS:-./logs}:/var/log/purpleai
     networks:
       - proxy-network
       - backend-network

@@ -28,8 +28,9 @@ MAX_ITERATIONS = 50
 SESSION_THREAD_ID = "attacker-session"
 
 # URL of the Agent Protocol server that hosts the subagent graphs.
-# `langgraph dev` serves here by default; override if you deploy elsewhere.
-SUBAGENT_SERVER_URL = "http://localhost:2024"
+# `langgraph dev` serves on :2024 by default; override via SUBAGENT_SERVER_URL
+# so each isolated instance's Boss connects to its own server port (2024, 2025…).
+SUBAGENT_SERVER_URL = os.environ.get("SUBAGENT_SERVER_URL", "http://localhost:2024")
 
 # Async subagents are referenced by their graph_id on the server (see
 # langgraph.json), NOT imported as objects. Launching one returns a task_id
