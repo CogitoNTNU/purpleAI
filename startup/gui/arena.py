@@ -102,6 +102,12 @@ class ArenaTab(ttk.Frame):
             self.chat.tag_configure(f"name_{key}", foreground=color,
                                     font=("Segoe UI Semibold", 9))
         self._chat_lines = 0
+        # Per-instance War Room history so switching instances never loses chat.
+        # cur = the instance id currently shown; each instance keeps its own
+        # transcript + a seen-set so re-polls/re-tails don't duplicate lines.
+        self.transcripts: dict = {}   # instance id -> [(agent, text), ...]
+        self.seen: dict = {}          # instance id -> {(agent, text), ...}
+        self.cur = None
 
         self.reachable_total = len(flags) if flags else 5
         self.captured: set[str] = set()
@@ -185,11 +191,39 @@ class ArenaTab(ttk.Frame):
 
     def say(self, agent, text):
         c = self.commanders.get(agent)
-        if c and text:
-            clean = " ".join(str(text).split())
-            c["bubble"] = clean[:120]
-            c["bubble_t"] = time.time() + 9.0
+        if not (c and text):
+            return
+        clean = " ".join(str(text).split())
+        c["bubble"] = clean[:120]
+        c["bubble_t"] = time.time() + 9.0
+        inst = self.cur
+        if inst is None:            # no instance context yet: just render
             self._chat(agent, clean)
+            return
+        seen = self.seen.setdefault(inst, set())
+        key = (agent, clean)
+        if key in seen:            # dedup: re-poll/re-tail won't double up
+            return
+        seen.add(key)
+        tr = self.transcripts.setdefault(inst, [])
+        tr.append((agent, clean))
+        if len(tr) > 600:          # bound memory; rebuild seen from the kept tail
+            del tr[:len(tr) - 600]
+            self.seen[inst] = set(tr)
+        self._chat(agent, clean)
+
+    def set_view(self, inst_id):
+        """Show instance `inst_id`'s preserved chat. Switching restores that
+        instance's full transcript instead of wiping — nothing is lost."""
+        self.cur = inst_id
+        self.transcripts.setdefault(inst_id, [])
+        self.seen.setdefault(inst_id, set())
+        self.chat.configure(state="normal")
+        self.chat.delete("1.0", "end")
+        self.chat.configure(state="disabled")
+        self._chat_lines = 0
+        for agent, text in self.transcripts[inst_id]:
+            self._chat(agent, text)
 
     def _export_chat(self):
         """Save the War Room feed to a .txt the operator picks."""
@@ -251,7 +285,9 @@ class ArenaTab(ttk.Frame):
             s["alive"] = False
             self.sparks.append({"x": s["x"], "y": s["y"], "t": 0.0, "kind": "kill"})
 
-    def reset(self):
+    def reset(self, inst_id=None):
+        """Clear the siege/chat. With inst_id, clear only that instance's
+        transcript; without, wipe everything (the global Reset)."""
         self.captured.clear()
         self.soldiers.clear()
         self.sparks.clear()
@@ -259,6 +295,12 @@ class ArenaTab(ttk.Frame):
         for c in self.commanders.values():
             c["state"] = "idle"
             c["bubble"] = ""
+        if inst_id is None:
+            self.transcripts.clear()
+            self.seen.clear()
+        else:
+            self.transcripts.pop(inst_id, None)
+            self.seen.pop(inst_id, None)
         self.chat.configure(state="normal")
         self.chat.delete("1.0", "end")
         self.chat.configure(state="disabled")

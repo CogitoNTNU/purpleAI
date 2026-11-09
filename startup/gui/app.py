@@ -860,9 +860,6 @@ class ComponentTab(ttk.Frame):
         self._update_flag_title()
         if self.app:
             self.app.set_red(0)
-        ar = self._arena()
-        if ar:
-            ar.reset()
 
     def _add_flag(self, flag: str, source_pane=None) -> str:
         """Score a flag only if captured through its owning vulnerability class.
@@ -1119,6 +1116,11 @@ class ComponentTab(ttk.Frame):
 
     def on_start(self):
         self.clear_flags()  # fresh run: reset the flags panel so re-finds show
+        if self.cfg.get("show_flags"):
+            ar = self._arena()
+            if ar:  # fresh run clears THIS instance's War Room only
+                ar.reset(self.instance["id"])
+                ar.set_view(self.instance["id"])
         if self.cfg.get("counts_blue") and self.app:
             self._blue = 0
             self._blue_seen.clear()
@@ -1191,8 +1193,8 @@ class ComponentTab(ttk.Frame):
 
     def set_instance(self, instance: dict):
         """Point this tab at another isolated instance: stop its current
-        viewers, rebuild its per-instance scripts, reset the view, and re-tail
-        the newly-selected instance's live logs."""
+        viewers, rebuild its per-instance scripts, swap the view to that
+        instance's PRESERVED chat/flags, and re-tail its live logs."""
         self.stop_logs()
         if self.action_proc and self.action_proc.is_running():
             self.action_proc.kill()
@@ -1204,7 +1206,8 @@ class ComponentTab(ttk.Frame):
             self.clear_flags()
             ar = self._arena()
             if ar:
-                ar.reset()
+                # Restore this instance's War Room transcript (don't wipe it).
+                ar.set_view(instance["id"])
             if self.app:
                 self.app.set_red(0)
         if self.cfg.get("counts_blue") and self.app:
@@ -1264,8 +1267,13 @@ class ComponentTab(ttk.Frame):
                             ar = self._arena()
                             if ar and self.cfg.get("panes"):
                                 s2 = payload.strip()
-                                if s2.startswith("[") or s2.startswith("====="):
-                                    ar.say("boss", s2)
+                                # Surface the Boss's reasoning in the War Room:
+                                # "[node] thought" -> show just the thought.
+                                # Skip the "===== iteration =====" separators.
+                                if s2.startswith("[") and "]" in s2:
+                                    thought = s2.split("]", 1)[1].strip()
+                                    if thought:
+                                        ar.say("boss", thought)
                     else:
                         self.append(payload)
                 elif kind == "exit" and role == "action":
@@ -1389,6 +1397,7 @@ class App(tk.Tk):
         try:
             from arena import ArenaTab
             self.arena = ArenaTab(nb, PAL, KNOWN_FLAGS)
+            self.arena.set_view(self.current_instance["id"])  # start on instance A
             nb.add(self.arena, text="⚔ Siege")
         except Exception:  # noqa: BLE001  (arena is an extra view)
             self.arena = None
