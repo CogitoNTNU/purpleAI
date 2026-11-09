@@ -1385,12 +1385,14 @@ class App(tk.Tk):
         branch_cb.bind("<Return>", self._on_branch_change)
         branch_cb.bind("<FocusOut>", self._on_branch_change)
 
-        # right cluster: Reset · Stop (secondary) · Start (primary) · host (muted)
+        # right cluster: Reset · Stop · Start (current) · Launch (batch) · host
         ttk.Button(header, text="🧹  Reset all", command=self.reset_all,
                    style="Ghost.TButton").pack(side="right", padx=(8, 0))
         ttk.Button(header, text="■  Stop all", command=self.stop_all,
                    style="Ghost.TButton").pack(side="right", padx=(8, 0))
         ttk.Button(header, text="▶  Start all", command=self.start_all,
+                   style="Ghost.TButton").pack(side="right", padx=(8, 0))
+        ttk.Button(header, text="🚀  Launch…", command=self.open_launcher,
                    style="Primary.TButton").pack(side="right", padx=(8, 0))
         ttk.Label(header, text=f"via {GAMEHOST}",
                   style="HeaderSub.TLabel").pack(side="right", padx=(0, 16))
@@ -1606,6 +1608,110 @@ class App(tk.Tk):
         att.append("=== RESET: stopping everything + clearing logs ===\n")
         att.run_oneoff(RESET_REDAI_SH, "redai")
         att.run_oneoff(RESET_BLUEAI_SH, "blueai")
+
+    # -- staggered multi-instance launcher --------------------------------- #
+    def open_launcher(self):
+        """Dialog: pick a branch per instance and a stagger delay, then launch
+        them one after another so they don't all hit the shared LLM at once."""
+        win = tk.Toplevel(self)
+        win.title("Launch instances")
+        win.configure(bg=PAL["bg"])
+        win.transient(self)
+        win.resizable(False, False)
+        pad = {"padx": 12, "pady": 5}
+
+        tk.Label(win, text="Launch several isolated instances, staggered so their "
+                 "opening\nLLM bursts don't collide (which is what triggers the 429s).",
+                 bg=PAL["bg"], fg=PAL["muted"], justify="left",
+                 font=("Segoe UI", 9)).grid(row=0, column=0, columnspan=3, sticky="w", **pad)
+
+        tk.Label(win, text="Run", bg=PAL["bg"], fg=PAL["muted"],
+                 font=("Segoe UI Semibold", 9)).grid(row=1, column=0, padx=(12, 4))
+        tk.Label(win, text="Instance", bg=PAL["bg"], fg=PAL["muted"],
+                 font=("Segoe UI Semibold", 9)).grid(row=1, column=1, sticky="w")
+        tk.Label(win, text="Branch", bg=PAL["bg"], fg=PAL["muted"],
+                 font=("Segoe UI Semibold", 9)).grid(row=1, column=2, sticky="w", padx=6)
+
+        rows = []
+        for i, inst in enumerate(INSTANCES):
+            inc = tk.BooleanVar(value=True)
+            tk.Checkbutton(win, variable=inc, bg=PAL["bg"], activebackground=PAL["bg"],
+                           selectcolor=PAL["panel"], highlightthickness=0,
+                           bd=0).grid(row=2 + i, column=0)
+            tk.Label(win, text=f"{inst['label']}   (server :{inst['server_port']} · "
+                     f"app :{inst['app_port']})", bg=PAL["bg"], fg=PAL["text"],
+                     font=("Segoe UI", 10)).grid(row=2 + i, column=1, sticky="w")
+            bvar = tk.StringVar(value=inst["branch"])
+            ttk.Combobox(win, textvariable=bvar, width=18,
+                         values=["main", "recon-agent"]).grid(
+                             row=2 + i, column=2, sticky="w", padx=6, pady=2)
+            rows.append((inst, inc, bvar))
+
+        drow = 2 + len(INSTANCES)
+        tk.Label(win, text="Delay between launches (seconds):", bg=PAL["bg"],
+                 fg=PAL["text"], font=("Segoe UI", 10)).grid(
+                     row=drow, column=0, columnspan=2, sticky="w", padx=12, pady=(12, 4))
+        delay_var = tk.StringVar(value="120")
+        ttk.Entry(win, textvariable=delay_var, width=6).grid(
+            row=drow, column=2, sticky="w", padx=6, pady=(12, 4))
+
+        app_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(win, text="Also start each instance's vulnerable app",
+                       variable=app_var, bg=PAL["bg"], fg=PAL["text"],
+                       activebackground=PAL["bg"], activeforeground=PAL["text"],
+                       selectcolor=PAL["panel"], highlightthickness=0, bd=0).grid(
+                           row=drow + 1, column=0, columnspan=3, sticky="w", padx=10)
+
+        btns = tk.Frame(win, bg=PAL["bg"])
+        btns.grid(row=drow + 2, column=0, columnspan=3, sticky="e", padx=10, pady=12)
+        ttk.Button(btns, text="Cancel", command=win.destroy,
+                   style="Ghost.TButton").pack(side="right", padx=4)
+
+        def _go():
+            try:
+                delay = max(0, int(float(delay_var.get())))
+            except ValueError:
+                delay = 120
+            sel = [(inst, (bvar.get().strip() or inst["branch"]))
+                   for inst, inc, bvar in rows if inc.get()]
+            win.destroy()
+            self._launch_batch(sel, delay, app_var.get())
+
+        ttk.Button(btns, text="🚀  Launch", command=_go,
+                   style="Primary.TButton").pack(side="right", padx=4)
+        win.grab_set()
+
+    def _launch_batch(self, selections, delay, with_app):
+        if not selections:
+            return
+        att = self._tab("attacker")
+        att.append(f"\n=== LAUNCHING {len(selections)} instance(s), "
+                   f"{delay}s apart ===\n")
+        for idx, (inst, branch) in enumerate(selections):
+            inst["branch"] = branch  # persist the choice (dropdown + scripts)
+            when = idx * delay
+            att.append(f"  • {inst['label']} on {branch} "
+                       f"{'now' if when == 0 else f'in {when}s'}\n")
+            self.after(when * 1000,
+                       lambda i=inst, w=with_app: self._launch_one(i, w))
+        # Rebuild the current tab's scripts so a branch change is reflected.
+        for t in self.tabs:
+            if callable(t.cfg.get("build")):
+                t.cfg.update(t.cfg["build"](t.instance))
+        self.branch_var.set(self.current_instance["branch"])
+
+    def _launch_one(self, inst, with_app=True):
+        """Fire one instance's remote start (attacker + optional vuln app),
+        without changing which instance is on screen."""
+        att = self._tab("attacker")
+        att.append(f"\n▶ launching instance {inst['label']} on {inst['branch']} "
+                   f"(server :{inst['server_port']}, app :{inst['app_port']})\n")
+        if with_app:
+            att.run_oneoff(
+                with_pull(docker_start_inst(
+                    inst, "docker-compose.app.yml", "docker-compose.full.yml")),
+                "blueai")
+        att.run_oneoff(att_start(inst), "redai")
 
     def _on_close(self):
         for t in self.tabs:
