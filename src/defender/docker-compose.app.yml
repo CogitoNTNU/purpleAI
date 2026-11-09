@@ -1,9 +1,12 @@
 services:
   vulnerable-app:
     build: ./vulnerable-app
-    container_name: vulnerable-app
+    # Container name + host port are overridable so several isolated instances
+    # can run side by side (set APP_CONTAINER/APP_PORT + COMPOSE_PROJECT_NAME).
+    # Unset, they keep the original single-run values.
+    container_name: ${APP_CONTAINER:-vulnerable-app}
     ports:
-      - "8080:5000"  # might change this for security reasons.
+      - "${APP_PORT:-8080}:5000"
     networks:
       - backend-network
 
