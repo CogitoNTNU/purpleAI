@@ -219,7 +219,7 @@ async def xxe_scanner(
 
     return await run_logged_tool(cmd, target=full_url)
 @tool
-async def web_recon(depth: int = 2, max_pages: int = 40, fingerprint: bool = True) -> str:
+async def web_recon(depth: int = 2, max_pages: int = 20, fingerprint: bool = True) -> str:
     """Map the authorized target's attack surface for the other specialists.
 
     Crawls the fixed target (config.Target_url) to enumerate reachable

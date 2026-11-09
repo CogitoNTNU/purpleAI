@@ -26,7 +26,7 @@ from html.parser import HTMLParser
 CANARY = "paiRX97qz"  # distinctive, unlikely to occur naturally in a response
 UA = "PurpleAI-Recon/1.0 (authorized lab scan)"
 REQ_TIMEOUT = 8.0          # per-request seconds
-MAX_REFLECT_PROBES = 40    # cap canary requests so recon stays fast + quiet
+MAX_REFLECT_PROBES = 25    # cap canary requests so recon stays fast + quiet
 
 
 class _Harvester(HTMLParser):
