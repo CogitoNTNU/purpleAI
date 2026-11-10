@@ -853,6 +853,12 @@ COMPONENTS = [
             {"name": "sql_injection_agent", "label": "SQLi", "tool": "sqlmap", "pane": "sql"},
             {"name": "xss_agent", "label": "XSS", "tool": "xsser", "pane": "xss"},
             {"name": "ssti_agent", "label": "SSTI", "tool": "curl", "pane": "ssti"},
+            # XXE and SSRF also run on curl; give them their own status lights
+            # (driven by subagent_status, keyed by name) with a unique, never-
+            # emitted `tool` sentinel so they don't steal SSTI's curl events.
+            # No pane -> their launch/activity lines surface in the Boss pane.
+            {"name": "xxe_agent", "label": "XXE", "tool": "xxe_scanner"},
+            {"name": "ssrf_agent", "label": "SSRF", "tool": "ssrf_scanner"},
         ],
         "build": _attacker_build,
     },
