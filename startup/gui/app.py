@@ -42,11 +42,21 @@ BLUEAI_IP = "192.168.0.120"    # LAN IP of blueai (where the vulnerable app list
 # recon-agent). Each gets its own attacker server port, vulnerable-app port,
 # tmux session, and git worktree on redai, so they never collide. `branch` is
 # editable at runtime from the header; defaults set up the common A/B compare.
+# Models available on the lab endpoint (label -> model id). Pick per instance.
+MODELS = [
+    ("Kimi K2.6", "moonshotai/Kimi-K2.6"),
+    ("GLM 5.3", "Inferact/GLM-5.3-NVFP4"),
+    ("DeepSeek V4.1", "deepseek-ai/DeepSeek-V4.1-Flash-1017"),
+]
+DEFAULT_MODEL = MODELS[0][1]
+_MODEL_LABEL = {mid: lbl for lbl, mid in MODELS}
+_MODEL_ID = {lbl: mid for lbl, mid in MODELS}
+
 INSTANCES = [
-    {"id": "a", "label": "A", "server_port": 2024, "app_port": 8080, "branch": "main"},
-    {"id": "b", "label": "B", "server_port": 2025, "app_port": 8081, "branch": "recon-agent"},
-    {"id": "c", "label": "C", "server_port": 2026, "app_port": 8082, "branch": "main"},
-    {"id": "d", "label": "D", "server_port": 2027, "app_port": 8083, "branch": "main"},
+    {"id": "a", "label": "A", "server_port": 2024, "app_port": 8080, "branch": "main", "model": DEFAULT_MODEL},
+    {"id": "b", "label": "B", "server_port": 2025, "app_port": 8081, "branch": "recon-agent", "model": DEFAULT_MODEL},
+    {"id": "c", "label": "C", "server_port": 2026, "app_port": 8082, "branch": "main", "model": DEFAULT_MODEL},
+    {"id": "d", "label": "D", "server_port": 2027, "app_port": 8083, "branch": "main", "model": DEFAULT_MODEL},
 ]
 
 # A shared POOL of API keys, rotated across the Boss + subagents so concurrent
@@ -56,23 +66,31 @@ KEY_SET: list = []
 _KEYS_FILE = os.path.join(os.path.expanduser("~"), ".purpleai_instance_keys.json")
 
 
-def load_key_set():
+def load_config():
     global KEY_SET
     try:
         with open(_KEYS_FILE, encoding="utf-8") as f:
             data = json.load(f)
-        if isinstance(data, dict) and isinstance(data.get("keyset"), list):
+        if not isinstance(data, dict):
+            return
+        if isinstance(data.get("keyset"), list):
             KEY_SET = [str(k).strip() for k in data["keyset"] if str(k).strip()]
-        elif isinstance(data, dict):  # migrate old per-instance keys -> pool
+        elif "keyset" not in data and "models" not in data:  # legacy per-instance keys
             KEY_SET = sorted({str(v).strip() for v in data.values() if str(v).strip()})
+        models = data.get("models") or {}
+        for inst in INSTANCES:
+            mid = models.get(inst["id"])
+            if mid in _MODEL_LABEL:
+                inst["model"] = mid
     except Exception:  # noqa: BLE001  (missing/unreadable file is fine)
         pass
 
 
-def save_key_set():
+def save_config():
     try:
         with open(_KEYS_FILE, "w", encoding="utf-8") as f:
-            json.dump({"keyset": KEY_SET}, f)
+            json.dump({"keyset": KEY_SET,
+                       "models": {i["id"]: i.get("model", DEFAULT_MODEL) for i in INSTANCES}}, f)
     except Exception:  # noqa: BLE001
         pass
 
@@ -329,13 +347,15 @@ def _fill(tmpl: str, inst: dict) -> str:
 
 # ---- per-instance script builders (attacker on redai) --------------------- #
 def att_start(inst):
-    # Export the shared key POOL into this instance's tmux session AFTER .env is
-    # sourced, so get_model() rotates a different key to each agent (spreading
-    # the single-concurrency-per-key limit). Empty pool -> fall back to .env.
+    # Export this instance's model + the shared key POOL into its tmux session
+    # AFTER .env is sourced, so get_model() uses the chosen model and rotates a
+    # different key to each agent. Empty pool -> fall back to .env's key.
+    model = inst.get("model", DEFAULT_MODEL)
+    lines = [f"tmux send-keys -t \"$SESSION\" \"export LLM_MODEL='{model}'\" C-m"]
     keys = _keys_csv()
-    apiline = (f"tmux send-keys -t \"$SESSION\" \"export LLM_API_KEYS='{keys}'\" C-m"
-               if keys else "")
-    return _fill(ATTACKER_START_TMPL, inst).replace("__APIKEY_LINE__", apiline)
+    if keys:
+        lines.append(f"tmux send-keys -t \"$SESSION\" \"export LLM_API_KEYS='{keys}'\" C-m")
+    return _fill(ATTACKER_START_TMPL, inst).replace("__APIKEY_LINE__", "\n".join(lines))
 def att_stop(inst):   return _fill(ATTACKER_STOP_TMPL, inst)
 def att_reason(inst): return _fill(REASONING_TMPL, inst)
 
@@ -389,6 +409,7 @@ set -a
 [ -z "${LLM_API_KEY:-}" ] && [ -f "$HOME/purpleAI/src/Attacker/.env" ] && . "$HOME/purpleAI/src/Attacker/.env"
 set +a
 export LLM_API_KEYS='__KEYS__'
+export LLM_MODEL='__MODEL__'
 STRAT_WT="$WT" STRAT_ATT="$ATT" python3 - <<'PY'
 import os, re, json, time, random, urllib.request, urllib.error
 WT = os.environ.get("STRAT_WT", ""); ATT = os.environ.get("STRAT_ATT", "")
@@ -425,7 +446,8 @@ ctx = ("FLAGS CAPTURED: " + (", ".join(flags) or "none") +
        "\nRATE-LIMIT (429) hits: %d\n\nSERVER LOG (recent):\n" % n429 +
        re.sub(r"\x1b\[[0-9;]*m", "", srvlog)[-1500:] +
        "\n\nENGAGEMENT LOG (recent):\n" + engagement)
-body = {"model": "moonshotai/Kimi-K2.6", "temperature": 0.3, "max_tokens": 1100,
+body = {"model": os.environ.get("LLM_MODEL", "moonshotai/Kimi-K2.6"),
+        "temperature": 0.3, "max_tokens": 1100,
         "messages": [{"role": "system", "content": SYS},
                      {"role": "user", "content": ctx}]}
 data = json.dumps(body).encode()
@@ -451,7 +473,9 @@ PY
 
 
 def att_strategist(inst):
-    return _fill(STRATEGIST_TMPL, inst).replace("__KEYS__", _keys_csv())
+    return (_fill(STRATEGIST_TMPL, inst)
+            .replace("__KEYS__", _keys_csv())
+            .replace("__MODEL__", inst.get("model", DEFAULT_MODEL)))
 
 
 # ---- End engagement: interrupt the Boss so it writes its final summary ----- #
@@ -1506,7 +1530,7 @@ class App(tk.Tk):
                 file=os.path.join(_b, "assets", "medieval", "grand_strategist_portrait_1x.png"))
         except Exception:  # noqa: BLE001  (icon is cosmetic)
             self._strat_img = None
-        load_key_set()  # restore the shared API key pool from the local store
+        load_config()  # restore the key pool + per-instance model choices
         self.current_instance = INSTANCES[0]
 
         # -- header: logo, title, host + global actions -------------------- #
@@ -1545,6 +1569,14 @@ class App(tk.Tk):
         branch_cb.bind("<<ComboboxSelected>>", self._on_branch_change)
         branch_cb.bind("<Return>", self._on_branch_change)
         branch_cb.bind("<FocusOut>", self._on_branch_change)
+
+        # Per-instance model: run e.g. Kimi on one instance, GLM on another.
+        ttk.Label(sel, text="Model", style="HeaderSub.TLabel").pack(side="left", padx=(14, 6))
+        self.model_var = tk.StringVar(value=_MODEL_LABEL.get(INSTANCES[0]["model"], MODELS[0][0]))
+        model_cb = ttk.Combobox(sel, textvariable=self.model_var, state="readonly",
+                                width=14, values=[lbl for lbl, _ in MODELS])
+        model_cb.pack(side="left")
+        model_cb.bind("<<ComboboxSelected>>", self._on_model_change)
 
         # Shared API key pool: rotated across the Boss + subagents so concurrent
         # calls use different keys (each key is capped at one parallel request).
@@ -1726,6 +1758,7 @@ class App(tk.Tk):
         inst = self._instance_by_label(self.inst_var.get())
         self.current_instance = inst
         self.branch_var.set(inst["branch"])
+        self.model_var.set(_MODEL_LABEL.get(inst.get("model", DEFAULT_MODEL), MODELS[0][0]))
         self.title(f"PurpleAI Control — instance {inst['label']}")
         for t in self.tabs:
             t.set_instance(inst)
@@ -1742,6 +1775,15 @@ class App(tk.Tk):
         if not branch or branch == self.current_instance.get("branch"):
             return
         self.current_instance["branch"] = branch
+        self._rebuild_tab_scripts()
+
+    def _on_model_change(self, _evt=None):
+        """Set the current instance's model; used on its next Start."""
+        mid = _MODEL_ID.get(self.model_var.get())
+        if not mid or mid == self.current_instance.get("model"):
+            return
+        self.current_instance["model"] = mid
+        save_config()
         self._rebuild_tab_scripts()
 
     def _keys_btn_text(self) -> str:
@@ -1775,7 +1817,7 @@ class App(tk.Tk):
             raw = txt.get("1.0", "end")
             keys = [k.strip() for k in raw.replace(",", "\n").splitlines() if k.strip()]
             KEY_SET[:] = keys           # mutate the shared pool in place
-            save_key_set()
+            save_config()
             self.keys_btn.config(text=self._keys_btn_text())
             self._rebuild_tab_scripts()  # next Start exports the new pool
             win.destroy()
