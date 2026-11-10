@@ -206,10 +206,8 @@ tmux pipe-pane -o -t "$SESSION" "cat >> '$LOG'"
 tmux send-keys -t "$SESSION" "export TARGET_URL='$TARGET_URL' SUBAGENT_SERVER_URL='$SUBAGENT_SERVER_URL'" C-m
 tmux send-keys -t "$SESSION" "set -a; [ -f .env ] && . ./.env; [ -z \"\${LLM_API_KEY:-}\" ] && [ -f '$MAIN/src/Attacker/.env' ] && . '$MAIN/src/Attacker/.env'; set +a" C-m
 # 1) Subagent server (langgraph dev) on this instance's port, backgrounded.
-#    --n-jobs-per-worker 1: the shared LLM key allows only ONE concurrent
-#    request (max_parallel_requests=1), so run subagents serially instead of
-#    firing 10 parallel LLM calls that all 429. --no-browser/--no-reload: headless.
-tmux send-keys -t "$SESSION" "BROWSER=true $VENV/bin/langgraph dev --port $SRVPORT --no-browser --no-reload --n-jobs-per-worker 1 > '$LOGDIR/langgraph.log' 2>&1 &" C-m
+#    --no-browser/--no-reload/--n-jobs-per-worker: see history; needed headless.
+tmux send-keys -t "$SESSION" "BROWSER=true $VENV/bin/langgraph dev --port $SRVPORT --no-browser --no-reload --n-jobs-per-worker 10 > '$LOGDIR/langgraph.log' 2>&1 &" C-m
 # 2) Boot delay, then wait until the server answers before launching the Boss.
 tmux send-keys -t "$SESSION" "echo 'server starting on :$SRVPORT'; echo 'Boss starts in ${START_DELAY}s...'; sleep ${START_DELAY}" C-m
 tmux send-keys -t "$SESSION" "n=0; until curl -s http://localhost:$SRVPORT/ok >/dev/null 2>&1 || curl -s http://localhost:$SRVPORT/ >/dev/null 2>&1; do n=\$((n+1)); [ \$n -ge 30 ] && break; sleep 2; done" C-m
