@@ -43,11 +43,35 @@ BLUEAI_IP = "192.168.0.120"    # LAN IP of blueai (where the vulnerable app list
 # tmux session, and git worktree on redai, so they never collide. `branch` is
 # editable at runtime from the header; defaults set up the common A/B compare.
 INSTANCES = [
-    {"id": "a", "label": "A", "server_port": 2024, "app_port": 8080, "branch": "main"},
-    {"id": "b", "label": "B", "server_port": 2025, "app_port": 8081, "branch": "recon-agent"},
-    {"id": "c", "label": "C", "server_port": 2026, "app_port": 8082, "branch": "main"},
-    {"id": "d", "label": "D", "server_port": 2027, "app_port": 8083, "branch": "main"},
+    {"id": "a", "label": "A", "server_port": 2024, "app_port": 8080, "branch": "main", "api_key": ""},
+    {"id": "b", "label": "B", "server_port": 2025, "app_port": 8081, "branch": "recon-agent", "api_key": ""},
+    {"id": "c", "label": "C", "server_port": 2026, "app_port": 8082, "branch": "main", "api_key": ""},
+    {"id": "d", "label": "D", "server_port": 2027, "app_port": 8083, "branch": "main", "api_key": ""},
 ]
+
+# Per-instance API keys persist here (outside the repo, never committed) so each
+# instance can run on its own key — its own parallel-request budget — and they
+# genuinely run in parallel instead of starving one shared key.
+_KEYS_FILE = os.path.join(os.path.expanduser("~"), ".purpleai_instance_keys.json")
+
+
+def load_instance_keys():
+    try:
+        with open(_KEYS_FILE, encoding="utf-8") as f:
+            saved = json.load(f)
+        for inst in INSTANCES:
+            if isinstance(saved.get(inst["id"]), str):
+                inst["api_key"] = saved[inst["id"]]
+    except Exception:  # noqa: BLE001  (missing/unreadable file is fine)
+        pass
+
+
+def save_instance_keys():
+    try:
+        with open(_KEYS_FILE, "w", encoding="utf-8") as f:
+            json.dump({i["id"]: i.get("api_key", "") for i in INSTANCES}, f)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def inst_session(inst):   return f"attacker-{inst['id']}"
@@ -205,6 +229,7 @@ tmux pipe-pane -o -t "$SESSION" "cat >> '$LOG'"
 # Export this instance's target + server URL, then load the .env (LLM_API_KEY).
 tmux send-keys -t "$SESSION" "export TARGET_URL='$TARGET_URL' SUBAGENT_SERVER_URL='$SUBAGENT_SERVER_URL'" C-m
 tmux send-keys -t "$SESSION" "set -a; [ -f .env ] && . ./.env; [ -z \"\${LLM_API_KEY:-}\" ] && [ -f '$MAIN/src/Attacker/.env' ] && . '$MAIN/src/Attacker/.env'; set +a" C-m
+__APIKEY_LINE__
 # 1) Subagent server (langgraph dev) on this instance's port, backgrounded.
 #    --no-browser/--no-reload/--n-jobs-per-worker: see history; needed headless.
 tmux send-keys -t "$SESSION" "BROWSER=true $VENV/bin/langgraph dev --port $SRVPORT --no-browser --no-reload --n-jobs-per-worker 10 > '$LOGDIR/langgraph.log' 2>&1 &" C-m
@@ -295,7 +320,15 @@ def _fill(tmpl: str, inst: dict) -> str:
 
 
 # ---- per-instance script builders (attacker on redai) --------------------- #
-def att_start(inst):  return _fill(ATTACKER_START_TMPL, inst)
+def att_start(inst):
+    # If this instance has its own API key, export it in its tmux session AFTER
+    # .env is sourced, so the server + Boss use this key (its own concurrency
+    # budget). Strip quotes/newlines so it stays a single safe argv token.
+    key = "".join((inst.get("api_key") or "").split())
+    key = key.replace("'", "").replace('"', "")
+    apiline = (f"tmux send-keys -t \"$SESSION\" \"export LLM_API_KEY='{key}'\" C-m"
+               if key else "")
+    return _fill(ATTACKER_START_TMPL, inst).replace("__APIKEY_LINE__", apiline)
 def att_stop(inst):   return _fill(ATTACKER_STOP_TMPL, inst)
 def att_reason(inst): return _fill(REASONING_TMPL, inst)
 
@@ -1346,6 +1379,7 @@ class App(tk.Tk):
         self.red_score = 0
         self.blue_score = 0
         self.arena = None
+        load_instance_keys()  # restore per-instance API keys from the local store
         self.current_instance = INSTANCES[0]
 
         # -- header: logo, title, host + global actions -------------------- #
@@ -1631,6 +1665,9 @@ class App(tk.Tk):
                  font=("Segoe UI Semibold", 9)).grid(row=1, column=1, sticky="w")
         tk.Label(win, text="Branch", bg=PAL["bg"], fg=PAL["muted"],
                  font=("Segoe UI Semibold", 9)).grid(row=1, column=2, sticky="w", padx=6)
+        tk.Label(win, text="API key  (its own budget — blank = shared .env key)",
+                 bg=PAL["bg"], fg=PAL["muted"],
+                 font=("Segoe UI Semibold", 9)).grid(row=1, column=3, sticky="w", padx=6)
 
         rows = []
         for i, inst in enumerate(INSTANCES):
@@ -1645,7 +1682,10 @@ class App(tk.Tk):
             ttk.Combobox(win, textvariable=bvar, width=18,
                          values=["main", "recon-agent"]).grid(
                              row=2 + i, column=2, sticky="w", padx=6, pady=2)
-            rows.append((inst, inc, bvar))
+            kvar = tk.StringVar(value=inst.get("api_key", ""))
+            ttk.Entry(win, textvariable=kvar, width=30, show="•").grid(
+                row=2 + i, column=3, sticky="w", padx=6, pady=2)
+            rows.append((inst, inc, bvar, kvar))
 
         drow = 2 + len(INSTANCES)
         tk.Label(win, text="Delay between launches (seconds):", bg=PAL["bg"],
@@ -1672,8 +1712,13 @@ class App(tk.Tk):
                 delay = max(0, int(float(delay_var.get())))
             except ValueError:
                 delay = 120
+            # Persist every row's key (so it's remembered next session), then
+            # launch the checked instances.
+            for inst, _inc, _bvar, kvar in rows:
+                inst["api_key"] = kvar.get().strip()
+            save_instance_keys()
             sel = [(inst, (bvar.get().strip() or inst["branch"]))
-                   for inst, inc, bvar in rows if inc.get()]
+                   for inst, inc, bvar, kvar in rows if inc.get()]
             win.destroy()
             self._launch_batch(sel, delay, app_var.get())
 
