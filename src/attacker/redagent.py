@@ -1,6 +1,8 @@
 import asyncio
 import os
 import re
+from pathlib import Path
+from time import monotonic
 
 from dotenv import load_dotenv
 
@@ -12,7 +14,7 @@ load_dotenv()
 from config import Target_url
 from deepagents import create_deep_agent
 from event_logging import log_agent_update, log_engagement, log_event, log_span
-from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph_sdk import get_client
 from llm import get_model
 from prompts import BOSS_PROMPT
@@ -20,7 +22,9 @@ from prompts import BOSS_PROMPT
 # Safety cap: stop after this many Boss turns even if it keeps launching work,
 # so a runaway loop can't run unbounded. The loop normally stops on its own when
 # the Boss has no subagents running and launches nothing new.
-MAX_ITERATIONS = 50
+MAX_ITERATIONS = int(os.environ.get("PURPLE_MAX_ITERATIONS", "0"))  # 0 = until stopped
+POLL_SECONDS = float(os.environ.get("PURPLE_POLL_SECONDS", "15"))
+RECOVERY_SECONDS = float(os.environ.get("PURPLE_RECOVERY_SECONDS", "30"))
 
 # Fixed thread id: with the checkpointer below, every loop iteration resumes
 # the SAME conversation, so the Boss remembers which tasks it launched and can
@@ -86,13 +90,14 @@ subagents = [
 # Checkpointer persists the conversation across loop iterations (in memory,
 # for the life of this process). It is what makes the autonomous loop coherent
 # rather than a series of amnesiac one-shots.
-BossAgent = create_deep_agent(
-    model=get_model(),
-    system_prompt=BOSS_PROMPT,
-    name="Boss Agent",
-    subagents=subagents,
-    checkpointer=InMemorySaver(),
-)
+BossAgent = None  # built inside the durable checkpointer's async context
+
+
+def create_boss(checkpointer):
+    return create_deep_agent(
+        model=get_model(), system_prompt=BOSS_PROMPT, name="Boss Agent",
+        subagents=subagents, checkpointer=checkpointer,
+    )
 
 
 def _print_trace_pointer() -> None:
@@ -215,12 +220,13 @@ def _render_messages(node: str, update) -> None:
             print(f"  → {call.get('name')}({_short(call.get('args'))})")
 
 
-async def _run_once(message: str, iteration: int, config: dict) -> None:
+async def _run_once(message: str | None, iteration: int, config: dict) -> None:
     """Advance the engagement by one turn, streaming each step live."""
     print(f"\n===== iteration {iteration} =====")
     with log_span("iteration", iteration=iteration, target=Target_url):
         async for chunk in BossAgent.astream(
-            {"messages": message}, config=config, stream_mode="updates"
+            {"messages": message} if message is not None else None,
+            config=config, stream_mode="updates"
         ):
             # Each chunk maps node name -> that node's state update.
             for node, update in chunk.items():
@@ -240,34 +246,65 @@ async def _tasks(config: dict) -> dict[str, dict]:
 
 def _running(tasks: dict[str, dict]) -> list[dict]:
     """Filter tracked tasks down to the ones still running."""
-    return [t for t in tasks.values() if t.get("status") == "running"]
+    return [t for t in tasks.values() if t.get("status") in ("running", "pending")]
 
 
 async def _wait_for_any(client, running: list[dict]) -> None:
-    """Sleep until at least one running subagent reports back.
+    """Bounded status requests with a heartbeat; disconnection isn't completion.
 
-    This is the event-driven replacement for the old fixed poll interval:
-    ``runs.join`` blocks on the server until a run finishes, so the loop
-    consumes no CPU or tokens while every scan is still working, and wakes the
-    instant the first one completes.
+    This loop spends no LLM tokens and never cancels/relaunches a healthy slow
+    task. Only actual server terminal states wake the Boss.
     """
-    pending = {
-        asyncio.ensure_future(client.runs.join(t["thread_id"], t["run_id"])): t
-        for t in running
-    }
-    print(
-        f"  … {len(pending)} subagent(s) running; sleeping until one reports back."
-    )
-    done, still_pending = await asyncio.wait(
-        pending, return_when=asyncio.FIRST_COMPLETED
-    )
-    # Drop the long-poll connections for tasks that are still running; the Boss
-    # re-checks every task's status on its next turn anyway.
-    for fut in still_pending:
-        fut.cancel()
-    for fut in done:
-        task = pending[fut]
-        print(f"  ← subagent task {task['task_id']} finished; waking the Boss.")
+    started = monotonic()
+    while True:
+        async def inspect(task):
+            try:
+                run = await asyncio.wait_for(
+                    client.runs.get(task["thread_id"], task["run_id"]), timeout=20)
+                status = run["status"]
+                print(f"[monitor] {task['task_id']}: {status}", flush=True)
+                return status not in ("running", "pending")
+            except Exception as exc:
+                print(f"[recovery] status unavailable ({type(exc).__name__}); reconnecting, preserving remote task", flush=True)
+                return False
+        if any(await asyncio.gather(*(inspect(task) for task in running))):
+            return
+        print(f"[monitor] {len(running)} task(s) active; waiting {int(monotonic() - started)}s; next check in {POLL_SECONDS:g}s", flush=True)
+        await asyncio.sleep(POLL_SECONDS)
+
+
+async def _recover_failed(client, config):
+    """Resume failed remote runs on their existing threads, never fresh scans.
+
+    Reconcile recovery metadata before creation to handle a lost create reply.
+    Interrupted/cancelled runs are left alone, preserving operator decisions.
+    """
+    updates = {}
+    for task_id, task in (await _tasks(config)).items():
+        if task.get("status") not in ("running", "pending", "error", "timeout"):
+            continue
+        run = await asyncio.wait_for(client.runs.get(task["thread_id"], task["run_id"]), 20)
+        if run["status"] not in ("error", "timeout"):
+            continue
+        recent = await asyncio.wait_for(client.runs.list(task["thread_id"], limit=100), 20)
+        recovered = [r for r in recent if (r.get("metadata") or {}).get("recovery_of") == task["run_id"]]
+        if recovered:
+            resumed = max(recovered, key=lambda r: r.get("created_at", ""))
+        else:
+            if any(r["status"] in ("running", "pending") for r in recent):
+                raise RuntimeError("Remote thread has another active run; refusing duplicate recovery")
+            state = await asyncio.wait_for(client.threads.get_state(task["thread_id"]), 20)
+            if not state.get("next") or any(t.get("interrupts") for t in state.get("tasks", [])):
+                continue
+            print(f"[recovery] {task_id}: {run['status']}; resuming checkpoint in {RECOVERY_SECONDS:g}s", flush=True)
+            await asyncio.sleep(RECOVERY_SECONDS)
+            resumed = await asyncio.wait_for(client.runs.create(
+                thread_id=task["thread_id"], assistant_id=task["agent_name"],
+                input=None, multitask_strategy="reject",
+                metadata={"recovery_of": task["run_id"]}), 20)
+        updates[task_id] = {**task, "run_id": resumed["run_id"], "status": "running"}
+    if updates:
+        await BossAgent.aupdate_state(config, {"async_tasks": updates})
 
 
 async def _summarize(config: dict) -> None:
@@ -301,19 +338,57 @@ async def _summarize(config: dict) -> None:
 
 @log_engagement
 async def main() -> None:
+    global BossAgent
+    path = Path(os.environ.get("PURPLE_CHECKPOINT_DB", str(Path(__file__).parent / "logs" / "boss.sqlite3")))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    async with AsyncSqliteSaver.from_conn_string(str(path)) as saver:
+        BossAgent = create_boss(saver)
+        await _engagement()
+
+
+async def _engagement() -> None:
     """Run the Boss autonomously, waking on subagent feedback (Ctrl+C to stop)."""
     print("Autonomous attacker running. Press Ctrl+C to stop.")
     _print_trace_pointer()
     config = {"configurable": {"thread_id": SESSION_THREAD_ID}}
     client = get_client(url=SUBAGENT_SERVER_URL)
-    iteration = 0
-    message = INITIAL_OBJECTIVE
+    snapshot = await BossAgent.aget_state(config)
+    if snapshot.values:
+        for msg in snapshot.values.get("messages", []):
+            _scan_for_flags(_text(getattr(msg, "content", "")))
+        message = None if snapshot.next else CONTINUE_NUDGE
+        print("[recovery] restored Boss checkpoint and tracked tasks", flush=True)
+    else:
+        message = INITIAL_OBJECTIVE
+    iteration = 0  # optional limit counts turns in this process, not graph steps
     try:
-        while iteration < MAX_ITERATIONS:
+        while MAX_ITERATIONS == 0 or iteration < MAX_ITERATIONS:
             # Snapshot the tasks before the turn so we can tell whether the Boss
             # launched anything new during it.
-            before = set(await _tasks(config))
-            await _run_once(message, iteration, config)
+            try:
+                # Complete any pending local graph step before editing its state.
+                snapshot = await BossAgent.aget_state(config)
+                if not snapshot.next:
+                    await _recover_failed(client, config)
+                before = set(await _tasks(config))
+                if snapshot.values and not snapshot.next:
+                    active = _running(await _tasks(config))
+                    if active:
+                        await _wait_for_any(client, active)
+                await _run_once(message, iteration, config)
+            except Exception as exc:
+                # Keep the process alive, but surface the actual failure class.
+                # Resume pending graph work rather than appending the objective
+                # again (which could launch duplicate scans).
+                print(f"[recovery] Boss paused after {type(exc).__name__}; retrying checkpoint in {RECOVERY_SECONDS:g}s", flush=True)
+                log_event("boss_recovery", status="retrying", error_type=type(exc).__name__)
+                await asyncio.sleep(RECOVERY_SECONDS)
+                try:
+                    snapshot = await BossAgent.aget_state(config)
+                    message = None if snapshot.next else (CONTINUE_NUDGE if snapshot.values else INITIAL_OBJECTIVE)
+                except Exception:
+                    pass
+                continue
             iteration += 1
 
             tasks = await _tasks(config)
@@ -336,6 +411,7 @@ async def main() -> None:
                 # engagement ends only at MAX_ITERATIONS or on Ctrl+C.
                 print("\n  (idle - probing for a new angle)")
                 message = PROBE_NUDGE
+                await asyncio.sleep(POLL_SECONDS)
         print(f"\nReached max iterations ({MAX_ITERATIONS}); stopping.")
     except (KeyboardInterrupt, asyncio.CancelledError):
         print("\nStopping autonomous attacker (interrupted).")
@@ -343,9 +419,11 @@ async def main() -> None:
         # Always end with a findings report, even on Ctrl+C. A second Ctrl+C
         # during the summary skips it so the user can still bail out.
         try:
-            await _summarize(config)
+            await asyncio.wait_for(_summarize(config), timeout=60)
         except (KeyboardInterrupt, asyncio.CancelledError):
             print("\nSummary interrupted; exiting.")
+        except Exception as exc:
+            print(f"[recovery] summary unavailable ({type(exc).__name__}); checkpoint retained", flush=True)
 
 
 if __name__ == "__main__":

@@ -101,6 +101,28 @@ def _keys_csv() -> str:
     return ",".join(k.replace("'", "").replace('"', "") for k in KEY_SET)
 
 
+def publish_keys_script(keys=None) -> str:
+    """Atomic private key-file update; payload travels over SSH stdin only."""
+    payload = base64.b64encode(json.dumps({"keys": list(dict.fromkeys(KEY_SET if keys is None else keys))}).encode()).decode()
+    return "python3 - <<'PURPLE_KEYS'\n" + f'''import base64, json, os, tempfile
+from pathlib import Path
+path = Path.home() / ".purpleai" / "keys.json"
+path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+data = base64.b64decode("{payload}")
+fd, name = tempfile.mkstemp(dir=path.parent, prefix=".keys-")
+try:
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(name, path)
+finally:
+    if os.path.exists(name): os.unlink(name)
+print("[keys] live pool updated: %d distinct key(s); waiting agents use new capacity automatically" % len(json.loads(data)["keys"]), flush=True)
+''' + "PURPLE_KEYS\n"
+
+
+
 # Live engagement notes — a running memo of what we're working on / known
 # issues. Editable in the app (and on disk), and fed into the Strategist's
 # context so its advice accounts for the current state. Lives outside the repo.
@@ -268,11 +290,9 @@ done
 pkill -f "langgraph dev --port $SRVPORT" 2>/dev/null || true
 sleep 1
 
-# Fresh state each run (rotate events, wipe this worktree's server threads).
+# Preserve state on Start; Reset all explicitly clears engagements.
 mkdir -p "$ATT/logs"
-[ -s "$ATT/logs/events.jsonl" ] && mv -f "$ATT/logs/events.jsonl" "$ATT/logs/events.prev.jsonl" 2>/dev/null || true
-rm -rf "$ATT/.langgraph_api" 2>/dev/null || true
-echo "[attacker] cleared previous run state."
+echo "[attacker] retaining checkpoints and server threads for resume."
 
 # Carry the gitignored .env + reuse a venv with langgraph from the main checkout.
 if [ ! -f "$ATT/.env" ]; then
@@ -294,6 +314,11 @@ if [ -z "$VENV" ]; then
   fi
 fi
 echo "[attacker] venv=$VENV  target=$TARGET_URL  server=:$SRVPORT  branch=$BRANCH"
+
+"$VENV/bin/python" -c 'import langgraph.checkpoint.sqlite.aio, httpx' || {
+  command -v uv >/dev/null 2>&1 || { echo 'ERROR: uv required for checkpoint dependencies'; exit 1; }
+  uv pip install --python "$VENV/bin/python" 'langgraph-checkpoint-sqlite>=3.1,<4' 'httpx>=0.27,<1' || exit 1
+}
 
 : > "$LOG"
 START_DELAY="${PURPLE_ATTACKER_DELAY:-10}"
@@ -394,15 +419,14 @@ def _fill(tmpl: str, inst: dict) -> str:
 
 # ---- per-instance script builders (attacker on redai) --------------------- #
 def att_start(inst):
-    # Export this instance's model + the shared key POOL into its tmux session
-    # AFTER .env is sourced, so get_model() uses the chosen model and rotates a
-    # different key to each agent. Empty pool -> fall back to .env's key.
+    # The shared key file is reread on admission, including by existing models.
     model = inst.get("model", DEFAULT_MODEL)
-    lines = [f"tmux send-keys -t \"$SESSION\" \"export LLM_MODEL='{model}'\" C-m"]
-    keys = _keys_csv()
-    if keys:
-        lines.append(f"tmux send-keys -t \"$SESSION\" \"export LLM_API_KEYS='{keys}'\" C-m")
+    lines = []
+    if KEY_SET:
+        lines.append(publish_keys_script())
+    lines.append(f"tmux send-keys -t \"$SESSION\" \"export LLM_MODEL='{model}' PYTHONUNBUFFERED=1 BG_JOB_TIMEOUT_SECS=86400\" C-m")
     return _fill(ATTACKER_START_TMPL, inst).replace("__APIKEY_LINE__", "\n".join(lines))
+
 def att_stop(inst):   return _fill(ATTACKER_STOP_TMPL, inst)
 def att_reason(inst): return _fill(REASONING_TMPL, inst)
 
@@ -608,6 +632,7 @@ for d in "$HOME/purpleAI" "$HOME"/purpleAI-?; do
   [ -d "$d" ] || continue
   rm -f "$d"/startup/logs/*.log 2>/dev/null || true
   rm -f "$d"/src/attacker/logs/*.jsonl "$d"/src/Attacker/logs/*.jsonl 2>/dev/null || true
+  rm -f "$d"/src/attacker/logs/boss.sqlite3* "$d"/src/Attacker/logs/boss.sqlite3* 2>/dev/null || true
   rm -rf "$d"/src/attacker/.langgraph_api "$d"/src/Attacker/.langgraph_api 2>/dev/null || true
 done
 echo "[reset] redai clean — ready for a fresh setup."
@@ -1566,6 +1591,9 @@ class ComponentTab(ttk.Frame):
                                         ar.say("boss", thought)
                     else:
                         self.append(payload)
+                elif kind == "exit" and role == "keys":
+                    self.append("[keys] live pool synchronized.\n" if payload == 0 else
+                                "[keys] LIVE SYNC FAILED; keys saved locally. Check SSH and Save again.\n")
                 elif kind == "exit" and role == "action":
                     self._on_action_exit(payload)
         except queue.Empty:
@@ -1935,9 +1963,8 @@ class App(tk.Tk):
         win.configure(bg=PAL["bg"])
         win.geometry("480x380")
         win.transient(self)
-        tk.Label(win, text="Paste your API keys — one per line.\nThey're rotated "
-                 "across the Boss + subagents so concurrent calls use different "
-                 "keys\n(each key allows one request at a time).",
+        tk.Label(win, text="Paste your API keys — one per line.\nSave updates running agents on redai immediately.\n"
+                 "Each distinct key adds one concurrent model slot.",
                  bg=PAL["bg"], fg=PAL["muted"], justify="left",
                  font=("Segoe UI", 9)).pack(anchor="w", padx=12, pady=(12, 6))
         txt = ScrolledText(win, bg=PAL["log"], fg=PAL["text"], wrap="none",
@@ -1952,11 +1979,16 @@ class App(tk.Tk):
 
         def _save():
             raw = txt.get("1.0", "end")
-            keys = [k.strip() for k in raw.replace(",", "\n").splitlines() if k.strip()]
+            keys = list(dict.fromkeys(k.strip() for k in raw.replace(",", "\n").splitlines() if k.strip()))
             KEY_SET[:] = keys           # mutate the shared pool in place
             save_config()
             self.keys_btn.config(text=self._keys_btn_text())
-            self._rebuild_tab_scripts()  # next Start exports the new pool
+            self._rebuild_tab_scripts()
+            tab = self._tab("attacker")
+            tab.append("[keys] saved locally; syncing live pool to redai...\n")
+            self.keys_sync_proc = Proc(ssh_script_argv("redai"), tab.q,
+                                      stdin_data="set -e\n" + publish_keys_script(), role="keys")
+            self.keys_sync_proc.start()
             win.destroy()
 
         ttk.Button(btns, text="Save", command=_save,

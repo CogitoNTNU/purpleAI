@@ -1,55 +1,154 @@
-"""Shared LLM model.
+"""Dynamic queued HTTP clients; transient failures rejoin the shared queue.
 
-Both the Boss (local process) and every served subagent graph need the same
-model. Defining it once here keeps the endpoint in a single place.
-
-The endpoint caps EACH key at one concurrent request (max_parallel_requests=1),
-so a single run's Boss + subagents contend for one slot and 429. To spread the
-load, pass a POOL of keys in LLM_API_KEYS (comma/newline separated) and each
-agent is handed the next key in rotation at construction, so concurrent agents
-use different keys (each key then only sees one request at a time). Falls back
-to the single LLM_API_KEY when no pool is set.
+SDK retries are disabled: every attempt must borrow a free key. Successful
+streaming bodies hold their slot until consumed/closed. Permanent request
+errors are surfaced rather than silently retried forever.
 """
-
-import itertools
+import asyncio
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import os
-import threading
+import random
 
+import httpx
 from langchain_openai import ChatOpenAI
 
-_LOCK = threading.Lock()
-_CYCLE = None
+from llm_queue import KeyQueue
 
 
-def _key_pool() -> list[str]:
-    raw = os.environ.get("LLM_API_KEYS") or os.environ.get("LLM_API_KEY", "")
-    keys = [k.strip() for k in raw.replace("\n", ",").replace(";", ",").split(",")
-            if k.strip()]
-    return keys or [""]
+def _retry_delay(response):
+    if response.status_code in (401, 403):
+        return 300.0
+    retry = response.headers.get("retry-after", "")
+    try:
+        return max(1.0, float(retry))
+    except ValueError:
+        try:
+            return max(1.0, (parsedate_to_datetime(retry) - datetime.now(timezone.utc)).total_seconds())
+        except (ValueError, TypeError, OverflowError):
+            return 5.0 + random.random() * 5
 
 
-def _next_key() -> str:
-    """Round-robin the next key from the pool (one per get_model call)."""
-    global _CYCLE
-    with _LOCK:
-        if _CYCLE is None:
-            _CYCLE = itertools.cycle(_key_pool())
-        return next(_CYCLE)
+def _should_retry(response):
+    return response.status_code in (401, 403, 408, 409, 429) or response.status_code >= 500
+
+
+class _SyncStream(httpx.SyncByteStream):
+    def __init__(self, stream, lease):
+        self.stream, self.lease = stream, lease
+
+    def __iter__(self):
+        try:
+            yield from self.stream
+        finally:
+            self.close()
+
+    def close(self):
+        try:
+            self.stream.close()
+        finally:
+            self.lease.close()
+
+
+class _AsyncStream(httpx.AsyncByteStream):
+    def __init__(self, stream, lease):
+        self.stream, self.lease = stream, lease
+
+    async def __aiter__(self):
+        try:
+            async for chunk in self.stream:
+                yield chunk
+        finally:
+            await self.aclose()
+
+    async def aclose(self):
+        try:
+            await self.stream.aclose()
+        finally:
+            self.lease.close()
+
+
+class QueuedTransport(httpx.BaseTransport):
+    def __init__(self, queue=None, inner=None):
+        self.queue = queue or KeyQueue()
+        self.inner = inner or httpx.HTTPTransport()
+
+    def handle_request(self, request):
+        request.read()
+        while True:
+            lease = self.queue.acquire()
+            transferred = False
+            try:
+                request.headers["Authorization"] = "Bearer " + lease.key
+                response = self.inner.handle_request(request)
+                if not _should_retry(response):
+                    if response.is_closed:
+                        lease.close()
+                    else:
+                        response.stream = _SyncStream(response.stream, lease)
+                    transferred = True
+                    return response
+                delay = _retry_delay(response)
+                code = response.status_code
+                response.close()
+                self.queue.cooldown(lease, delay)
+                print(f"[llm] HTTP {code}; key cooling down {delay:.0f}s; rejoining queue. For 401/403 check key permissions.", flush=True)
+            except httpx.TransportError as exc:
+                self.queue.cooldown(lease, 5)
+                print(f"[llm] {type(exc).__name__}; reconnecting through queue", flush=True)
+            finally:
+                if not transferred:
+                    lease.close()
+
+    def close(self):
+        self.inner.close()
+
+
+class AsyncQueuedTransport(httpx.AsyncBaseTransport):
+    def __init__(self, queue=None, inner=None):
+        self.queue = queue or KeyQueue()
+        self.inner = inner or httpx.AsyncHTTPTransport()
+
+    async def handle_async_request(self, request):
+        await request.aread()
+        while True:
+            lease = await self.queue.acquire_async()
+            transferred = False
+            try:
+                request.headers["Authorization"] = "Bearer " + lease.key
+                response = await self.inner.handle_async_request(request)
+                if not _should_retry(response):
+                    if response.is_closed:
+                        lease.close()
+                    else:
+                        response.stream = _AsyncStream(response.stream, lease)
+                    transferred = True
+                    return response
+                delay = _retry_delay(response)
+                code = response.status_code
+                await response.aclose()
+                await asyncio.to_thread(self.queue.cooldown, lease, delay)
+                print(f"[llm] HTTP {code}; key cooling down {delay:.0f}s; rejoining queue. For 401/403 check key permissions.", flush=True)
+            except httpx.TransportError as exc:
+                await asyncio.to_thread(self.queue.cooldown, lease, 5)
+                print(f"[llm] {type(exc).__name__}; reconnecting through queue", flush=True)
+            finally:
+                if not transferred:
+                    lease.close()
+
+    async def aclose(self):
+        await self.inner.aclose()
 
 
 def get_model() -> ChatOpenAI:
-    """Build the chat model. Each call takes the next key from the pool, so the
-    Boss and each subagent graph run on different keys and don't starve one
-    another's single concurrency slot. max_retries lets a throttled call back
-    off and wait (honoring Retry-After) instead of crashing. Both the pool
-    (LLM_API_KEYS) and the retry count (LLM_MAX_RETRIES) come from the env.
-    """
+    queue = KeyQueue()
+    timeout = httpx.Timeout(float(os.environ.get("LLM_READ_TIMEOUT", "600")), connect=20, pool=20)
     return ChatOpenAI(
         model=os.environ.get("LLM_MODEL", "moonshotai/Kimi-K2.6"),
-        api_key=_next_key(),
-        base_url="https://llm.hpc.ntnu.no/v1",
-        # Effectively permanent: a throttled call keeps backing off and retrying
-        # (honoring Retry-After) rather than crashing the run — until the Boss is
-        # interrupted by "End engagement" (Ctrl+C breaks the retry/backoff).
-        max_retries=int(os.environ.get("LLM_MAX_RETRIES", "1000000")),
+        api_key="queue-managed",
+        base_url=os.environ.get("LLM_BASE_URL", "https://llm.hpc.ntnu.no/v1"),
+        max_retries=0,
+        timeout=timeout,
+        http_client=httpx.Client(transport=QueuedTransport(queue), timeout=timeout),
+        http_async_client=httpx.AsyncClient(transport=AsyncQueuedTransport(queue), timeout=timeout),
     )
