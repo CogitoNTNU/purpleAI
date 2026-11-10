@@ -426,26 +426,66 @@ flags = sorted(set(re.findall(r"FLAG\{[^}]*\}", attlog + events)))
 n429 = (attlog + srvlog).count("429")
 clean = re.sub(r"\x1b\[[0-9;]*m", "", attlog)
 engagement = "\n".join(l for l in clean.splitlines() if not l.strip().startswith("{"))[-6000:]
+# Full read access to the repo code (so the strategist can reason about HOW the
+# setup works and suggest code-level changes). Skips .env + binaries/assets and
+# redacts anything that looks like a secret.
+SKIP = {".git", ".venv", "venv", "node_modules", "__pycache__", "logs", "dist",
+        "build", "assets", ".langgraph_api", ".idea", ".vscode"}
+EXTS = (".py", ".md", ".json", ".yml", ".yaml", ".toml", ".cfg", ".txt")
+def _prio(rel):
+    rel = rel.replace("\\", "/")
+    if rel.startswith("src/attacker"): return 0
+    if rel.startswith("src/defender"): return 1
+    if rel.startswith("src"): return 2
+    return 3
+cands = []
+for root, dirs, files in os.walk(WT):
+    dirs[:] = [d for d in dirs if d not in SKIP]
+    for fn in files:
+        if fn.startswith(".env") or not (fn.endswith(EXTS) or fn == "Dockerfile"):
+            continue
+        p = os.path.join(root, fn)
+        rel = os.path.relpath(p, WT).replace("\\", "/")
+        try:
+            with open(p, errors="replace") as fh:
+                c = fh.read()
+        except Exception:
+            continue
+        c = re.sub(r'(?im)^.*(?:api[_-]?key|secret|token|password)\s*[=:].*$',
+                   '<redacted secret>', c)
+        cands.append((_prio(rel), rel, c))
+cands.sort(key=lambda t: (t[0], t[1]))
+repo, total, LIMIT = [], 0, 200000
+for _pr, rel, c in cands:
+    chunk = "\n\n===== FILE: %s =====\n%s" % (rel, c)
+    if total + len(chunk) > LIMIT:
+        break
+    repo.append(chunk); total += len(chunk)
+repo_code = "".join(repo)
 raw = os.environ.get("LLM_API_KEYS") or os.environ.get("LLM_API_KEY", "")
 keys = [k.strip() for k in raw.replace("\n", ",").replace(";", ",").split(",") if k.strip()]
 if not keys:
     print("STRAT_ERR no API key found on the box"); raise SystemExit
 SYS = (
  "You are the Grand Strategist for an AUTHORIZED red-team engagement against a "
- "deliberately vulnerable lab web app. You are given the engagement's live logs. "
- "Write a concise brief (under 400 words, markdown) with three sections:\n"
+ "deliberately vulnerable lab web app. You are given the engagement's live logs "
+ "AND full read access to the project's source code (attacker agents, prompts, "
+ "tools, and the vulnerable app). Use the code to ground your advice. Write a "
+ "brief (markdown) with three sections:\n"
  "## Situation - what has happened: which agents ran, what they found, flags "
  "captured, and failures (rate limits, crashes, stalls).\n"
  "## Potency - how effective the setup is at capturing flags and why; be honest "
  "about what works vs what is stuck.\n"
  "## Recommendations - concrete, prioritized, actionable steps to raise "
- "efficiency and effectiveness (targeting, concurrency, missing attack classes, "
- "config). Reference what you actually see in the logs."
+ "efficiency and effectiveness. Point at SPECIFIC files/functions/prompts to "
+ "change (e.g. a weak subagent prompt, a missing attack class vs the vulnerable "
+ "app's actual endpoints, concurrency/targeting). Reference the code and logs."
 )
 ctx = ("FLAGS CAPTURED: " + (", ".join(flags) or "none") +
        "\nRATE-LIMIT (429) hits: %d\n\nSERVER LOG (recent):\n" % n429 +
        re.sub(r"\x1b\[[0-9;]*m", "", srvlog)[-1500:] +
-       "\n\nENGAGEMENT LOG (recent):\n" + engagement)
+       "\n\nENGAGEMENT LOG (recent):\n" + engagement +
+       "\n\n===== REPOSITORY SOURCE (read access) =====\n" + repo_code)
 body = {"model": os.environ.get("LLM_MODEL", "moonshotai/Kimi-K2.6"),
         "temperature": 0.3, "max_tokens": 1100,
         "messages": [{"role": "system", "content": SYS},
@@ -1616,6 +1656,7 @@ class App(tk.Tk):
             self.arena = ArenaTab(nb, PAL, KNOWN_FLAGS)
             self.arena.set_view(self.current_instance["id"])  # start on instance A
             self.arena.on_strategist = self.open_strategist   # face button → brief
+            self.arena.on_end = self.end_engagement           # ⛔ → end the attack
             nb.add(self.arena, text="⚔ Siege")
         except Exception:  # noqa: BLE001  (arena is an extra view)
             self.arena = None

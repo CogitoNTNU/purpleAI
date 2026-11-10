@@ -155,29 +155,41 @@ class ArenaTab(ttk.Frame):
         self._tsize = (0, 0)
         self._last = time.time()
 
-        # Grand Strategist: a clickable portrait pinned to the top-right of the
-        # green field (placed as a child widget so the per-frame canvas redraw
-        # doesn't wipe it). Clicking asks the control panel for a brief.
+        # Top-right field controls (placed as child widgets so the per-frame
+        # canvas redraw doesn't wipe them): End engagement on top, the Grand
+        # Strategist portrait below. Both call back into the control panel.
         self.on_strategist = None
+        self.on_end = None
         try:
             simg = tk.PhotoImage(file=_asset("grand_strategist_portrait_1x.png"))
             self._keep.append(simg)
-            holder = tk.Frame(self.canvas, bg="#161b22", highlightthickness=2,
+            panel = tk.Frame(self.canvas, bg="#3f7a34")  # blends with the field
+            tk.Button(panel, text="⛔ End engagement", command=self._fire_end,
+                      bd=0, relief="flat", bg="#b3443b", fg="#ffffff",
+                      activebackground="#c9524a", activeforeground="#ffffff",
+                      font=("Segoe UI Semibold", 9), cursor="hand2",
+                      padx=8, pady=5).pack(fill="x", pady=(0, 6))
+            holder = tk.Frame(panel, bg="#161b22", highlightthickness=2,
                               highlightbackground="#d2a8ff")
-            btn = tk.Button(holder, image=simg, bd=0, relief="flat", bg="#161b22",
-                            activebackground="#21262d", cursor="hand2",
-                            command=self._fire_strategist)
-            btn.pack()
+            tk.Button(holder, image=simg, bd=0, relief="flat", bg="#161b22",
+                      activebackground="#21262d", cursor="hand2",
+                      command=self._fire_strategist).pack()
             tk.Label(holder, text="Strategist", bg="#161b22", fg="#d2a8ff",
                      font=("Segoe UI Semibold", 8), cursor="hand2").pack(fill="x")
-            holder.place(relx=1.0, x=-12, y=12, anchor="ne")
-        except Exception:  # noqa: BLE001  (button is optional)
+            holder.pack()
+            panel.place(relx=1.0, x=-12, y=12, anchor="ne")
+        except Exception:  # noqa: BLE001  (buttons are optional)
             pass
 
         self.after(60, self._tick)
 
     def _fire_strategist(self):
         cb = self.on_strategist
+        if callable(cb):
+            cb()
+
+    def _fire_end(self):
+        cb = self.on_end
         if callable(cb):
             cb()
 

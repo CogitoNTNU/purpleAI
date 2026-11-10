@@ -48,5 +48,8 @@ def get_model() -> ChatOpenAI:
         model=os.environ.get("LLM_MODEL", "moonshotai/Kimi-K2.6"),
         api_key=_next_key(),
         base_url="https://llm.hpc.ntnu.no/v1",
-        max_retries=int(os.environ.get("LLM_MAX_RETRIES", "12")),
+        # Effectively permanent: a throttled call keeps backing off and retrying
+        # (honoring Retry-After) rather than crashing the run — until the Boss is
+        # interrupted by "End engagement" (Ctrl+C breaks the retry/backoff).
+        max_retries=int(os.environ.get("LLM_MAX_RETRIES", "1000000")),
     )
