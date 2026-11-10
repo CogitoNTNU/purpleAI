@@ -236,7 +236,11 @@ def _render_messages(node: str, update) -> None:
         text = _text(getattr(msg, "content", ""))
         if text.strip():
             _scan_for_flags(text)
-            print(f"  [{node}] {text.strip()}")
+            # The GUI routes tagged records to chat one stdout line at a time.
+            # Keep the whole public message together instead of losing every
+            # paragraph after the first one in the War Room.
+            public_message = " ".join(text.split())
+            print(f"  [{node}] {public_message}")
         for call in getattr(msg, "tool_calls", None) or []:
             print(f"  → {call.get('name')}({_short(call.get('args'))})")
 
