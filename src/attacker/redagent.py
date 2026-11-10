@@ -99,6 +99,20 @@ subagents = [
         "graph_id": "xxe_agent",
         "url": SUBAGENT_SERVER_URL,
     },
+    {
+        "name": "ssrf_agent",
+        "description": (
+            "Server-Side Request Forgery (SSRF) specialist. Uses ssrf_scanner "
+            "to make the authorized target fetch an attacker-supplied URL, "
+            "reaching internal-only resources (cloud metadata, loopback/admin "
+            "pages, internal hosts). Launch it against endpoints that fetch a "
+            "user-supplied URL (link previews, image/PDF fetchers, webhooks). "
+            "Give it a focused task naming the endpoint, the URL parameter, and "
+            "the internal target to reach."
+        ),
+        "graph_id": "ssrf_agent",
+        "url": SUBAGENT_SERVER_URL,
+    },
 ]
 
 # Checkpointer persists the conversation across loop iterations (in memory,

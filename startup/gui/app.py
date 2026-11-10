@@ -884,7 +884,7 @@ FLAG_RE = re.compile(r"FLAG\{[^}\n]{0,200}\}")
 AGENT_ARENA = {
     "recon_agent": "recon",
     "sql_injection_agent": "sql", "xss_agent": "xss",
-    "ssti_agent": "ssti", "xxe_agent": "xxe",
+    "ssti_agent": "ssti", "xxe_agent": "xxe", "ssrf_agent": "ssrf",
 }
 
 # The flags planted in the vulnerable app (see
@@ -2028,6 +2028,147 @@ class QueueTab(ttk.Frame):
         self.view.configure(state="disabled")
 
 
+# ---- Gamehost Streamlit dashboard: run it + tunnel + open in a webview ----- #
+# The dashboard (src/gamehost/dashboard) is a Streamlit web app that must run on
+# the gamehost (it reads that host's Vector archives). We start it there over
+# SSH, forward its port back through an SSH tunnel, and open it in a dedicated
+# Edge/WebView2 app-mode window on this PC.
+DASH_PORT = int(os.environ.get("PURPLE_DASH_PORT", "8501"))
+
+DASH_START_SH = f"""set -uo pipefail
+DIR="${{PURPLE_DASH_DIR:-$HOME/purpleAI/src/gamehost/dashboard}}"
+[ -d "$DIR" ] || {{ echo "ERR: dashboard dir not found at $DIR"; exit 1; }}
+cd "$DIR"
+if pgrep -f "streamlit run dashboard.py" >/dev/null 2>&1; then
+  echo "dashboard already running on :{DASH_PORT}"; exit 0
+fi
+nohup bash run_dashboard.sh --server.port {DASH_PORT} --server.headless true \
+      --browser.gatherUsageStats false >/tmp/purpleai_dashboard.log 2>&1 &
+sleep 2
+echo "launched dashboard (pid $!) on :{DASH_PORT}; recent log:"
+tail -n 10 /tmp/purpleai_dashboard.log 2>/dev/null || true
+"""
+
+DASH_STOP_SH = 'pkill -f "streamlit run dashboard.py" && echo "stopped dashboard" || echo "no dashboard process was running"\n'
+
+DASH_TAIL_SH = 'tail -n 30 /tmp/purpleai_dashboard.log 2>/dev/null || echo "(no dashboard log yet)"\n'
+
+
+class DashboardTab(ttk.Frame):
+    """Workspace section that runs the gamehost Streamlit dashboard and opens it
+    in a dedicated Edge/WebView2 app window (via an SSH port-forward)."""
+
+    def __init__(self, master, app):
+        super().__init__(master, padding=(4, 4, 4, 4))
+        self.app = app
+        self.q: "queue.Queue[tuple]" = queue.Queue()
+        self._tunnel: Proc | None = None
+        self.url = f"http://localhost:{DASH_PORT}"
+
+        bar = ttk.Frame(self)
+        bar.pack(fill="x", pady=(0, 10))
+        tk.Label(bar, text="Gamehost dashboard", bg=PAL["bg"], fg=PAL["text"],
+                 font=("Segoe UI Semibold", 11), anchor="w").pack(side="left")
+        ttk.Button(bar, text="Open dashboard", command=self.open_dashboard,
+                   style="Primary.TButton").pack(side="right")
+        ttk.Button(bar, text="Refresh log", command=self.refresh_log).pack(side="right", padx=(8, 8))
+        ttk.Button(bar, text="Stop server", command=self.stop_server).pack(side="right")
+        ttk.Button(bar, text="Start server", command=self.start_server).pack(side="right", padx=(0, 8))
+
+        tk.Label(self, text=f"Runs src/gamehost/dashboard on {GAMEHOST} (Streamlit :{DASH_PORT}), "
+                 f"forwards it here over SSH, and opens {self.url} in an Edge app window.",
+                 bg=PAL["bg"], fg=PAL["muted"], font=("Segoe UI", 9),
+                 anchor="w", justify="left").pack(fill="x", pady=(0, 8))
+
+        self.log = ConsoleText(self, bg=PAL["log"], fg=PAL["text"], wrap="word",
+                               font=("Consolas", 10), relief="flat", borderwidth=0,
+                               padx=12, pady=10)
+        self.log.pack(fill="both", expand=True)
+        self.log.insert("end", "Press Start server, then Open dashboard.\n")
+        self.log.configure(state="disabled")
+        self.after(120, self._drain)
+
+    def _append(self, text):
+        try:
+            self.log.configure(state="normal")
+            self.log.insert("end", text if text.endswith("\n") else text + "\n")
+            self.log.see("end")
+            self.log.configure(state="disabled")
+        except tk.TclError:
+            pass
+
+    def _gamehost_argv(self):
+        # Single hop to the gamehost itself (not on to redai/blueai).
+        return ["ssh", GAMEHOST, "bash -s"]
+
+    def start_server(self):
+        self._append("$ starting dashboard on " + GAMEHOST + " …")
+        Proc(self._gamehost_argv(), self.q, stdin_data=DASH_START_SH, role="dash").start()
+        self._ensure_tunnel()
+
+    def stop_server(self):
+        self._append("$ stopping dashboard on " + GAMEHOST + " …")
+        Proc(self._gamehost_argv(), self.q, stdin_data=DASH_STOP_SH, role="dash").start()
+        self._close_tunnel()
+
+    def refresh_log(self):
+        Proc(self._gamehost_argv(), self.q, stdin_data=DASH_TAIL_SH, role="dash").start()
+
+    def _ensure_tunnel(self):
+        if self._tunnel is not None and self._tunnel.is_running():
+            return
+        self._append(f"$ opening SSH tunnel localhost:{DASH_PORT} -> {GAMEHOST}:{DASH_PORT}")
+        argv = ["ssh", "-N", "-L", f"{DASH_PORT}:127.0.0.1:{DASH_PORT}", GAMEHOST]
+        self._tunnel = Proc(argv, self.q, role="dash-tunnel")
+        self._tunnel.start()
+
+    def _close_tunnel(self):
+        if self._tunnel is not None:
+            self._tunnel.kill()
+            self._tunnel = None
+
+    def open_dashboard(self):
+        self._ensure_tunnel()
+        if self._launch_edge_app(self.url):
+            self._append(f"opened {self.url} in an Edge app window "
+                         "(give Streamlit a few seconds to boot if the page is blank).")
+        else:
+            import webbrowser
+            webbrowser.open(self.url)
+            self._append(f"Edge not found; opened {self.url} in your default browser.")
+
+    def _launch_edge_app(self, url) -> bool:
+        candidates = [
+            os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+            os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
+        ]
+        edge = next((p for p in candidates if os.path.exists(p)), None)
+        if not edge:
+            return False
+        try:
+            profile = os.path.join(os.environ.get("TEMP", "."), "purpleai_dash_edge")
+            subprocess.Popen([edge, f"--app={url}", f"--user-data-dir={profile}",
+                              "--window-size=1280,860"])
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _drain(self):
+        try:
+            while True:
+                kind, role, payload = self.q.get_nowait()
+                if kind == "line":
+                    self._append(("[tunnel] " if role == "dash-tunnel" else "") + payload.rstrip("\n"))
+                elif kind == "exit" and role == "dash-tunnel" and payload not in (0, None):
+                    self._append(f"[tunnel] closed (exit {payload}).")
+        except queue.Empty:
+            pass
+        self.after(120, self._drain)
+
+    def shutdown(self):
+        self._close_tunnel()
+
+
 class App(tk.Tk):
     def __init__(self):
         if sys.platform == "win32":
@@ -2148,6 +2289,12 @@ class App(tk.Tk):
             self._add_navigation("LLM queue")
         except Exception:  # noqa: BLE001
             self.queue_tab = None
+        try:
+            self.dash_tab = DashboardTab(self.nb, app=self)
+            self.nb.add(self.dash_tab, text="Dashboard")
+            self._add_navigation("Dashboard")
+        except Exception:  # noqa: BLE001
+            self.dash_tab = None
         self.nb.bind("<<NotebookTabChanged>>", self._sync_navigation)
         self._select_page(0)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -2605,6 +2752,8 @@ class App(tk.Tk):
     def _on_close(self):
         for t in self.tabs:
             t.shutdown()
+        if getattr(self, "dash_tab", None) is not None:
+            self.dash_tab.shutdown()
         self.destroy()
 
 

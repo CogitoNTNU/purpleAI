@@ -40,6 +40,7 @@ _COMMANDERS = {
     "xss":   ("ember_warden_anim_strip_1x.png", "#ff9f1c", "XSS", (0.32, 0.86)),
     "ssti":  ("void_battlemage_anim_strip_1x.png", "#a371f7", "SSTI", (0.62, 0.86)),
     "xxe":   ("frost_halberdier_anim_strip_1x.png", "#58d6c0", "XXE", (0.78, 0.80)),
+    "ssrf":  ("templar_knight_anim_strip_1x.png", "#e3b341", "SSRF", (0.88, 0.88)),
 }
 # agent -> 48x48 portrait for the war-room chat
 _PORTRAIT = {
@@ -49,6 +50,7 @@ _PORTRAIT = {
     "xss": "ember_warden_portrait_1x.png",
     "ssti": "void_battlemage_portrait_1x.png",
     "xxe": "frost_halberdier_portrait_1x.png",
+    "ssrf": "templar_knight_portrait_1x.png",
 }
 # agent -> foot soldier walk strip
 _SOLDIER = {
@@ -57,6 +59,7 @@ _SOLDIER = {
     "xss": "ember_torchbearer_walk_strip_1x.png",
     "ssti": "violet_acolyte_walk_strip_1x.png",
     "xxe": "frost_pikeman_walk_strip_1x.png",
+    "ssrf": "templar_sergeant_walk_strip_1x.png",
     "boss": "red_axeman_walk_strip_1x.png",
 }
 _GATE = (0.47, 0.585)  # where the road meets the castle gate (map fraction)

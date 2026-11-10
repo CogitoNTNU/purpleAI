@@ -5,7 +5,8 @@
     "sql_injection_agent": "./subagents_attack.py:sql_injection_agent",
     "xss_agent": "./subagents_attack.py:xss_agent",
     "ssti_agent": "./subagents_attack.py:ssti_agent",
-    "xxe_agent": "./subagents_attack.py:xxe_agent"
+    "xxe_agent": "./subagents_attack.py:xxe_agent",
+    "ssrf_agent": "./subagents_attack.py:ssrf_agent"
   },
   "env": ".env"
 }

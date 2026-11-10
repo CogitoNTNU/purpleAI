@@ -8,11 +8,12 @@ lets subagents run asynchronously and finish on their own clocks.
 
 from deepagents import create_deep_agent
 
-from attools import sqlmap, ssti_scanner, web_recon, xsser, xxe_scanner
+from attools import sqlmap, ssrf_scanner, ssti_scanner, web_recon, xsser, xxe_scanner
 from llm import get_model
 from prompts import (
     RECON_PROMPT,
     SQL_INJECTION_PROMPT,
+    SSRF_PROMPT,
     SSTI_PROMPT,
     XSS_PROMPT,
     XXE_PROMPT,
@@ -42,6 +43,12 @@ xxe_agent = create_deep_agent(
     tools=[xxe_scanner],
     system_prompt=XXE_PROMPT,
     name="xxe_agent",
+)
+ssrf_agent = create_deep_agent(
+    model=get_model(),
+    tools=[ssrf_scanner],
+    system_prompt=SSRF_PROMPT,
+    name="ssrf_agent",
 )
 recon_agent = create_deep_agent(
     model=get_model(),
