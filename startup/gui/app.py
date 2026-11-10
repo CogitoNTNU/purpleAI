@@ -961,6 +961,19 @@ class Proc:
                 pass
 
 
+def war_room_boss_text(line: str) -> str | None:
+    """Route agent dialogue to the War Room, leaving runtime status in logs."""
+    match = re.match(r"^\s*\[([^\]]+)\]\s*(.+)", line)
+    if not match:
+        return None
+    tag, text = match.groups()
+    if tag.split(":", 1)[0].lower() in {
+        "llm", "monitor", "recovery", "keys", "startup", "attacker", "srv", "reset",
+    }:
+        return None
+    return text.strip() or None
+
+
 class ComponentTab(ttk.Frame):
     def __init__(self, master: tk.Misc, cfg: dict, app=None, instance: dict | None = None):
         super().__init__(master, padding=8)
@@ -1581,14 +1594,9 @@ class ComponentTab(ttk.Frame):
                             self.append(payload)
                             ar = self._arena()
                             if ar and self.cfg.get("panes"):
-                                s2 = payload.strip()
-                                # Surface the Boss's reasoning in the War Room:
-                                # "[node] thought" -> show just the thought.
-                                # Skip the "===== iteration =====" separators.
-                                if s2.startswith("[") and "]" in s2:
-                                    thought = s2.split("]", 1)[1].strip()
-                                    if thought:
-                                        ar.say("boss", thought)
+                                thought = war_room_boss_text(payload)
+                                if thought:
+                                    ar.say("boss", thought)
                     else:
                         self.append(payload)
                 elif kind == "exit" and role == "keys":
