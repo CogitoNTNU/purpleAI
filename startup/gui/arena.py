@@ -118,6 +118,7 @@ class ArenaTab(ttk.Frame):
         self.won = False
         self.red = 0
         self.blue = 0
+        self.defender_on = False   # draw the guard at the gate while the defender runs
 
         self.commanders = {}
         for key, (_, color, label, pos) in _COMMANDERS.items():
@@ -135,6 +136,11 @@ class ArenaTab(ttk.Frame):
         self.sol_frames = {}
         self.maps_raw = {}
         self.portraits = {}
+        self.def_frames = []   # guard_captain anim; empty = fall back to a shape
+        try:
+            self.def_frames = self._slice(_asset("guard_captain_anim_strip_1x.png"), 8)
+        except Exception:  # noqa: BLE001  (missing guard art must not break the arena)
+            self.def_frames = []
         try:
             for key, (strip, *_rest) in _COMMANDERS.items():
                 self.cmd_frames[key] = self._slice(_asset(strip), 8)
@@ -221,6 +227,10 @@ class ArenaTab(ttk.Frame):
             self._keep.append(self._maps_scaled[i])  # keep ref alive
 
     # -- public API -------------------------------------------------------- #
+    def set_defender(self, on):
+        """Show/hide the defender guard at the castle gate (defender running)."""
+        self.defender_on = bool(on)
+
     def set_scores(self, red, blue):
         self.red, self.blue = red, blue
 
@@ -429,6 +439,20 @@ class ArenaTab(ttk.Frame):
             for _ in range(8):
                 c.create_text(gx + random.randint(-70, 70), gy + random.randint(-50, 50),
                               text="🔥", font=("Segoe UI", 13))
+
+        # defender guard, stationed at the gate while the defender is running
+        if self.defender_on:
+            dx, dy = self._mapcoord(*_GATE)
+            dy -= 6
+            if self.ok and self.def_frames:
+                fr = self.def_frames[int(now * 6) % len(self.def_frames)]
+                c.create_image(dx, dy, image=fr, anchor="center")
+            else:
+                c.create_rectangle(dx - 8, dy - 8, dx + 8, dy + 10, fill="#58a6ff", width=0)
+            c.create_rectangle(dx - 30, dy + 22, dx + 30, dy + 36, fill="#0c1622",
+                               outline="#58a6ff")
+            c.create_text(dx, dy + 29, text="Defender", fill="#cfe3ff",
+                          font=("Segoe UI Semibold", 9))
 
         # soldiers (behind commanders)
         for s in self.soldiers:

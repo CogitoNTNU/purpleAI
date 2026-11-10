@@ -1562,10 +1562,17 @@ class ComponentTab(ttk.Frame):
             self._blue = 0
             self._blue_seen.clear()
             self.app.set_blue(0)
+            ar = self._arena()
+            if ar:
+                ar.set_defender(True)  # guard appears at the gate while the defender runs
         self._run_action("start")
 
     def on_stop(self):
         self.stop_logs()
+        if self.cfg.get("counts_blue"):
+            ar = self._arena()
+            if ar:
+                ar.set_defender(False)
         self._run_action("stop")
 
     def on_status(self):
@@ -2550,6 +2557,7 @@ class App(tk.Tk):
             t.status_var.set("reset")
         if self.arena:
             self.arena.reset()
+            self.arena.set_defender(False)
         self.set_red(0)
         self.set_blue(0)
         # Remote cleanup, streamed into the attacker tab.
@@ -2635,6 +2643,7 @@ class App(tk.Tk):
             tab.status_var.set("resetting")
         if self.arena:
             self.arena.reset(inst['id'])
+            self.arena.set_defender(False)
         att = self._tab("attacker")
         att.run_oneoff(att_end(inst), "redai", role="engagement-reset")
         # Recreate the target containers on the next Start, including their DB state.
