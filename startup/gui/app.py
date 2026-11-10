@@ -564,8 +564,13 @@ ctx = ("===== OPERATOR NOTES (known issues / current focus) =====\n" +
        re.sub(r"\x1b\[[0-9;]*m", "", srvlog)[-1500:] +
        "\n\nENGAGEMENT LOG (recent):\n" + engagement +
        "\n\n===== REPOSITORY SOURCE (read access) =====\n" + repo_code)
+# Kimi-K2.6 (and similar) are reasoning models: they spend completion tokens on
+# hidden reasoning before any visible content. A small budget gets entirely
+# consumed by reasoning, leaving content empty (finish_reason "length") - which
+# is why the brief used to come back as "None". Give it real room to think AND
+# write.
 body = {"model": os.environ.get("LLM_MODEL", "moonshotai/Kimi-K2.6"),
-        "temperature": 0.3, "max_tokens": 1100,
+        "temperature": 0.3, "max_tokens": int(os.environ.get("STRAT_MAX_TOKENS", "8000")),
         "messages": [{"role": "system", "content": SYS},
                      {"role": "user", "content": ctx}]}
 data = json.dumps(body).encode()
@@ -590,8 +595,8 @@ def acquire_slot(deadline, announced):
             if lease:
                 return lease, True
             if not announced:
-                print("Waiting for a free API slot — the live agents share this key "
-                      "pool, so the strategist is queued behind them…\n", flush=True)
+                print("Waiting for a free API slot - the live agents share this key "
+                      "pool, so the strategist is queued behind them...\n", flush=True)
                 announced = True
             time.sleep(0.5)
         return None, announced
@@ -605,7 +610,7 @@ while True:
     lease, announced = acquire_slot(deadline, announced)
     if lease is None:
         print("STRAT_ERR the shared key pool is saturated by the running agents right "
-              "now — try again in a moment, or add more API keys to widen the pool.")
+              "now - try again in a moment, or add more API keys to widen the pool.")
         break
     try:
         req = urllib.request.Request(url, data=data,
@@ -613,7 +618,21 @@ while True:
                        "Content-Type": "application/json"})
         try:
             r = json.load(urllib.request.urlopen(req, timeout=150))
-            print(r["choices"][0]["message"]["content"]); break
+            choice = (r.get("choices") or [{}])[0]
+            msg = choice.get("message") or {}
+            content = (msg.get("content") or "").strip()
+            if not content:
+                # Reasoning model ran out of budget before writing visible content;
+                # fall back to its reasoning so the operator still gets something.
+                content = (msg.get("reasoning_content") or "").strip()
+                if not content and choice.get("finish_reason") == "length":
+                    print("STRAT_ERR the model used its whole token budget thinking "
+                          "before writing the brief - raise STRAT_MAX_TOKENS and retry.")
+                    break
+            if content:
+                print(content); break
+            print("STRAT_ERR the model returned an empty brief - try again in a moment.")
+            break
         except urllib.error.HTTPError as e:
             if e.code in (401, 403):
                 queue.cooldown(lease, 300)
