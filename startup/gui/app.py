@@ -483,7 +483,7 @@ set +a
 export LLM_API_KEYS='__KEYS__'
 export LLM_MODEL='__MODEL__'
 STRAT_WT="$WT" STRAT_ATT="$ATT" python3 - <<'PY'
-import os, re, json, time, random, base64, urllib.request, urllib.error
+import os, re, sys, json, time, random, base64, contextlib, urllib.request, urllib.error
 try:
     NOTES = base64.b64decode("__NOTES_B64__").decode("utf-8", "replace")
 except Exception:
@@ -539,8 +539,7 @@ for _pr, rel, c in cands:
     repo.append(chunk); total += len(chunk)
 repo_code = "".join(repo)
 raw = os.environ.get("LLM_API_KEYS") or os.environ.get("LLM_API_KEY", "")
-keys = [k.strip() for k in raw.replace("\n", ",").replace(";", ",").split(",") if k.strip()]
-if not keys:
+if not [k for k in raw.replace("\n", ",").replace(";", ",").split(",") if k.strip()]:
     print("STRAT_ERR no API key found on the box"); raise SystemExit
 SYS = (
  "You are the Grand Strategist for an AUTHORIZED red-team engagement against a "
@@ -570,23 +569,43 @@ body = {"model": os.environ.get("LLM_MODEL", "moonshotai/Kimi-K2.6"),
         "messages": [{"role": "system", "content": SYS},
                      {"role": "user", "content": ctx}]}
 data = json.dumps(body).encode()
-# Retry across the key pool with backoff so a busy slot (429) doesn't fail us.
+# Request an API slot through the SAME shared FIFO queue the commanders use
+# (src/attacker/llm_queue.py), so the strategist waits its turn for a free key
+# instead of cycling keys directly and colliding with the live agents' slots.
+sys.path.insert(0, ATT)
+from llm_queue import KeyQueue
+queue = KeyQueue()
+url = os.environ.get("LLM_BASE_URL", "https://llm.hpc.ntnu.no/v1").rstrip("/") + "/chat/completions"
+def _quiet(fn, *a):  # keep the queue's slot-wait chatter out of the brief
+    with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
+        return fn(*a)
 for attempt in range(10):
-    key = keys[attempt % len(keys)]
-    req = urllib.request.Request("https://llm.hpc.ntnu.no/v1/chat/completions",
-          data=data, headers={"Authorization": "Bearer " + key,
-                              "Content-Type": "application/json"})
+    lease = _quiet(queue.acquire)
     try:
-        r = json.load(urllib.request.urlopen(req, timeout=150))
-        print(r["choices"][0]["message"]["content"]); break
-    except urllib.error.HTTPError as e:
-        if e.code == 429:
-            time.sleep(min(2 ** attempt, 20) + random.random()); continue
-        print("STRAT_ERR " + str(e)); break
-    except Exception as e:
-        print("STRAT_ERR " + str(e)); break
+        req = urllib.request.Request(url, data=data,
+              headers={"Authorization": "Bearer " + lease.key,
+                       "Content-Type": "application/json"})
+        try:
+            r = json.load(urllib.request.urlopen(req, timeout=150))
+            print(r["choices"][0]["message"]["content"]); break
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                _quiet(queue.cooldown, lease, 300)
+                print("STRAT_ERR " + str(e) + " - check the key's permissions"); break
+            if e.code in (408, 409, 429) or e.code >= 500:
+                retry = (e.headers.get("retry-after", "") if e.headers else "")
+                try:
+                    delay = max(1.0, float(retry))
+                except ValueError:
+                    delay = 5.0 + random.random() * 5
+                _quiet(queue.cooldown, lease, delay); continue
+            print("STRAT_ERR " + str(e)); break
+        except Exception as e:
+            print("STRAT_ERR " + str(e)); break
+    finally:
+        lease.close()
 else:
-    print("STRAT_ERR every key is rate-limited (429) right now - try again in a moment")
+    print("STRAT_ERR every key is busy/rate-limited right now - try again in a moment")
 PY
 """
 
