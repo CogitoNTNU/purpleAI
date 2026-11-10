@@ -779,109 +779,96 @@ TOTAL_FLAGS = len(KNOWN_FLAGS)  # Blue starts with this many points (all defende
 # Theme                                                                       #
 # --------------------------------------------------------------------------- #
 PAL = {
-    "bg": "#0d1117",       # app background
-    "panel": "#161b22",    # cards
-    "log": "#0b0e13",      # log/console background
-    "border": "#30363d",
-    "text": "#e6edf3",
-    "muted": "#8b949e",
-    "red": "#f85149",      # attacker / red team
-    "blue": "#58a6ff",     # defender / blue team
-    "green": "#3fb950",
-    "amber": "#d29922",
-    "accent": "#a371f7",   # purple
-    "idle": "#30363d",
-    "hover": "#1f2630",    # chrome: hover fill (tabs, ghost buttons)
-    "track": "#0b0e13",    # chrome: scoreboard proportion-bar track
+    "bg": "#101118", "panel": "#191b26", "log": "#13151e",
+    "border": "#2b2e40", "text": "#eef0fa", "muted": "#9298b0",
+    "red": "#ff718b", "blue": "#79b8ff", "green": "#64d9b0",
+    "amber": "#f3c77b", "accent": "#b5a0ff", "idle": "#454a61",
+    "hover": "#272a3b", "track": "#101118", "sidebar": "#151620",
 }
 
 
 def apply_style(root: tk.Misc) -> None:
-    """A dark, flat, modern ttk theme built on 'clam'.
-
-    Only the outer chrome is restyled: the header, the scoreboard, the Notebook
-    tab switcher, and dedicated header buttons. The in-tab styles (Card.*,
-    TLabelframe, the base TButton/Accent.TButton used *inside* the tabs, the
-    checkbutton) are kept exactly as before so the tab bodies are unchanged.
-    """
+    """One visual system for the workspace, live monitors, and dialogs."""
     style = ttk.Style(root)
-    try:
-        style.theme_use("clam")
-    except tk.TclError:
-        pass
+    style.theme_use("clam")
     p = PAL
-
-    # ---- base (unchanged) ------------------------------------------------ #
+    root.option_add("*TCombobox*Listbox.background", p["panel"])
+    root.option_add("*TCombobox*Listbox.foreground", p["text"])
+    root.option_add("*TCombobox*Listbox.selectBackground", p["hover"])
     style.configure(".", background=p["bg"], foreground=p["text"],
                     fieldbackground=p["panel"], bordercolor=p["border"],
-                    focuscolor=p["accent"], font=("Segoe UI", 10))
-    style.configure("TFrame", background=p["bg"])
-    style.configure("Card.TFrame", background=p["panel"])
-    style.configure("TLabel", background=p["bg"], foreground=p["text"])
-    style.configure("Muted.TLabel", background=p["bg"], foreground=p["muted"])
-    style.configure("CardMuted.TLabel", background=p["panel"], foreground=p["muted"])
-    style.configure("Card.TLabel", background=p["panel"], foreground=p["text"])
-    style.configure("Title.TLabel", background=p["bg"], foreground=p["text"],
-                    font=("Segoe UI Semibold", 16))
-    style.configure("Score.TLabel", background=p["bg"], font=("Segoe UI", 9))
+                    lightcolor=p["border"], darkcolor=p["border"],
+                    font=("Segoe UI", 10), focuscolor=p["accent"])
+    for name, bg in (("TFrame", p["bg"]), ("Header.TFrame", p["bg"]),
+                     ("Card.TFrame", p["panel"]), ("Scorecard.TFrame", p["panel"])):
+        style.configure(name, background=bg)
+    for name, bg, fg in (("TLabel", p["bg"], p["text"]),
+                         ("Muted.TLabel", p["bg"], p["muted"]),
+                         ("Card.TLabel", p["panel"], p["text"]),
+                         ("CardMuted.TLabel", p["panel"], p["muted"])):
+        style.configure(name, background=bg, foreground=fg)
+    style.configure("Title.TLabel", font=("Segoe UI Semibold", 24))
     style.configure("TLabelframe", background=p["panel"], bordercolor=p["border"],
                     relief="solid", borderwidth=1)
     style.configure("TLabelframe.Label", background=p["panel"],
                     foreground=p["muted"], font=("Segoe UI Semibold", 9))
-
-    # base buttons used *inside* the tab bodies — kept as before
-    style.configure("TButton", background=p["panel"], foreground=p["text"],
-                    bordercolor=p["border"], borderwidth=1, focusthickness=0,
-                    padding=(9, 5), relief="flat")
-    style.map("TButton",
-              background=[("active", "#21262d"), ("pressed", "#21262d")],
-              bordercolor=[("active", p["accent"])])
-    style.configure("Accent.TButton", background=p["accent"], foreground="#0d1117",
-                    bordercolor=p["accent"])
-    style.map("Accent.TButton", background=[("active", "#b586f9")])
-    style.configure("TCheckbutton", background=p["bg"], foreground=p["muted"])
-    style.map("TCheckbutton", foreground=[("selected", p["text"])])
-
-    # ---- chrome: header -------------------------------------------------- #
-    style.configure("Header.TFrame", background=p["bg"])
-    style.configure("HeaderTitle.TLabel", background=p["bg"], foreground=p["text"],
-                    font=("Segoe UI Semibold", 17))
-    style.configure("HeaderSub.TLabel", background=p["bg"], foreground=p["muted"],
-                    font=("Segoe UI", 10))
-
-    # header buttons (distinct from the in-tab ones so tab bodies stay as-is)
-    style.configure("Primary.TButton", background=p["accent"], foreground="#0d1117",
-                    bordercolor=p["accent"], borderwidth=0, focusthickness=0,
-                    padding=(16, 9), relief="flat", font=("Segoe UI Semibold", 10))
-    style.map("Primary.TButton",
-              background=[("active", "#b183f9"), ("pressed", "#9a6cf0")],
-              foreground=[("disabled", p["muted"])])
-    style.configure("Ghost.TButton", background=p["panel"], foreground=p["text"],
-                    bordercolor=p["border"], borderwidth=1, focusthickness=0,
-                    padding=(16, 9), relief="flat", font=("Segoe UI", 10))
-    style.map("Ghost.TButton",
-              background=[("active", p["hover"]), ("pressed", p["hover"])],
-              bordercolor=[("active", p["muted"])])
-
-    # ---- chrome: scoreboard ---------------------------------------------- #
-    style.configure("Scorecard.TFrame", background=p["panel"])
-    style.configure("ScoreTeam.TLabel", background=p["panel"],
-                    font=("Segoe UI Semibold", 11))
-    style.configure("ScoreSub.TLabel", background=p["panel"], foreground=p["muted"],
-                    font=("Segoe UI", 9))
-    style.configure("Leader.TLabel", background=p["panel"], foreground=p["text"],
-                    font=("Segoe UI Semibold", 11))
-
-    # ---- chrome: Notebook tab switcher (flat, segmented pills) ------------ #
+    for name in ("TButton", "Ghost.TButton", "Accent.TButton", "Primary.TButton"):
+        primary = name in ("Accent.TButton", "Primary.TButton")
+        style.configure(name, background=p["accent"] if primary else p["panel"],
+                        foreground=p["bg"] if primary else p["text"],
+                        borderwidth=0, focusthickness=1, focuscolor=p["accent"],
+                        padding=(14, 9), relief="flat", font=("Segoe UI Semibold", 10))
+        style.map(name, background=[("pressed", "#927adf" if primary else p["border"]),
+                                   ("active", "#c7b7ff" if primary else p["hover"])],
+                  foreground=[("disabled", p["muted"])])
+    style.configure("TCheckbutton", background=p["bg"], foreground=p["muted"],
+                    indicatorbackground=p["panel"], indicatorforeground=p["accent"],
+                    padding=4)
+    style.map("TCheckbutton", background=[("active", p["bg"])],
+              foreground=[("selected", p["text"])])
+    style.configure("TCombobox", padding=(10, 7), arrowsize=12,
+                    arrowcolor=p["muted"], selectbackground=p["panel"],
+                    selectforeground=p["text"], borderwidth=0)
+    style.map("TCombobox", fieldbackground=[("readonly", p["panel"])],
+              foreground=[("readonly", p["text"])])
+    style.configure("TEntry", padding=8, insertcolor=p["text"])
     style.configure("TNotebook", background=p["bg"], borderwidth=0,
-                    tabmargins=(0, 6, 0, 0))
-    style.configure("TNotebook.Tab", background=p["bg"], foreground=p["muted"],
-                    padding=(18, 10), borderwidth=0, font=("Segoe UI", 10))
-    style.map("TNotebook.Tab",
-              background=[("selected", p["accent"]), ("active", p["hover"])],
-              foreground=[("selected", "#0d1117"), ("active", p["text"])],
-              # keep the selected tab the same size as the rest (no clam jitter)
-              expand=[("selected", (0, 0, 0, 0))])
+                    lightcolor=p["bg"], darkcolor=p["bg"], bordercolor=p["bg"])
+    style.layout("Workspace.TNotebook.Tab", [])
+    style.configure("TNotebook.Tab", padding=(16, 9))
+    style.map("TNotebook.Tab", background=[("selected", p["hover"])],
+              foreground=[("selected", p["accent"])])
+    style.layout("Console.Vertical.TScrollbar", [
+        ("Vertical.Scrollbar.trough", {"sticky": "ns", "children": [
+            ("Vertical.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})
+        ]})
+    ])
+    style.configure("Console.Vertical.TScrollbar", background=p["border"],
+                    troughcolor=p["log"], bordercolor=p["log"],
+                    lightcolor=p["border"], darkcolor=p["border"],
+                    borderwidth=0, width=7, arrowsize=0, gripcount=0)
+    style.map("Console.Vertical.TScrollbar", background=[
+        ("pressed", p["accent"]), ("active", p["muted"]),
+        ("disabled", p["border"]), ("!disabled", p["border"])
+    ])
+
+
+def ui_label(parent, text, *, size=10, color=None, bg=None, bold=False):
+    return tk.Label(parent, text=text, bg=bg or PAL["bg"], fg=color or PAL["text"],
+                    font=("Segoe UI Semibold" if bold else "Segoe UI", size), anchor="w")
+
+
+class ConsoleText(ScrolledText):
+    """ScrolledText with a themed scrollbar instead of Windows' white gutter."""
+
+    def __init__(self, master=None, **kwargs):
+        super().__init__(master, **kwargs)
+        self.vbar.destroy()
+        self.vbar = ttk.Scrollbar(self.frame, orient="vertical", command=self.yview,
+                                  style="Console.Vertical.TScrollbar")
+        self.vbar.pack(side="right", fill="y")
+        self.configure(yscrollcommand=self.vbar.set)
+
 
 
 def ssh_inline_argv(host: str, remote_cmd: str) -> list[str]:
@@ -976,7 +963,7 @@ def war_room_boss_text(line: str) -> str | None:
 
 class ComponentTab(ttk.Frame):
     def __init__(self, master: tk.Misc, cfg: dict, app=None, instance: dict | None = None):
-        super().__init__(master, padding=8)
+        super().__init__(master, padding=0)
         # cfg carries static metadata; build(instance) fills the instance-varying
         # scripts (ports/branch/worktree/target). Merge them so the rest of the
         # tab reads self.cfg["start"/"logs"/…] exactly as before.
@@ -984,6 +971,7 @@ class ComponentTab(ttk.Frame):
         self.instance = instance or INSTANCES[0]
         if callable(self.cfg.get("build")):
             self.cfg.update(self.cfg["build"](self.instance))
+        cfg = self.cfg
         self.app = app  # for the Red-vs-Blue scoreboard
         self._blue = 0  # defender: requests blocked (blue score)
         self._blue_seen: set = set()
@@ -1020,121 +1008,105 @@ class ComponentTab(ttk.Frame):
                     self.pane_for[k] = sa["pane"]
 
         def _text(parent, **kw):
-            t = ScrolledText(parent, bg=PAL["log"], fg=PAL["text"],
-                             insertbackground=PAL["text"], font=("Consolas", 10),
+            t = ConsoleText(parent, bg=PAL["log"], fg=PAL["text"],
+                             insertbackground=PAL["text"], font=("Cascadia Code", 10),
                              state="disabled", relief="flat", borderwidth=0,
-                             highlightthickness=1, highlightbackground=PAL["border"],
-                             selectbackground="#264f78", padx=8, pady=6, **kw)
+                             highlightthickness=0,
+                             selectbackground="#37304f", padx=14, pady=12, **kw)
             return t
 
         bar = ttk.Frame(self)
-        bar.pack(fill="x", pady=(0, 8))
-
-        dot = tk.Canvas(bar, width=14, height=14, highlightthickness=0, bg=PAL["bg"])
+        bar.pack(fill="x", pady=(0, 10))
+        dot = tk.Canvas(bar, width=12, height=12, highlightthickness=0, bg=PAL["bg"])
         dot.pack(side="left", padx=(0, 6))
-        self._dot = dot.create_oval(2, 2, 12, 12, fill=PAL["muted"], outline="")
+        self._dot = dot.create_oval(2, 2, 10, 10, fill=PAL["muted"], outline="")
         self._dot_canvas = dot
-
         self.status_var = tk.StringVar(value="idle")
-        ttk.Label(bar, textvariable=self.status_var, width=15,
-                  style="Muted.TLabel").pack(side="left", padx=(0, 6))
-
-        ttk.Button(bar, text="▶ Start", command=self.on_start,
-                   style="Accent.TButton").pack(side="left", padx=2)
-        ttk.Button(bar, text="■ Stop", command=self.on_stop).pack(side="left", padx=2)
-        ttk.Button(bar, text="📜 Logs", command=self.start_logs).pack(side="left", padx=2)
-        if cfg.get("server_logs"):
-            ttk.Button(bar, text="📄 Server log",
-                       command=self.toggle_server_log).pack(side="left", padx=2)
-        if cfg.get("reasoning_script"):
-            ttk.Button(bar, text="🧠 Reasoning",
-                       command=self.toggle_reasoning).pack(side="left", padx=2)
-        ttk.Button(bar, text="⟳ Status", command=self.on_status).pack(side="left", padx=2)
-        ttk.Button(bar, text="Clear", command=self.clear_log).pack(side="left", padx=2)
+        ttk.Label(bar, textvariable=self.status_var, width=11,
+                  style="Muted.TLabel").pack(side="left")
+        for label, action, primary in (("Start", self.on_start, True),
+                                       ("Stop", self.on_stop, False),
+                                       ("Logs", self.start_logs, False),
+                                       ("Status", self.on_status, False),
+                                       ("Clear", self.clear_log, False)):
+            ttk.Button(bar, text=label, command=action,
+                       style="Primary.TButton" if primary else "TButton").pack(side="left", padx=3)
+        if cfg.get("reasoning_script") and self.app:
+            ttk.Button(bar, text="End engagement", command=self.app.end_engagement).pack(side="right")
         if cfg.get("filterable"):
-            ttk.Checkbutton(bar, text="Reasoning only",
-                            variable=self.reasoning_only).pack(side="left", padx=(10, 2))
-        # Engagement controls (attacker only): the Strategist brief + End.
-        if cfg.get("reasoning_script") and self.app is not None:
-            strat_img = getattr(self.app, "_strat_img", None)
-            if strat_img is not None:
-                ttk.Button(bar, image=strat_img, text=" Strategist", compound="left",
-                           command=self.app.open_strategist).pack(side="right", padx=2)
-            else:
-                ttk.Button(bar, text="🧙 Strategist",
-                           command=self.app.open_strategist).pack(side="right", padx=2)
-            ttk.Button(bar, text="⛔ End engagement",
-                       command=self.app.end_engagement).pack(side="right", padx=2)
+            options = ttk.Frame(self)
+            options.pack(fill="x", pady=(0, 12))
+            ttk.Checkbutton(options, text="Reasoning only", variable=self.reasoning_only).pack(side="left")
+            ttk.Button(options, text="Server log", command=self.toggle_server_log).pack(side="right", padx=3)
+            ttk.Button(options, text="Reasoning stream", command=self.toggle_reasoning).pack(side="right", padx=3)
 
-        # Subagent activity lights (attacker): green while that subagent / its
-        # tool is running, grey when idle.
         if cfg.get("subagents"):
-            sframe = ttk.LabelFrame(self, text=" SUBAGENTS ")
-            sframe.pack(fill="x", pady=(0, 8))
-            inner = ttk.Frame(sframe, style="Card.TFrame")
-            inner.pack(fill="x", padx=8, pady=8)
+            inner = ttk.Frame(self)
+            inner.pack(fill="x", pady=(0, 12))
 
-            def _light_cell(label, status_init, label_w, status_w):
-                cell = ttk.Frame(inner, style="Card.TFrame")
-                cell.pack(side="left", padx=(0, 22))
-                c = tk.Canvas(cell, width=14, height=14, highlightthickness=0,
-                              bg=PAL["panel"])
-                c.pack(side="left", padx=(0, 7))
-                oval = c.create_oval(2, 2, 12, 12, fill=PAL["idle"], outline="")
-                ttk.Label(cell, text=label, width=label_w,
-                          style="Card.TLabel").pack(side="left")
-                sv = tk.StringVar(value=status_init)
-                ttk.Label(cell, textvariable=sv, width=status_w,
-                          style="CardMuted.TLabel").pack(side="left")
+            def _light_cell(label, initial, column):
+                inner.columnconfigure(column, weight=1, uniform="agents")
+                cell = tk.Frame(inner, bg=PAL["panel"], padx=12, pady=10)
+                cell.grid(row=0, column=column, sticky="nsew", padx=(0, 6))
+                c = tk.Canvas(cell, width=12, height=12, highlightthickness=0, bg=PAL["panel"])
+                c.pack(side="right", anchor="n")
+                oval = c.create_oval(2, 2, 10, 10, fill=PAL["idle"], outline="")
+                ui_label(cell, label, bold=True, bg=PAL["panel"]).pack(anchor="w")
+                sv = tk.StringVar(value=initial)
+                tk.Label(cell, textvariable=sv, bg=PAL["panel"], fg=PAL["muted"],
+                         font=("Segoe UI", 8), anchor="w", wraplength=170).pack(anchor="w", pady=(5, 0))
                 return {"canvas": c, "oval": oval, "status": sv, "label": label}
 
             if cfg.get("health"):
-                self.lights["server"] = _light_cell("Server", "?", 6, 14)
-            for sa in cfg["subagents"]:
-                entry = _light_cell(sa["label"], "idle", 5, 24)
-                self.lights[sa["name"]] = entry
-                self.lights[sa["tool"]] = entry  # same light, keyed by tool too
-                for extra in sa.get("tools", []):  # e.g. recon also runs whatweb
-                    self.lights[extra] = entry
+                self.lights["server"] = _light_cell("Server", "Not connected", 0)
+            for idx, sa in enumerate(cfg["subagents"], 1):
+                entry = _light_cell(sa["label"], "idle", idx)
+                for key in (sa["name"], sa["tool"], *sa.get("tools", [])):
+                    self.lights[key] = entry
 
-        # Flags overview (attacker): one light per planted flag. Blue =
-        # defended/uncaptured, red = the attacker has captured it.
         if cfg.get("show_flags"):
-            self.flags_frame = ttk.LabelFrame(
-                self, text=f" 🚩 FLAGS  (0 / {len(KNOWN_FLAGS)} captured) ")
-            self.flags_frame.pack(fill="x", pady=(0, 8))
+            self.flags_frame = ttk.LabelFrame(self, text=f" Objectives · 0 / {TOTAL_FLAGS} captured ")
+            self.flags_frame.pack(fill="x", pady=(0, 14))
             grid = ttk.Frame(self.flags_frame, style="Card.TFrame")
-            grid.pack(fill="x", padx=8, pady=8)
-            cols = 4
+            grid.pack(fill="x", padx=12, pady=8)
             for idx, (flag, label, owner) in enumerate(KNOWN_FLAGS):
+                grid.columnconfigure(idx % 4, weight=1)
                 cell = ttk.Frame(grid, style="Card.TFrame")
-                cell.grid(row=idx // cols, column=idx % cols, sticky="w",
-                          padx=(0, 20), pady=3)
-                cv = tk.Canvas(cell, width=14, height=14, highlightthickness=0,
-                               bg=PAL["panel"])
-                cv.pack(side="left", padx=(0, 7))
-                oval = cv.create_oval(2, 2, 12, 12, fill=PAL["blue"], outline="")
-                lbl = tk.Label(cell, text=label, bg=PAL["panel"], fg=PAL["muted"],
-                               font=("Segoe UI", 9))
+                cell.grid(row=idx // 4, column=idx % 4, sticky="w", pady=4)
+                cv = tk.Canvas(cell, width=12, height=12, highlightthickness=0, bg=PAL["panel"])
+                cv.pack(side="left", padx=(0, 6))
+                oval = cv.create_oval(2, 2, 10, 10, fill=PAL["blue"], outline="")
+                lbl = ui_label(cell, label, size=9, color=PAL["muted"], bg=PAL["panel"])
                 lbl.pack(side="left")
-                self.flag_lights[flag] = {"canvas": cv, "oval": oval,
-                                          "label": lbl, "owner": owner}
+                self.flag_lights[flag] = {"canvas": cv, "oval": oval, "label": lbl, "owner": owner}
 
         if cfg.get("panes"):
-            # Live panes side by side (resizable).
+            # A wide Boss stream plus a resizable 2 × 2 specialist grid.
             pw = ttk.PanedWindow(self, orient="horizontal")
             pw.pack(fill="both", expand=True)
-            for p in cfg["panes"]:
-                frame = ttk.LabelFrame(pw, text=f" {p['title']} ")
-                txt = _text(frame, height=18, width=28, wrap="word")
-                txt.pack(fill="both", expand=True, padx=2, pady=2)
-                pw.add(frame, weight=1)
-                self.panes[p["key"]] = txt
-            # Default target for undirected output is the first pane (Boss).
-            self.log = self.panes[cfg["panes"][0]["key"]]
+            boss = ttk.LabelFrame(pw, text=" Boss · orchestration ")
+            self.log = _text(boss, height=8, width=30, wrap="word")
+            self.log.pack(fill="both", expand=True, padx=1, pady=4)
+            self.panes["boss"] = self.log
+            pw.add(boss, weight=2)
+            right = ttk.PanedWindow(pw, orient="vertical")
+            pw.add(right, weight=3)
+            specs = cfg["panes"][1:]
+            for offset in range(0, len(specs), 2):
+                row = ttk.PanedWindow(right, orient="horizontal")
+                right.add(row, weight=1)
+                for pane in specs[offset:offset + 2]:
+                    title = pane["title"].split("  (")[0]
+                    frame = ttk.LabelFrame(row, text=f" {title} ")
+                    txt = _text(frame, height=5, width=22, wrap="word")
+                    txt.pack(fill="both", expand=True, padx=1, pady=4)
+                    row.add(frame, weight=1)
+                    self.panes[pane["key"]] = txt
         else:
-            self.log = _text(self, height=18, wrap="none")
-            self.log.pack(fill="both", expand=True)
+            frame = ttk.LabelFrame(self, text=" Live output ")
+            frame.pack(fill="both", expand=True)
+            self.log = _text(frame, height=12, wrap="word")
+            self.log.pack(fill="both", expand=True, padx=1, pady=4)
 
         self.after(100, self._drain)
 
@@ -1163,7 +1135,7 @@ class ComponentTab(ttk.Frame):
     def _update_flag_title(self):
         known = len(self.flag_lights)
         self.flags_frame.configure(
-            text=f" 🚩 FLAGS  ({len(self.captured)} / {known} captured) ")
+            text=f" Objectives · {len(self.captured)} / {known} captured ")
 
     def clear_flags(self):
         if not self.cfg.get("show_flags"):
@@ -1639,18 +1611,25 @@ class ComponentTab(ttk.Frame):
 
 class App(tk.Tk):
     def __init__(self):
+        if sys.platform == "win32":
+            # Give Windows a stable app identity instead of grouping us with Python.
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "Cogito.PurpleAI.Control.GUIUpgrade")
         super().__init__()
         self.title("PurpleAI Control")
-        self.geometry("1240x720")
-        self.minsize(820, 520)
+        self.geometry("1440x940")
+        self.minsize(1120, 860)
         self.configure(bg=PAL["bg"])
         apply_style(self)
 
-        # Window / taskbar icon (Cogito brain) while the app is running. The
-        # .ico is bundled via --add-data; _MEIPASS is set inside the frozen exe.
+        # Use the same Cogito artwork for the header, title bar, and taskbar.
+        self._logo_img = None
         try:
-            _base = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
-            self.iconbitmap(os.path.join(_base, "assets", "cogito.ico"))
+            logo = tk.PhotoImage(master=self, data=LOGO_PNG_B64)
+            self._icon_images = [logo.subsample(factor) for factor in (1, 3, 6, 11)]
+            self.iconphoto(True, *self._icon_images)
+            self._logo_img = logo.subsample(3)
         except Exception:  # noqa: BLE001  (icon is cosmetic)
             pass
 
@@ -1669,164 +1648,126 @@ class App(tk.Tk):
         load_notes()   # restore (or seed) the live engagement notes
         self.current_instance = INSTANCES[0]
 
-        # -- header: logo, title, host + global actions -------------------- #
-        header = ttk.Frame(self, style="Header.TFrame", padding=(18, 14, 18, 14))
-        header.pack(fill="x")
-        if LOGO_PNG_B64:
-            try:
-                img = tk.PhotoImage(data=LOGO_PNG_B64)
-                factor = max(1, img.height() // 34)
-                self._logo_img = img.subsample(factor, factor)
-                # transparent PNG composites over the header bg — no white box
-                tk.Label(header, image=self._logo_img, bg=PAL["bg"],
-                         bd=0).pack(side="left", padx=(0, 12))
-            except Exception:  # noqa: BLE001  (logo is cosmetic)
-                pass
-        ttk.Label(header, text="PurpleAI Control",
-                  style="HeaderTitle.TLabel").pack(side="left")
+        # Persistent navigation keeps configuration and global tools reachable.
+        sidebar = tk.Frame(self, bg=PAL["sidebar"], width=196)
+        sidebar.pack(side="left", fill="y")
+        sidebar.pack_propagate(False)
+        brand = tk.Frame(sidebar, bg=PAL["sidebar"])
+        brand.pack(fill="x", padx=20, pady=(28, 32))
+        ui_label(brand, "purpleAI", size=19, bold=True, bg=PAL["sidebar"]).pack(side="left")
+        ui_label(sidebar, "WORKSPACE", size=8, color=PAL["muted"], bg=PAL["sidebar"]).pack(anchor="w", padx=24, pady=(0, 12))
+        self._nav_buttons = []
+        self._nav_parent = sidebar
+        tools = tk.Frame(sidebar, bg=PAL["sidebar"])
+        tools.pack(side="bottom", fill="x", padx=16, pady=22)
+        ui_label(tools, f"SSH / {GAMEHOST}", size=9, color=PAL["muted"], bg=PAL["sidebar"]).pack(anchor="w", padx=8, pady=(0, 14))
+        for label, action in (("Engagement notes", self.open_notes),
+                              ("Strategist", self.open_strategist),
+                              ("Reset all instances", self.reset_all)):
+            ttk.Button(tools, text=label, command=action).pack(fill="x", pady=3)
+        self.keys_btn = ttk.Button(tools, text=self._keys_btn_text(), command=self.open_keys)
+        self.keys_btn.pack(fill="x", pady=3)
 
-        # Instance + branch selectors: pick which isolated run you're viewing /
-        # starting, and which branch that instance pulls. Instances are fully
-        # isolated (own server port, vulnerable-app port, tmux session, worktree)
-        # so you can run several at once and compare.
-        sel = ttk.Frame(header, style="Header.TFrame")
-        sel.pack(side="left", padx=(24, 0))
-        ttk.Label(sel, text="Instance", style="HeaderSub.TLabel").pack(side="left", padx=(0, 6))
+        self.workspace = ttk.Frame(self, padding=(26, 22, 26, 18))
+        self.workspace.pack(side="left", fill="both", expand=True)
+        header = ttk.Frame(self.workspace)
+        header.pack(fill="x", pady=(0, 18))
+        heading = ttk.Frame(header)
+        heading.pack(side="left")
+        ui_label(heading, "LAB CONTROL", size=8, color=PAL["accent"], bold=True).pack(anchor="w")
+        self.page_title = ui_label(heading, "Attack workspace", size=24, bold=True)
+        self.page_title.pack(anchor="w", pady=(3, 0))
+        if self._logo_img is not None:
+            self.logo_widget = tk.Label(header, image=self._logo_img, bg=PAL["bg"], bd=0)
+            self.logo_widget.pack(side="right", padx=(20, 0), anchor="n")
+        for label, action, style in (("Launch instances", self.open_launcher, "Primary.TButton"),
+                                     ("Start all", self.start_all, "TButton"),
+                                     ("Stop all", self.stop_all, "TButton")):
+            ttk.Button(header, text=label, command=action, style=style).pack(side="right", padx=(8, 0), pady=10)
+
+        config = ttk.Frame(self.workspace)
+        config.pack(fill="x", pady=(0, 18))
         self.inst_var = tk.StringVar(value=INSTANCES[0]["label"])
-        inst_cb = ttk.Combobox(sel, textvariable=self.inst_var, state="readonly",
-                               width=3, values=[i["label"] for i in INSTANCES])
-        inst_cb.pack(side="left")
-        inst_cb.bind("<<ComboboxSelected>>", self._on_instance_change)
-        ttk.Label(sel, text="Branch", style="HeaderSub.TLabel").pack(side="left", padx=(14, 6))
         self.branch_var = tk.StringVar(value=INSTANCES[0]["branch"])
-        branch_cb = ttk.Combobox(sel, textvariable=self.branch_var, width=16,
-                                 values=["main", "recon-agent"])
-        branch_cb.pack(side="left")
-        branch_cb.bind("<<ComboboxSelected>>", self._on_branch_change)
-        branch_cb.bind("<Return>", self._on_branch_change)
-        branch_cb.bind("<FocusOut>", self._on_branch_change)
-
-        # Per-instance model: run e.g. Kimi on one instance, GLM on another.
-        ttk.Label(sel, text="Model", style="HeaderSub.TLabel").pack(side="left", padx=(14, 6))
         self.model_var = tk.StringVar(value=_MODEL_LABEL.get(INSTANCES[0]["model"], MODELS[0][0]))
-        model_cb = ttk.Combobox(sel, textvariable=self.model_var, state="readonly",
-                                width=14, values=[lbl for lbl, _ in MODELS])
-        model_cb.pack(side="left")
-        model_cb.bind("<<ComboboxSelected>>", self._on_model_change)
-
-        # Shared API key pool: rotated across the Boss + subagents so concurrent
-        # calls use different keys (each key is capped at one parallel request).
-        ttk.Label(sel, text="Keys", style="HeaderSub.TLabel").pack(side="left", padx=(14, 6))
-        self.keys_btn = ttk.Button(sel, text=self._keys_btn_text(),
-                                   command=self.open_keys, width=12)
-        self.keys_btn.pack(side="left")
-        # Live engagement notes (the Strategist reads these).
-        ttk.Button(sel, text="📝 Notes", command=self.open_notes,
-                   width=9).pack(side="left", padx=(10, 0))
-
-        # right cluster: Reset · Stop · Start (current) · Launch (batch) · host
-        ttk.Button(header, text="🧹  Reset all", command=self.reset_all,
-                   style="Ghost.TButton").pack(side="right", padx=(8, 0))
-        ttk.Button(header, text="■  Stop all", command=self.stop_all,
-                   style="Ghost.TButton").pack(side="right", padx=(8, 0))
-        ttk.Button(header, text="▶  Start all", command=self.start_all,
-                   style="Ghost.TButton").pack(side="right", padx=(8, 0))
-        ttk.Button(header, text="🚀  Launch…", command=self.open_launcher,
-                   style="Primary.TButton").pack(side="right", padx=(8, 0))
-        ttk.Label(header, text=f"via {GAMEHOST}",
-                  style="HeaderSub.TLabel").pack(side="right", padx=(0, 16))
-
-        # hairline divider between the header and the scoreboard
-        tk.Frame(self, height=1, bg=PAL["border"]).pack(fill="x")
-
+        for col, (label, variable, values, width, callback, readonly) in enumerate((
+                ("INSTANCE", self.inst_var, [i["label"] for i in INSTANCES], 8, self._on_instance_change, True),
+                ("BRANCH", self.branch_var, ["main", "recon-agent"], 22, self._on_branch_change, False),
+                ("MODEL", self.model_var, [lbl for lbl, _ in MODELS], 22, self._on_model_change, True))):
+            cell = ttk.Frame(config)
+            cell.pack(side="left", padx=(0, 16))
+            ui_label(cell, label, size=8, color=PAL["muted"], bold=True).pack(anchor="w", pady=(0, 6))
+            cb = ttk.Combobox(cell, textvariable=variable, values=values, width=width,
+                              state="readonly" if readonly else "normal")
+            cb.pack(fill="x")
+            cb.bind("<<ComboboxSelected>>", callback)
+            if not readonly:
+                cb.bind("<Return>", callback)
+                cb.bind("<FocusOut>", callback)
         self._build_scoreboard()
-
-        # -- tabs ----------------------------------------------------------- #
-        nb = ttk.Notebook(self)
-        nb.pack(fill="both", expand=True, padx=12, pady=(4, 12))
+        self.nb = ttk.Notebook(self.workspace, style="Workspace.TNotebook")
+        self.nb.pack(fill="both", expand=True, pady=(18, 0))
         self.tabs: list[ComponentTab] = []
-        for cfg in COMPONENTS:
-            tab = ComponentTab(nb, cfg, app=self, instance=self.current_instance)
-            nb.add(tab, text=cfg["label"])
+        for cfg, title in zip(COMPONENTS, ("Attack workspace", "Defense workspace", "Application")):
+            tab = ComponentTab(self.nb, cfg, app=self, instance=self.current_instance)
+            self.nb.add(tab, text=title)
             self.tabs.append(tab)
-
+            self._add_navigation(title)
         try:
             from arena import ArenaTab
-            self.arena = ArenaTab(nb, PAL, KNOWN_FLAGS)
-            self.arena.set_view(self.current_instance["id"])  # start on instance A
-            self.arena.on_strategist = self.open_strategist   # face button → brief
-            self.arena.on_end = self.end_engagement           # ⛔ → end the attack
-            nb.add(self.arena, text="⚔ Siege")
-        except Exception:  # noqa: BLE001  (arena is an extra view)
+            self.arena = ArenaTab(self.nb, PAL, KNOWN_FLAGS)
+            self.arena.set_view(self.current_instance["id"])
+            self.arena.on_strategist = self.open_strategist
+            self.arena.on_end = self.end_engagement
+            self.nb.add(self.arena, text="Siege arena")
+            self._add_navigation("Siege arena")
+        except Exception:  # noqa: BLE001
             self.arena = None
-
+        self.nb.bind("<<NotebookTabChanged>>", self._sync_navigation)
+        self._select_page(0)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # -- Red vs Blue scoreboard -------------------------------------------- #
+    def _add_navigation(self, title):
+        index = len(self._nav_buttons)
+        btn = tk.Button(self._nav_parent, text=f"  {title}", anchor="w", relief="flat",
+                        bd=0, padx=12, pady=13, cursor="hand2", takefocus=True,
+                        font=("Segoe UI Semibold", 10), activebackground=PAL["hover"],
+                        activeforeground=PAL["text"], command=lambda: self._select_page(index))
+        btn.pack(fill="x", padx=12, pady=3)
+        self._nav_buttons.append(btn)
+
+    def _select_page(self, index):
+        self.nb.select(index)
+        self._sync_navigation()
+
+    def _sync_navigation(self, _event=None):
+        selected = self.nb.index(self.nb.select())
+        for i, button in enumerate(self._nav_buttons):
+            button.configure(bg=PAL["hover"] if i == selected else PAL["sidebar"],
+                             fg=PAL["accent"] if i == selected else PAL["muted"])
+        self.page_title.configure(text=self.nb.tab(selected, "text"))
+
     def _build_scoreboard(self):
-        wrap = ttk.Frame(self, style="Header.TFrame", padding=(12, 12, 12, 0))
-        wrap.pack(fill="x")
-
-        # crisp hairline-bordered flat card (ttk frames can't round corners)
-        card = tk.Frame(wrap, bg=PAL["panel"], highlightthickness=1,
-                        highlightbackground=PAL["border"],
-                        highlightcolor=PAL["border"])
+        card = tk.Frame(self.workspace, bg=PAL["panel"], padx=20, pady=14)
         card.pack(fill="x")
-        inner = ttk.Frame(card, style="Scorecard.TFrame", padding=(22, 16))
-        inner.pack(fill="both", expand=True)
-        inner.columnconfigure(0, weight=0, minsize=150)
-        inner.columnconfigure(1, weight=1)
-        inner.columnconfigure(2, weight=0, minsize=150)
-
         self.red_var = tk.StringVar(value="0")
         self.blue_var = tk.StringVar(value=str(TOTAL_FLAGS))
-        self.leader_var = tk.StringVar(value=f"🔵 BLUE defends all  0 – {TOTAL_FLAGS}")
-
-        # RED (left, left-aligned stat block)
-        left = ttk.Frame(inner, style="Scorecard.TFrame")
-        left.grid(row=0, column=0, sticky="nw")
-        rl = ttk.Frame(left, style="Scorecard.TFrame")
-        rl.pack(anchor="w")
-        tk.Label(rl, text="●", bg=PAL["panel"], fg=PAL["red"],
-                 font=("Segoe UI", 10)).pack(side="left", padx=(0, 6))
-        tk.Label(rl, text="RED", bg=PAL["panel"], fg=PAL["red"],
-                 font=("Segoe UI Semibold", 11)).pack(side="left")
-        self._red_num = tk.Label(left, textvariable=self.red_var, bg=PAL["panel"],
-                                 fg=PAL["red"], font=("Segoe UI", 34, "bold"))
-        self._red_num.pack(anchor="w", pady=(2, 0))
-        tk.Label(left, text="flags captured", bg=PAL["panel"], fg=PAL["muted"],
-                 font=("Segoe UI", 9)).pack(anchor="w")
-
-        # BLUE (right, right-aligned stat block)
-        right = ttk.Frame(inner, style="Scorecard.TFrame")
-        right.grid(row=0, column=2, sticky="ne")
-        bl = ttk.Frame(right, style="Scorecard.TFrame")
-        bl.pack(anchor="e")
-        tk.Label(bl, text="BLUE", bg=PAL["panel"], fg=PAL["blue"],
-                 font=("Segoe UI Semibold", 11)).pack(side="left")
-        tk.Label(bl, text="●", bg=PAL["panel"], fg=PAL["blue"],
-                 font=("Segoe UI", 10)).pack(side="left", padx=(6, 0))
-        self._blue_num = tk.Label(right, textvariable=self.blue_var, bg=PAL["panel"],
-                                  fg=PAL["blue"], font=("Segoe UI", 34, "bold"))
-        self._blue_num.pack(anchor="e", pady=(2, 0))
-        tk.Label(right, text="flags defended", bg=PAL["panel"], fg=PAL["muted"],
-                 font=("Segoe UI", 9)).pack(anchor="e")
-
-        # CENTER (leader text + proportion bar + end captions)
-        mid = ttk.Frame(inner, style="Scorecard.TFrame")
-        mid.grid(row=0, column=1, sticky="nsew", padx=18)
+        self.leader_var = tk.StringVar(value=f"Blue defends all {TOTAL_FLAGS} objectives")
+        for side, variable, color, caption in (("left", self.red_var, PAL["red"], "CAPTURED"),
+                                                ("right", self.blue_var, PAL["blue"], "DEFENDED")):
+            stat = tk.Frame(card, bg=PAL["panel"])
+            stat.pack(side=side, padx=(0, 12) if side == "left" else (12, 0))
+            tk.Label(stat, textvariable=variable, bg=PAL["panel"], fg=color,
+                     font=("Segoe UI Semibold", 30)).pack(side="left", padx=(0, 10))
+            ui_label(stat, caption, size=8, color=PAL["muted"], bg=PAL["panel"], bold=True).pack(side="left")
+        mid = tk.Frame(card, bg=PAL["panel"])
+        mid.pack(fill="both", expand=True, padx=24, pady=6)
         tk.Label(mid, textvariable=self.leader_var, bg=PAL["panel"], fg=PAL["text"],
-                 font=("Segoe UI Semibold", 11)).pack(pady=(6, 0))
-        self.score_canvas = tk.Canvas(mid, height=16, highlightthickness=0,
-                                      bg=PAL["panel"], bd=0)
-        self.score_canvas.pack(fill="x", pady=(10, 2))
+                 font=("Segoe UI", 10)).pack(anchor="w", pady=(0, 10))
+        self.score_canvas = tk.Canvas(mid, height=6, highlightthickness=0, bg=PAL["panel"])
+        self.score_canvas.pack(fill="x")
         self.score_canvas.bind("<Configure>", lambda e: self._draw_score_bar())
-        cap = ttk.Frame(mid, style="Scorecard.TFrame")
-        cap.pack(fill="x")
-        tk.Label(cap, text="attacker", bg=PAL["panel"], fg=PAL["muted"],
-                 font=("Segoe UI", 8)).pack(side="left")
-        tk.Label(cap, text="defender", bg=PAL["panel"], fg=PAL["muted"],
-                 font=("Segoe UI", 8)).pack(side="right")
 
     def set_red(self, n: int):
         # Blue starts holding every flag; each one Red captures is one Red gains
@@ -1847,11 +1788,11 @@ class App(tk.Tk):
         self.blue_var.set(str(self.blue_score))
         r, b = self.red_score, self.blue_score
         if r > b:
-            self.leader_var.set(f"🔴 RED leads  {r} – {b}")
+            self.leader_var.set(f"Red leads · {r} captured / {b} defended")
         elif b > r:
-            self.leader_var.set(f"🔵 BLUE leads  {r} – {b}")
+            self.leader_var.set(f"Blue leads · {r} captured / {b} defended")
         else:
-            self.leader_var.set(f"TIED  {r} – {b}")
+            self.leader_var.set(f"Tied · {r} captured / {b} defended")
         self._draw_score_bar()
 
     def _draw_score_bar(self):
@@ -1939,7 +1880,7 @@ class App(tk.Tk):
                  "The Grand Strategist reads this every time.",
                  bg=PAL["bg"], fg=PAL["muted"], justify="left",
                  font=("Segoe UI", 9)).pack(anchor="w", padx=12, pady=(12, 6))
-        txt = ScrolledText(win, bg=PAL["log"], fg=PAL["text"], wrap="word",
+        txt = ConsoleText(win, bg=PAL["log"], fg=PAL["text"], wrap="word",
                            font=("Consolas", 10), relief="flat", borderwidth=0,
                            insertbackground=PAL["text"], padx=10, pady=8)
         txt.pack(fill="both", expand=True, padx=12)
@@ -1961,7 +1902,7 @@ class App(tk.Tk):
 
     def _keys_btn_text(self) -> str:
         n = len(KEY_SET)
-        return f"🔑 {n} key" + ("" if n == 1 else "s")
+        return f"API keys · {n}"
 
     def open_keys(self):
         """Edit the shared API key pool (one key per line). Rotated across the
@@ -1975,7 +1916,7 @@ class App(tk.Tk):
                  "Each distinct key adds one concurrent model slot.",
                  bg=PAL["bg"], fg=PAL["muted"], justify="left",
                  font=("Segoe UI", 9)).pack(anchor="w", padx=12, pady=(12, 6))
-        txt = ScrolledText(win, bg=PAL["log"], fg=PAL["text"], wrap="none",
+        txt = ConsoleText(win, bg=PAL["log"], fg=PAL["text"], wrap="none",
                            font=("Consolas", 10), relief="flat", borderwidth=0,
                            insertbackground=PAL["text"], padx=8, pady=6, height=11)
         txt.pack(fill="both", expand=True, padx=12)
@@ -2059,7 +2000,7 @@ class App(tk.Tk):
                  font=("Segoe UI Semibold", 14)).pack(side="left")
         tk.Label(head, text=f"instance {inst['label']} · branch {inst['branch']}",
                  bg=PAL["bg"], fg=PAL["muted"], font=("Segoe UI", 9)).pack(side="left", padx=10)
-        txt = ScrolledText(win, bg=PAL["log"], fg=PAL["text"], wrap="word",
+        txt = ConsoleText(win, bg=PAL["log"], fg=PAL["text"], wrap="word",
                            font=("Segoe UI", 10), relief="flat", borderwidth=0,
                            padx=12, pady=10)
         txt.pack(fill="both", expand=True, padx=14, pady=(0, 14))
