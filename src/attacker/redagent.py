@@ -18,6 +18,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph_sdk import get_client
 from llm import get_model
 from prompts import BOSS_PROMPT
+from recon_gate import ReconFirstMiddleware
 
 # Safety cap: stop after this many Boss turns even if it keeps launching work,
 # so a runaway loop can't run unbounded. The loop normally stops on its own when
@@ -110,6 +111,7 @@ def create_boss(checkpointer):
     return create_deep_agent(
         model=get_model(), system_prompt=BOSS_PROMPT, name="Boss Agent",
         subagents=subagents, checkpointer=checkpointer,
+        middleware=[ReconFirstMiddleware()],
     )
 
 
@@ -134,23 +136,18 @@ def _print_trace_pointer() -> None:
 # to pick up where it left off — check running tasks, act on finished ones, and
 # decide the next move — so the engagement advances on its own.
 INITIAL_OBJECTIVE = (
-    f"Begin a penetration test of {Target_url}. RECON IS THE PRIORITY ON THIS "
-    "FIRST TURN: before anything else, delegate a crawl to the recon_agent so "
-    "its map of endpoints, parameters, forms and input reflection comes back as "
-    "early as possible - this is the lead task. In the SAME turn (do not wait or "
-    "idle), also fire a light first wave at the obvious surface so nothing sits "
-    "idle: a SQL injection scan to the sql_injection_agent, a cross-site "
-    "scripting scan to the xss_agent, a server-side template injection scan to "
-    "the ssti_agent, and an XXE scan to the xxe_agent - each a focused task. But "
-    "treat recon as the lead: the MOMENT its map returns, PRIORITIZE acting on "
-    "its ranked leads - reflected-raw parameters to the xss_agent and ssti_agent, "
-    "numeric/non-reflected ids and login forms to the sql_injection_agent, "
-    "XML/upload endpoints to the xxe_agent - naming the exact endpoint and "
-    "parameter and the recon finding that justifies it, ahead of any blind "
-    "re-scanning."
+    f"Begin a penetration test of {Target_url}. Launch ONLY recon_agent first "
+    "to map endpoints, parameters, forms and input reflection, then end this "
+    "turn. Do not launch SQLi, XSS, SSTI, XXE or other attack work while recon "
+    "is pending or running. After recon finishes, check its successful result "
+    "and use its ranked leads to delegate focused scans, naming the endpoint, "
+    "parameter and recon finding that justifies each task."
 )
 CONTINUE_NUDGE = (
-    "Continue the engagement. First check the status of every task you have "
+    "Continue the engagement. Before any attack work, ensure recon_agent has "
+    "completed successfully and read its result. If recon has not been "
+    "launched, launch ONLY recon first. If it is still running, wait. "
+    "First check the status of every task you have "
     "launched. For any that finished, read and analyze the result, then decide "
     "and launch the next step. For any still running, leave them and report "
     "their status. If you are waiting on tasks and have nothing new to launch, "
