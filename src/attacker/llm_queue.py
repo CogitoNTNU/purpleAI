@@ -56,8 +56,15 @@ class KeyQueue:
         self.keys_path = keys_path or key_file()
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
             db.execute("CREATE TABLE IF NOT EXISTS waiters (ticket INTEGER PRIMARY KEY AUTOINCREMENT, token TEXT UNIQUE, seen REAL)")
             db.execute("CREATE TABLE IF NOT EXISTS keys (fingerprint TEXT PRIMARY KEY, used REAL DEFAULT 0, cooldown REAL DEFAULT 0)")
+
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            columns = {row[1] for row in db.execute("PRAGMA table_info(waiters)")}
+            if "pid" not in columns:
+                db.execute("ALTER TABLE waiters ADD COLUMN pid INTEGER DEFAULT 0")
 
     def _db(self):
         return sqlite3.connect(self.directory / "queue.sqlite3", timeout=10)
@@ -76,7 +83,7 @@ class KeyQueue:
     def ticket(self):
         token = uuid4().hex
         with self._db() as db:
-            db.execute("INSERT INTO waiters(token,seen) VALUES (?,?)", (token, time.time()))
+            db.execute("INSERT INTO waiters(token,seen,pid) VALUES (?,?,?)", (token, time.time(), os.getpid()))
         return token
 
     def discard(self, token):
@@ -89,7 +96,7 @@ class KeyQueue:
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
             db.execute("DELETE FROM waiters WHERE seen < ?", (now - 120,))
-            db.execute("INSERT OR IGNORE INTO waiters(token,seen) VALUES (?,?)", (token, now))
+            db.execute("INSERT OR IGNORE INTO waiters(token,seen,pid) VALUES (?,?,?)", (token, now, os.getpid()))
             db.execute("UPDATE waiters SET seen=? WHERE token=?", (now, token))
             first = db.execute("SELECT token FROM waiters ORDER BY ticket LIMIT 1").fetchone()
             if not first or first[0] != token:
