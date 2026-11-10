@@ -263,3 +263,6 @@ startup/gui/build/
 startup/gui/dist/
 startup/gui/*.spec
 startup/logs/
+
+# War Room chat exports dropped by the control app
+warroom_*.txt
