@@ -1743,6 +1743,272 @@ class ComponentTab(ttk.Frame):
             self.action_proc.kill()
 
 
+# ---- Shared LLM key queue: inspect + clear (runs on redai) ----------------- #
+# These read/mutate the same ~/.purpleai/queue the Boss, specialists, A-D
+# instances and the Strategist all share (src/attacker/llm_queue.py).
+QUEUE_READ_SH = r"""python3 - <<'PY'
+import os, glob, json, time, sqlite3
+from pathlib import Path
+d = Path.home() / ".purpleai" / "queue"
+db = d / "queue.sqlite3"
+out = {"ok": True, "db": str(db), "exists": db.exists(), "now": time.time(),
+       "waiters": [], "keys": [], "locks": []}
+# Which key lock files are currently held (a live request is using that key)?
+held = set()
+for lf in glob.glob(str(d / "*.lock")):
+    fp = os.path.basename(lf)[:-5]
+    try:
+        import fcntl
+        h = open(lf, "a+b")
+        try:
+            fcntl.flock(h, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(h, fcntl.LOCK_UN)          # was free; release at once
+        except OSError:
+            held.add(fp)                            # locked by a live request
+        finally:
+            h.close()
+    except Exception:
+        pass
+try:
+    if db.exists():
+        c = sqlite3.connect(str(db), timeout=5)
+        now = time.time()
+        try:
+            for ticket, token, seen, pid in c.execute(
+                    "SELECT ticket, token, seen, pid FROM waiters ORDER BY ticket"):
+                out["waiters"].append({"ticket": ticket, "age": round(now - seen, 1), "pid": pid})
+        except Exception as e:
+            out["waiters_err"] = str(e)
+        try:
+            for fp, used, cd in c.execute("SELECT fingerprint, used, cooldown FROM keys"):
+                out["keys"].append({"fp": fp[:8],
+                                    "used_age": (round(now - used, 1) if used else None),
+                                    "cooldown": round(cd - now, 1),
+                                    "busy": fp in held})
+        except Exception as e:
+            out["keys_err"] = str(e)
+        c.close()
+    out["locks"] = sorted(os.path.basename(x)[:8] for x in glob.glob(str(d / "*.lock")))
+except Exception as e:
+    out = {"ok": False, "error": str(e)}
+print("QUEUE_JSON " + json.dumps(out))
+PY
+"""
+
+QUEUE_CLEAR_WAITERS_SH = r"""python3 - <<'PY'
+import json, sqlite3
+from pathlib import Path
+db = Path.home() / ".purpleai" / "queue" / "queue.sqlite3"
+res = {"action": "clear-waiters"}
+try:
+    if db.exists():
+        with sqlite3.connect(str(db), timeout=15) as c:
+            res["cleared"] = c.execute("SELECT COUNT(*) FROM waiters").fetchone()[0]
+            c.execute("DELETE FROM waiters")
+            try:
+                c.execute("UPDATE keys SET cooldown = 0")
+            except Exception:
+                pass
+    else:
+        res["cleared"] = 0
+    res["ok"] = True
+except Exception as e:
+    res["ok"] = False; res["error"] = str(e)
+print("QUEUE_CLEAR " + json.dumps(res))
+PY
+"""
+
+QUEUE_FULL_RESET_SH = r"""python3 - <<'PY'
+import os, glob, json
+from pathlib import Path
+d = Path.home() / ".purpleai" / "queue"
+res = {"action": "full-reset", "removed": []}
+try:
+    targets = glob.glob(str(d / "*.lock")) + [str(d / "queue.sqlite3"),
+              str(d / "queue.sqlite3-wal"), str(d / "queue.sqlite3-shm")]
+    for p in targets:
+        try:
+            if os.path.exists(p):
+                os.remove(p); res["removed"].append(os.path.basename(p))
+        except Exception as e:
+            res.setdefault("errors", []).append(os.path.basename(p) + ": " + str(e))
+    res["ok"] = True
+except Exception as e:
+    res["ok"] = False; res["error"] = str(e)
+print("QUEUE_RESET " + json.dumps(res))
+PY
+"""
+
+
+class QueueTab(ttk.Frame):
+    """Workspace section: live view of the shared LLM key queue on redai, with
+    controls to clear the FIFO backlog or fully reset the queue."""
+
+    REFRESH_MS = 3000
+
+    def __init__(self, master, app):
+        super().__init__(master, padding=(4, 4, 4, 4))
+        self.app = app
+        self.q: "queue.Queue[tuple]" = queue.Queue()
+        self._active = False
+        self._reading = False
+        self._buf = ""
+
+        bar = ttk.Frame(self)
+        bar.pack(fill="x", pady=(0, 12))
+        self.summary_var = tk.StringVar(value="Reading the shared key queue on redai…")
+        tk.Label(bar, textvariable=self.summary_var, bg=PAL["bg"], fg=PAL["text"],
+                 font=("Segoe UI Semibold", 11), anchor="w").pack(side="left")
+        ttk.Button(bar, text="Full reset", command=self.full_reset).pack(side="right", padx=(8, 0))
+        ttk.Button(bar, text="Clear waiters", command=self.clear_waiters).pack(side="right", padx=(8, 0))
+        ttk.Button(bar, text="Refresh", command=self.refresh, style="Primary.TButton").pack(side="right")
+
+        self.status_var = tk.StringVar(value="")
+        tk.Label(self, textvariable=self.status_var, bg=PAL["bg"], fg=PAL["muted"],
+                 font=("Segoe UI", 9), anchor="w").pack(fill="x", pady=(0, 8))
+
+        self.view = ConsoleText(self, bg=PAL["log"], fg=PAL["text"], wrap="none",
+                                font=("Consolas", 10), relief="flat", borderwidth=0,
+                                padx=12, pady=10)
+        self.view.pack(fill="both", expand=True)
+        self.view.tag_config("head", foreground=PAL["accent"])
+        self.view.tag_config("busy", foreground=PAL["blue"])
+        self.view.tag_config("cool", foreground=PAL["amber"])
+        self.view.tag_config("muted", foreground=PAL["muted"])
+        self.view.configure(state="disabled")
+
+        self.after(120, self._drain)
+
+    # -- visibility: only poll redai while this section is on screen -------- #
+    def set_active(self, active: bool):
+        active = bool(active)
+        if active and not self._active:
+            self._active = True
+            self.refresh()
+            self._schedule()
+        self._active = active
+
+    def _schedule(self):
+        if self._active:
+            self.after(self.REFRESH_MS, self._tick)
+
+    def _tick(self):
+        if not self._active:
+            return
+        self.refresh()
+        self._schedule()
+
+    # -- remote calls ------------------------------------------------------- #
+    def refresh(self):
+        if self._reading:
+            return
+        self._reading = True
+        self._buf = ""
+        Proc(ssh_script_argv("redai"), self.q, stdin_data=QUEUE_READ_SH, role="queue").start()
+
+    def clear_waiters(self):
+        self.status_var.set("Clearing waiters…")
+        Proc(ssh_script_argv("redai"), self.q, stdin_data=QUEUE_CLEAR_WAITERS_SH,
+             role="queue-clear").start()
+
+    def full_reset(self):
+        if not messagebox.askyesno("Full queue reset",
+                "Remove the shared queue database and all key lock files on redai?\n\n"
+                "Use this only when the queue is stuck. If an agent is mid-request, "
+                "clearing its lock can briefly let two calls share one key."):
+            return
+        self.status_var.set("Full reset…")
+        Proc(ssh_script_argv("redai"), self.q, stdin_data=QUEUE_FULL_RESET_SH,
+             role="queue-clear").start()
+
+    # -- output pump -------------------------------------------------------- #
+    def _drain(self):
+        try:
+            while True:
+                kind, role, payload = self.q.get_nowait()
+                if kind == "line":
+                    self._buf += payload
+                    for line in payload.splitlines():
+                        if line.startswith("QUEUE_JSON "):
+                            self._render(line[len("QUEUE_JSON "):])
+                        elif line.startswith("QUEUE_CLEAR "):
+                            self._on_clear(line[len("QUEUE_CLEAR "):])
+                        elif line.startswith("QUEUE_RESET "):
+                            self._on_reset(line[len("QUEUE_RESET "):])
+                elif kind == "exit":
+                    if role == "queue":
+                        self._reading = False
+                        if "QUEUE_JSON " not in self._buf and payload != 0:
+                            self.summary_var.set("Could not read the queue (ssh/redai error).")
+                            self.status_var.set((self._buf.strip() or "")[-300:])
+        except queue.Empty:
+            pass
+        self.after(120, self._drain)
+
+    def _on_clear(self, blob):
+        try:
+            d = json.loads(blob)
+        except ValueError:
+            return
+        self.status_var.set(f"Cleared {d.get('cleared', 0)} waiter(s) and reset cooldowns."
+                            if d.get("ok") else f"Clear failed: {d.get('error', '?')}")
+        self.refresh()
+
+    def _on_reset(self, blob):
+        try:
+            d = json.loads(blob)
+        except ValueError:
+            return
+        if d.get("ok"):
+            self.status_var.set(f"Queue reset — removed {len(d.get('removed', []))} file(s). "
+                                "Agents rebuild it on their next request.")
+        else:
+            self.status_var.set(f"Reset failed: {d.get('error', '?')}")
+        self.refresh()
+
+    def _render(self, blob):
+        try:
+            d = json.loads(blob)
+        except ValueError:
+            return
+        self.view.configure(state="normal")
+        self.view.delete("1.0", "end")
+        if not d.get("ok"):
+            self.view.insert("end", "Error reading queue: " + str(d.get("error")) + "\n")
+            self.summary_var.set("Queue unavailable")
+            self.view.configure(state="disabled")
+            return
+        keys, waiters = d.get("keys", []), d.get("waiters", [])
+        busy = sum(1 for k in keys if k.get("busy"))
+        if not d.get("exists"):
+            self.summary_var.set("No queue yet on redai (it is created on the first request).")
+        else:
+            self.summary_var.set(f"{len(keys)} key(s) · {busy} in use · {len(waiters)} waiting")
+
+        self.view.insert("end", "KEYS\n", "head")
+        if keys:
+            self.view.insert("end", f"  {'fingerprint':<12}{'state':<10}{'last used':<14}cooldown\n", "muted")
+            for k in keys:
+                state = "IN USE" if k.get("busy") else "free"
+                tag = "busy" if k.get("busy") else None
+                used = f"{k['used_age']}s ago" if k.get("used_age") is not None else "never"
+                cd = k.get("cooldown", 0)
+                cool = f"{cd:.0f}s" if cd and cd > 0 else "-"
+                line = f"  {k['fp']:<12}{state:<10}{used:<14}{cool}\n"
+                self.view.insert("end", line, ("cool",) if (cd and cd > 0) else ((tag,) if tag else ()))
+        else:
+            self.view.insert("end", "  (no keys in the pool — add keys via the Keys dialog)\n", "muted")
+
+        self.view.insert("end", "\nWAITERS (FIFO, oldest first)\n", "head")
+        if waiters:
+            self.view.insert("end", f"  {'ticket':<10}{'age':<10}pid\n", "muted")
+            for w in waiters:
+                self.view.insert("end", f"  {w['ticket']:<10}{str(w['age'])+'s':<10}{w['pid']}\n")
+        else:
+            self.view.insert("end", "  (nobody is waiting)\n", "muted")
+        self.view.configure(state="disabled")
+
+
 class App(tk.Tk):
     def __init__(self):
         if sys.platform == "win32":
@@ -1857,6 +2123,12 @@ class App(tk.Tk):
             self._add_navigation("Siege arena")
         except Exception:  # noqa: BLE001
             self.arena = None
+        try:
+            self.queue_tab = QueueTab(self.nb, app=self)
+            self.nb.add(self.queue_tab, text="LLM queue")
+            self._add_navigation("LLM queue")
+        except Exception:  # noqa: BLE001
+            self.queue_tab = None
         self.nb.bind("<<NotebookTabChanged>>", self._sync_navigation)
         self._select_page(0)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -1880,7 +2152,10 @@ class App(tk.Tk):
         for i, button in enumerate(self._nav_buttons):
             button.configure(bg=PAL["hover"] if i == selected else PAL["sidebar"],
                              fg=PAL["accent"] if i == selected else PAL["muted"])
-        self.page_title.configure(text=self.nb.tab(selected, "text"))
+        title = self.nb.tab(selected, "text")
+        self.page_title.configure(text=title)
+        if getattr(self, "queue_tab", None) is not None:
+            self.queue_tab.set_active(title == "LLM queue")
 
     def _build_scoreboard(self):
         card = tk.Frame(self.workspace, bg=PAL["panel"], padx=20, pady=14)
