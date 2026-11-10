@@ -25,7 +25,8 @@ import random
 import sys
 import time
 import tkinter as tk
-from tkinter import ttk
+from datetime import datetime
+from tkinter import filedialog, messagebox, ttk
 
 FRAME_W, FRAME_H = 40, 44
 
@@ -78,8 +79,14 @@ class ArenaTab(ttk.Frame):
         chat_frame = tk.Frame(self, width=330, bg=pal["panel"])
         chat_frame.pack(side="right", fill="y")
         chat_frame.pack_propagate(False)
-        tk.Label(chat_frame, text="  💬  WAR ROOM", bg=pal["panel"], fg=pal["muted"],
-                 font=("Segoe UI Semibold", 10), anchor="w").pack(fill="x", pady=(8, 4))
+        head = tk.Frame(chat_frame, bg=pal["panel"])
+        head.pack(fill="x", pady=(8, 4))
+        tk.Label(head, text="  💬  WAR ROOM", bg=pal["panel"], fg=pal["muted"],
+                 font=("Segoe UI Semibold", 10), anchor="w").pack(side="left")
+        tk.Button(head, text="⤓ Export", command=self._export_chat,
+                  bg=pal["panel"], fg=pal["text"], activebackground=pal["log"],
+                  activeforeground=pal["text"], relief="flat", borderwidth=0,
+                  font=("Segoe UI", 8), cursor="hand2", padx=8).pack(side="right", padx=6)
         wrap = tk.Frame(chat_frame, bg=pal["panel"])
         wrap.pack(fill="both", expand=True)
         sb = tk.Scrollbar(wrap)
@@ -95,6 +102,12 @@ class ArenaTab(ttk.Frame):
             self.chat.tag_configure(f"name_{key}", foreground=color,
                                     font=("Segoe UI Semibold", 9))
         self._chat_lines = 0
+        # Per-instance War Room history so switching instances never loses chat.
+        # cur = the instance id currently shown; each instance keeps its own
+        # transcript + a seen-set so re-polls/re-tails don't duplicate lines.
+        self.transcripts: dict = {}   # instance id -> [(agent, text), ...]
+        self.seen: dict = {}          # instance id -> {(agent, text), ...}
+        self.cur = None
 
         self.reachable_total = len(flags) if flags else 5
         self.captured: set[str] = set()
@@ -141,7 +154,44 @@ class ArenaTab(ttk.Frame):
         self._map_rect = (0, 0, 1, 1)   # ox, oy, zoom*w, zoom*h cached
         self._tsize = (0, 0)
         self._last = time.time()
+
+        # Top-right field controls (placed as child widgets so the per-frame
+        # canvas redraw doesn't wipe them): End engagement on top, the Grand
+        # Strategist portrait below. Both call back into the control panel.
+        self.on_strategist = None
+        self.on_end = None
+        try:
+            simg = tk.PhotoImage(file=_asset("grand_strategist_portrait_1x.png"))
+            self._keep.append(simg)
+            panel = tk.Frame(self.canvas, bg="#3f7a34")  # blends with the field
+            tk.Button(panel, text="⛔ End engagement", command=self._fire_end,
+                      bd=0, relief="flat", bg="#b3443b", fg="#ffffff",
+                      activebackground="#c9524a", activeforeground="#ffffff",
+                      font=("Segoe UI Semibold", 9), cursor="hand2",
+                      padx=8, pady=5).pack(fill="x", pady=(0, 6))
+            holder = tk.Frame(panel, bg="#161b22", highlightthickness=2,
+                              highlightbackground="#d2a8ff")
+            tk.Button(holder, image=simg, bd=0, relief="flat", bg="#161b22",
+                      activebackground="#21262d", cursor="hand2",
+                      command=self._fire_strategist).pack()
+            tk.Label(holder, text="Strategist", bg="#161b22", fg="#d2a8ff",
+                     font=("Segoe UI Semibold", 8), cursor="hand2").pack(fill="x")
+            holder.pack()
+            panel.place(relx=1.0, x=-12, y=12, anchor="ne")
+        except Exception:  # noqa: BLE001  (buttons are optional)
+            pass
+
         self.after(60, self._tick)
+
+    def _fire_strategist(self):
+        cb = self.on_strategist
+        if callable(cb):
+            cb()
+
+    def _fire_end(self):
+        cb = self.on_end
+        if callable(cb):
+            cb()
 
     # -- asset helpers ----------------------------------------------------- #
     def _slice(self, path, n):
@@ -178,11 +228,66 @@ class ArenaTab(ttk.Frame):
 
     def say(self, agent, text):
         c = self.commanders.get(agent)
-        if c and text:
-            clean = " ".join(str(text).split())
-            c["bubble"] = clean[:120]
-            c["bubble_t"] = time.time() + 9.0
+        if not (c and text):
+            return
+        clean = " ".join(str(text).split())
+        c["bubble"] = clean[:120]
+        c["bubble_t"] = time.time() + 9.0
+        inst = self.cur
+        if inst is None:            # no instance context yet: just render
             self._chat(agent, clean)
+            return
+        seen = self.seen.setdefault(inst, set())
+        key = (agent, clean)
+        if key in seen:            # dedup: re-poll/re-tail won't double up
+            return
+        seen.add(key)
+        tr = self.transcripts.setdefault(inst, [])
+        tr.append((agent, clean))
+        if len(tr) > 600:          # bound memory; rebuild seen from the kept tail
+            del tr[:len(tr) - 600]
+            self.seen[inst] = set(tr)
+        self._chat(agent, clean)
+
+    def set_view(self, inst_id):
+        """Show instance `inst_id`'s preserved chat. Switching restores that
+        instance's full transcript instead of wiping — nothing is lost."""
+        self.cur = inst_id
+        self.transcripts.setdefault(inst_id, [])
+        self.seen.setdefault(inst_id, set())
+        self.chat.configure(state="normal")
+        self.chat.delete("1.0", "end")
+        self.chat.configure(state="disabled")
+        self._chat_lines = 0
+        for agent, text in self.transcripts[inst_id]:
+            self._chat(agent, text)
+
+    def _export_chat(self):
+        """Save the War Room feed to a .txt the operator picks."""
+        try:
+            text = self.chat.get("1.0", "end").strip()
+        except Exception:  # noqa: BLE001
+            text = ""
+        if not text:
+            messagebox.showinfo("Export chat log", "The War Room is empty — "
+                                "nothing to export yet.")
+            return
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = filedialog.asksaveasfilename(
+            title="Export War Room chat log",
+            defaultextension=".txt",
+            initialfile=f"warroom_{stamp}.txt",
+            filetypes=[("Text file", "*.txt"), ("All files", "*.*")])
+        if not path:
+            return
+        header = f"PurpleAI War Room chat — exported {datetime.now():%Y-%m-%d %H:%M:%S}\n"
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(header + "=" * len(header.strip()) + "\n\n" + text + "\n")
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Export chat log", f"Could not save:\n{exc}")
+            return
+        messagebox.showinfo("Export chat log", f"Saved to:\n{path}")
 
     def _chat(self, agent, text):
         c = self.commanders.get(agent)
@@ -217,7 +322,9 @@ class ArenaTab(ttk.Frame):
             s["alive"] = False
             self.sparks.append({"x": s["x"], "y": s["y"], "t": 0.0, "kind": "kill"})
 
-    def reset(self):
+    def reset(self, inst_id=None):
+        """Clear the siege/chat. With inst_id, clear only that instance's
+        transcript; without, wipe everything (the global Reset)."""
         self.captured.clear()
         self.soldiers.clear()
         self.sparks.clear()
@@ -225,6 +332,12 @@ class ArenaTab(ttk.Frame):
         for c in self.commanders.values():
             c["state"] = "idle"
             c["bubble"] = ""
+        if inst_id is None:
+            self.transcripts.clear()
+            self.seen.clear()
+        else:
+            self.transcripts.pop(inst_id, None)
+            self.seen.pop(inst_id, None)
         self.chat.configure(state="normal")
         self.chat.delete("1.0", "end")
         self.chat.configure(state="disabled")
