@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 
 from config import Target_url
 from event_logging import run_logged_tool
@@ -78,6 +79,7 @@ async def sqlmap(
     ##sqlmap --batch --crawl=3 --output-dir=<your_path> -u <testwebsite.com>
     cmd = [
         "sqlmap",
+        "--output-dir=" + str(Path(__file__).resolve().parents[2] / "startup/tool-state/sqlmap"),
         "-u",
         Target_url,  # target is fixed, never agent-supplied
         f"--level={level}",

@@ -424,7 +424,7 @@ def att_start(inst):
     lines = []
     if KEY_SET:
         lines.append(publish_keys_script())
-    lines.append(f"tmux send-keys -t \"$SESSION\" \"export LLM_MODEL='{model}' PYTHONUNBUFFERED=1 BG_JOB_TIMEOUT_SECS=86400\" C-m")
+    lines.append(f"tmux send-keys -t \"$SESSION\" \"export LLM_MODEL='{model}' PYTHONUNBUFFERED=1 BG_JOB_TIMEOUT_SECS=86400 PURPLE_INSTANCE_ID='{inst["id"]}'\" C-m")
     return _fill(ATTACKER_START_TMPL, inst).replace("__APIKEY_LINE__", "\n".join(lines))
 
 def att_stop(inst):   return _fill(ATTACKER_STOP_TMPL, inst)
@@ -472,6 +472,7 @@ def att_status(inst):
 # operator watches, then asks the model to summarize the engagement and suggest
 # how to make the setup more potent/efficient.
 STRATEGIST_TMPL = r"""
+export PURPLE_INSTANCE_ID="__ID__"
 set -uo pipefail
 WT="__WT__"
 ATT="$WT/src/attacker"; [ -d "$ATT" ] || ATT="$WT/src/Attacker"
@@ -601,13 +602,77 @@ def att_strategist(inst):
 
 # ---- End engagement: interrupt the Boss so it writes its final summary ----- #
 END_ENGAGEMENT_TMPL = r"""
+set -eu
 SESSION="__SESSION__"
-if tmux has-session -t "$SESSION" 2>/dev/null; then
-  tmux send-keys -t "$SESSION" C-c
-  echo "[end] sent interrupt to $SESSION — the Boss stops attacking and writes its final summary."
-else
-  echo "[end] no running attacker session $SESSION."
-fi
+WT="__WT__"
+SRVPORT="__SRVPORT__"
+# Stop the entire instance before removing durable state; never request an LLM summary.
+python3 - "$WT" "$SESSION" <<'RESET_WORKERS'
+import os, signal, subprocess, sys, time
+from pathlib import Path
+root=Path(sys.argv[1]).resolve()
+expected=Path.home()/"purpleAI-__ID__"
+if root != Path.home().resolve()/"purpleAI-__ID__" or root.parent != Path.home().resolve():
+    raise SystemExit("Unexpected instance path; reset refused")
+processes={}
+owned=set()
+for entry in Path('/proc').iterdir():
+    if not entry.name.isdigit(): continue
+    try:
+        pid=int(entry.name)
+        stat=(entry/'stat').read_text().rsplit(')',1)[1].split()
+        cwd=(entry/'cwd').resolve()
+        if b'PURPLE_INSTANCE_ID=__ID__' in (entry/'environ').read_bytes().split(b'\0'):
+            owned.add(pid)
+        processes[pid]=(int(stat[1]), cwd)
+    except (OSError,ValueError): pass
+excluded={os.getpid()}
+parent=os.getppid()
+while parent in processes and parent not in excluded:
+    excluded.add(parent)
+    parent=processes[parent][0]
+selected={pid for pid,(_,cwd) in processes.items() if (cwd==root or root in cwd.parents or pid in owned) and pid not in excluded}
+while True:
+    children={pid for pid,(parent,_) in processes.items() if parent in selected}
+    if children <= selected: break
+    selected |= children
+for pid in selected:
+    try: os.kill(pid,signal.SIGSTOP)
+    except ProcessLookupError: pass
+for pid in selected:
+    try: os.kill(pid,signal.SIGKILL)
+    except ProcessLookupError: pass
+subprocess.run(['tmux','kill-session','-t',sys.argv[2]],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+time.sleep(1)
+import sqlite3
+queue=Path.home()/'.purpleai/queue/queue.sqlite3'
+if queue.exists():
+    with sqlite3.connect(queue,timeout=15) as db:
+        columns={row[1] for row in db.execute('PRAGMA table_info(waiters)')}
+        if 'pid' in columns and selected:
+            db.executemany('DELETE FROM waiters WHERE pid=?',[(pid,) for pid in selected])
+        db.execute('DELETE FROM waiters WHERE seen < ?', (time.time()-120,))
+RESET_WORKERS
+command -v fuser >/dev/null 2>&1 && fuser -k "${SRVPORT}/tcp" 2>/dev/null || true
+python3 - "$WT" <<'RESET_STATE'
+import shutil,sys
+from pathlib import Path
+root=Path(sys.argv[1]).resolve()
+for relative in ('src/attacker','src/Attacker'):
+    folder=root/relative
+    if not folder.exists(): continue
+    for target in [folder/'.langgraph_api', *list((folder/'logs').glob('boss.sqlite3*')), *list((folder/'logs').glob('*.jsonl'))]:
+        if target.is_symlink(): target.unlink()
+        elif target.resolve().is_relative_to(root):
+            if target.is_dir(): shutil.rmtree(target)
+            elif target.exists(): target.unlink()
+tool_state=root/'startup/tool-state'
+if tool_state.exists() and not tool_state.is_symlink() and tool_state.resolve().is_relative_to(root):
+    shutil.rmtree(tool_state)
+for target in (root/'startup/logs').glob('*.log'):
+    if target.resolve().is_relative_to(root): target.unlink()
+print('[reset] Instance stopped; checkpoints and saved task threads removed. Next Start begins fresh.')
+RESET_STATE
 """
 
 
@@ -1028,7 +1093,7 @@ class ComponentTab(ttk.Frame):
                                        ("Stop", self.on_stop, False),
                                        ("Logs", self.start_logs, False),
                                        ("Status", self.on_status, False),
-                                       ("Clear", self.clear_log, False)):
+                                       ("Clear & reset", self.on_clear, False)):
             ttk.Button(bar, text=label, command=action,
                        style="Primary.TButton" if primary else "TButton").pack(side="left", padx=3)
         if cfg.get("reasoning_script") and self.app:
@@ -1121,6 +1186,11 @@ class ComponentTab(ttk.Frame):
         w.insert("end", text)
         w.see("end")
         w.configure(state="disabled")
+
+    def on_clear(self):
+        """User action resets the engagement; internal log clears remain display-only."""
+        if self.app:
+            self.app.end_engagement()
 
     def clear_log(self):
         widgets = list(self.panes.values()) or [self.log]
@@ -1384,6 +1454,9 @@ class ComponentTab(ttk.Frame):
 
     # -- actions ------------------------------------------------------------ #
     def _run_action(self, which: str):
+        if self.app and getattr(self.app, "_reset_owner", None) == self.instance['id']:
+            self.append("Reset is pending or failed; finish/retry Clear & reset before starting.\n")
+            return
         if self.action_proc and self.action_proc.is_running():
             self.append("… an action is already running; wait for it to finish.\n")
             return
@@ -1401,11 +1474,11 @@ class ComponentTab(ttk.Frame):
         self.action_proc = proc
         proc.start()
 
-    def run_oneoff(self, script: str, host: str):
+    def run_oneoff(self, script: str, host: str, role="reset"):
         """Ship a one-shot script to a host and stream its output into this tab
         (used by the global Reset). Not tied to the single action_proc slot."""
         self.append(f"\n$ [reset] on {host}\n")
-        proc = Proc(ssh_script_argv(host), self.q, stdin_data=script, role="reset")
+        proc = Proc(ssh_script_argv(host), self.q, stdin_data=script, role=role)
         self._oneoffs = getattr(self, "_oneoffs", [])
         self._oneoffs = [p for p in self._oneoffs if p.is_running()]
         self._oneoffs.append(proc)
@@ -1432,6 +1505,7 @@ class ComponentTab(ttk.Frame):
         self._run_action("status")
 
     def start_logs(self):
+        self._discard_streams = False
         self.stop_logs()
         self._show_block = False  # reset the reasoning filter for a fresh stream
         self._reset_lights()
@@ -1545,6 +1619,8 @@ class ComponentTab(ttk.Frame):
             while True:
                 kind, role, payload = self.q.get_nowait()
                 if kind == "line":
+                    if getattr(self, "_discard_streams", False) and role in {"health", "reasoning", "serverlog", "events", "logs", "strategist"}:
+                        continue
                     if role == "health":
                         self._handle_health(payload)
                     elif role == "reasoning":
@@ -1571,6 +1647,16 @@ class ComponentTab(ttk.Frame):
                                     ar.say("boss", thought)
                     else:
                         self.append(payload)
+                elif kind == "exit" and role == "engagement-reset":
+                    self.app._reset_failed = self.app._reset_failed or payload != 0
+                    self.app._reset_remaining -= 1
+                    if self.app._reset_remaining == 0:
+                        failed = self.app._reset_failed
+                        if not failed:
+                            self.app._reset_owner = None
+                        self.append("[reset] FAILED; retry Clear & reset.\n" if failed else "[reset] Complete. Press Start for a fresh engagement.\n")
+                        for tab in self.app.tabs:
+                            tab.status_var.set("reset failed" if failed else "ready for fresh Start")
                 elif kind == "exit" and role == "keys":
                     self.append("[keys] live pool synchronized.\n" if payload == 0 else
                                 "[keys] LIVE SYNC FAILED; keys saved locally. Check SSH and Save again.\n")
@@ -2033,18 +2119,38 @@ class App(tk.Tk):
             self._strat_widget = None
 
     def end_engagement(self):
-        """End the current instance's attack: interrupt the Boss (it writes its
-        final summary and stops). Leaves the server/containers up for review."""
+        """Discard this instance's engagement so the next Start is fresh."""
         inst = self.current_instance
-        if not messagebox.askyesno(
-                "End engagement",
-                f"End instance {inst['label']}'s attack?\n\nThe Boss stops "
-                "attacking and writes its final summary. The server and logs "
-                "stay up so you (or the Strategist) can review."):
+        if not messagebox.askyesno("End and reset engagement",
+                f"Stop instance {inst['label']} and discard its progress?\n\n"
+                "All its agents and requests will be stopped, and saved progress "
+                "will be cleared. Press Start afterwards for a fresh run."):
             return
+        for owner, job in getattr(self, "_pending_launches", []):
+            if owner == inst['id']:
+                self.after_cancel(job)
+        self._reset_owner = inst['id']
+        self._reset_remaining = 2
+        self._reset_failed = False
+        for tab in self.tabs:
+            tab.stop_logs()
+            tab._discard_streams = True
+            for proc in getattr(tab, "_oneoffs", []):
+                proc.kill()
+            if tab.action_proc:
+                tab.action_proc.kill()
+                tab.action_proc = None
+            tab.clear_log()
+            tab.clear_flags()
+            tab._reset_lights()
+            tab.status_var.set("resetting")
+        if self.arena:
+            self.arena.reset(inst['id'])
         att = self._tab("attacker")
-        att.append(f"\n⛔ ending engagement on instance {inst['label']}…\n")
-        att.run_oneoff(att_end(inst), "redai")
+        att.run_oneoff(att_end(inst), "redai", role="engagement-reset")
+        # Recreate the target containers on the next Start, including their DB state.
+        att.run_oneoff(_dc_inst(inst, "docker-compose.full.yml", "down --remove-orphans --volumes") +
+                       "; " + _dc_inst(inst, "docker-compose.app.yml", "down --remove-orphans --volumes"), "blueai", role="engagement-reset")
 
     # -- staggered multi-instance launcher --------------------------------- #
     def open_launcher(self):
@@ -2129,8 +2235,10 @@ class App(tk.Tk):
             when = idx * delay
             att.append(f"  • {inst['label']} on {branch} "
                        f"{'now' if when == 0 else f'in {when}s'}\n")
-            self.after(when * 1000,
+            job = self.after(when * 1000,
                        lambda i=inst, w=with_app: self._launch_one(i, w))
+            self._pending_launches = getattr(self, "_pending_launches", [])
+            self._pending_launches.append((inst['id'], job))
         # Rebuild the current tab's scripts so a branch change is reflected.
         for t in self.tabs:
             if callable(t.cfg.get("build")):
@@ -2138,6 +2246,8 @@ class App(tk.Tk):
         self.branch_var.set(self.current_instance["branch"])
 
     def _launch_one(self, inst, with_app=True):
+        if getattr(self, "_reset_owner", None) == inst['id']:
+            return
         """Fire one instance's remote start (attacker + optional vuln app),
         without changing which instance is on screen."""
         att = self._tab("attacker")
