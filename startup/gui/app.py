@@ -514,15 +514,19 @@ AGENT_ARENA = {
 # vulnerability class (`owner` pane) — so a flag merely leaked via another bug
 # (e.g. SSTI reading app.py, which inlines the SQL/XSS flag strings) does not
 # count. `owner=None` = no current agent targets it, so it stays blue.
+# The flags actually planted in the vulnerable app (src/defender/vulnerable-app).
+# owner = the vulnerability class whose agent can capture it; None = no agent
+# targets it (so it stays defended). Each is a point Blue starts holding.
 KNOWN_FLAGS = [
     ("FLAG{sql_login_bypass_success}", "SQL login bypass", "sql"),
     ("FLAG{sql_union_injection_found}", "SQL UNION", "sql"),
     ("FLAG{reflected_xss}", "Reflected XSS", "xss"),
     ("FLAG{stored_xss_dom}", "Stored XSS", "xss"),
     ("FLAG{server_side_template_injection}", "SSTI", "ssti"),
-    ("FLAG{broken_access_control_admin_panel}", "Admin access", None),
-    ("FLAG{path_traversal_outside_reports_dir}", "Path traversal", None),
+    ("FLAG{xxe}", "XXE", "xxe"),
+    ("FLAG{ssrf_internal_metadata_access}", "SSRF", None),
 ]
+TOTAL_FLAGS = len(KNOWN_FLAGS)  # Blue starts with this many points (all defended)
 
 # --------------------------------------------------------------------------- #
 # Theme                                                                       #
@@ -1377,7 +1381,7 @@ class App(tk.Tk):
             pass
 
         self.red_score = 0
-        self.blue_score = 0
+        self.blue_score = TOTAL_FLAGS  # Blue starts holding every flag
         self.arena = None
         load_instance_keys()  # restore per-instance API keys from the local store
         self.current_instance = INSTANCES[0]
@@ -1481,8 +1485,8 @@ class App(tk.Tk):
         inner.columnconfigure(2, weight=0, minsize=150)
 
         self.red_var = tk.StringVar(value="0")
-        self.blue_var = tk.StringVar(value="0")
-        self.leader_var = tk.StringVar(value="TIED  0 – 0")
+        self.blue_var = tk.StringVar(value=str(TOTAL_FLAGS))
+        self.leader_var = tk.StringVar(value=f"🔵 BLUE defends all  0 – {TOTAL_FLAGS}")
 
         # RED (left, left-aligned stat block)
         left = ttk.Frame(inner, style="Scorecard.TFrame")
@@ -1511,7 +1515,7 @@ class App(tk.Tk):
         self._blue_num = tk.Label(right, textvariable=self.blue_var, bg=PAL["panel"],
                                   fg=PAL["blue"], font=("Segoe UI", 34, "bold"))
         self._blue_num.pack(anchor="e", pady=(2, 0))
-        tk.Label(right, text="attacks blocked", bg=PAL["panel"], fg=PAL["muted"],
+        tk.Label(right, text="flags defended", bg=PAL["panel"], fg=PAL["muted"],
                  font=("Segoe UI", 9)).pack(anchor="e")
 
         # CENTER (leader text + proportion bar + end captions)
@@ -1531,16 +1535,18 @@ class App(tk.Tk):
                  font=("Segoe UI", 8)).pack(side="right")
 
     def set_red(self, n: int):
+        # Blue starts holding every flag; each one Red captures is one Red gains
+        # and one Blue loses (blue = flags still defended).
         self.red_score = n
+        self.blue_score = max(0, TOTAL_FLAGS - n)
         if self.arena:
             self.arena.set_scores(self.red_score, self.blue_score)
         self._refresh_score()
 
     def set_blue(self, n: int):
-        self.blue_score = n
-        if self.arena:
-            self.arena.set_scores(self.red_score, self.blue_score)
-        self._refresh_score()
+        # Blue is now derived from captures (TOTAL_FLAGS - red), so blocked
+        # requests no longer drive the scoreboard. Kept for call-site compat.
+        return
 
     def _refresh_score(self):
         self.red_var.set(str(self.red_score))
