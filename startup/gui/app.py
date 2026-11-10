@@ -1566,6 +1566,7 @@ class App(tk.Tk):
             from arena import ArenaTab
             self.arena = ArenaTab(nb, PAL, KNOWN_FLAGS)
             self.arena.set_view(self.current_instance["id"])  # start on instance A
+            self.arena.on_strategist = self.open_strategist   # face button → brief
             nb.add(self.arena, text="⚔ Siege")
         except Exception:  # noqa: BLE001  (arena is an extra view)
             self.arena = None

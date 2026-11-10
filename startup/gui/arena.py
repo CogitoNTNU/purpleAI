@@ -154,7 +154,32 @@ class ArenaTab(ttk.Frame):
         self._map_rect = (0, 0, 1, 1)   # ox, oy, zoom*w, zoom*h cached
         self._tsize = (0, 0)
         self._last = time.time()
+
+        # Grand Strategist: a clickable portrait pinned to the top-right of the
+        # green field (placed as a child widget so the per-frame canvas redraw
+        # doesn't wipe it). Clicking asks the control panel for a brief.
+        self.on_strategist = None
+        try:
+            simg = tk.PhotoImage(file=_asset("grand_strategist_portrait_1x.png"))
+            self._keep.append(simg)
+            holder = tk.Frame(self.canvas, bg="#161b22", highlightthickness=2,
+                              highlightbackground="#d2a8ff")
+            btn = tk.Button(holder, image=simg, bd=0, relief="flat", bg="#161b22",
+                            activebackground="#21262d", cursor="hand2",
+                            command=self._fire_strategist)
+            btn.pack()
+            tk.Label(holder, text="Strategist", bg="#161b22", fg="#d2a8ff",
+                     font=("Segoe UI Semibold", 8), cursor="hand2").pack(fill="x")
+            holder.place(relx=1.0, x=-12, y=12, anchor="ne")
+        except Exception:  # noqa: BLE001  (button is optional)
+            pass
+
         self.after(60, self._tick)
+
+    def _fire_strategist(self):
+        cb = self.on_strategist
+        if callable(cb):
+            cb()
 
     # -- asset helpers ----------------------------------------------------- #
     def _slice(self, path, n):
