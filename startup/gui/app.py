@@ -43,35 +43,43 @@ BLUEAI_IP = "192.168.0.120"    # LAN IP of blueai (where the vulnerable app list
 # tmux session, and git worktree on redai, so they never collide. `branch` is
 # editable at runtime from the header; defaults set up the common A/B compare.
 INSTANCES = [
-    {"id": "a", "label": "A", "server_port": 2024, "app_port": 8080, "branch": "main", "api_key": ""},
-    {"id": "b", "label": "B", "server_port": 2025, "app_port": 8081, "branch": "recon-agent", "api_key": ""},
-    {"id": "c", "label": "C", "server_port": 2026, "app_port": 8082, "branch": "main", "api_key": ""},
-    {"id": "d", "label": "D", "server_port": 2027, "app_port": 8083, "branch": "main", "api_key": ""},
+    {"id": "a", "label": "A", "server_port": 2024, "app_port": 8080, "branch": "main"},
+    {"id": "b", "label": "B", "server_port": 2025, "app_port": 8081, "branch": "recon-agent"},
+    {"id": "c", "label": "C", "server_port": 2026, "app_port": 8082, "branch": "main"},
+    {"id": "d", "label": "D", "server_port": 2027, "app_port": 8083, "branch": "main"},
 ]
 
-# Per-instance API keys persist here (outside the repo, never committed) so each
-# instance can run on its own key — its own parallel-request budget — and they
-# genuinely run in parallel instead of starving one shared key.
+# A shared POOL of API keys, rotated across the Boss + subagents so concurrent
+# LLM calls land on different keys (each key is capped at one parallel request).
+# Persisted outside the repo, never committed.
+KEY_SET: list = []
 _KEYS_FILE = os.path.join(os.path.expanduser("~"), ".purpleai_instance_keys.json")
 
 
-def load_instance_keys():
+def load_key_set():
+    global KEY_SET
     try:
         with open(_KEYS_FILE, encoding="utf-8") as f:
-            saved = json.load(f)
-        for inst in INSTANCES:
-            if isinstance(saved.get(inst["id"]), str):
-                inst["api_key"] = saved[inst["id"]]
+            data = json.load(f)
+        if isinstance(data, dict) and isinstance(data.get("keyset"), list):
+            KEY_SET = [str(k).strip() for k in data["keyset"] if str(k).strip()]
+        elif isinstance(data, dict):  # migrate old per-instance keys -> pool
+            KEY_SET = sorted({str(v).strip() for v in data.values() if str(v).strip()})
     except Exception:  # noqa: BLE001  (missing/unreadable file is fine)
         pass
 
 
-def save_instance_keys():
+def save_key_set():
     try:
         with open(_KEYS_FILE, "w", encoding="utf-8") as f:
-            json.dump({i["id"]: i.get("api_key", "") for i in INSTANCES}, f)
+            json.dump({"keyset": KEY_SET}, f)
     except Exception:  # noqa: BLE001
         pass
+
+
+def _keys_csv() -> str:
+    """The key pool as a single safe CSV token for an env export."""
+    return ",".join(k.replace("'", "").replace('"', "") for k in KEY_SET)
 
 
 def inst_session(inst):   return f"attacker-{inst['id']}"
@@ -321,13 +329,12 @@ def _fill(tmpl: str, inst: dict) -> str:
 
 # ---- per-instance script builders (attacker on redai) --------------------- #
 def att_start(inst):
-    # If this instance has its own API key, export it in its tmux session AFTER
-    # .env is sourced, so the server + Boss use this key (its own concurrency
-    # budget). Strip quotes/newlines so it stays a single safe argv token.
-    key = "".join((inst.get("api_key") or "").split())
-    key = key.replace("'", "").replace('"', "")
-    apiline = (f"tmux send-keys -t \"$SESSION\" \"export LLM_API_KEY='{key}'\" C-m"
-               if key else "")
+    # Export the shared key POOL into this instance's tmux session AFTER .env is
+    # sourced, so get_model() rotates a different key to each agent (spreading
+    # the single-concurrency-per-key limit). Empty pool -> fall back to .env.
+    keys = _keys_csv()
+    apiline = (f"tmux send-keys -t \"$SESSION\" \"export LLM_API_KEYS='{keys}'\" C-m"
+               if keys else "")
     return _fill(ATTACKER_START_TMPL, inst).replace("__APIKEY_LINE__", apiline)
 def att_stop(inst):   return _fill(ATTACKER_STOP_TMPL, inst)
 def att_reason(inst): return _fill(REASONING_TMPL, inst)
@@ -381,8 +388,9 @@ set -a
 [ -f "$ATT/.env" ] && . "$ATT/.env"
 [ -z "${LLM_API_KEY:-}" ] && [ -f "$HOME/purpleAI/src/Attacker/.env" ] && . "$HOME/purpleAI/src/Attacker/.env"
 set +a
+export LLM_API_KEYS='__KEYS__'
 STRAT_WT="$WT" STRAT_ATT="$ATT" python3 - <<'PY'
-import os, re, json, urllib.request
+import os, re, json, time, random, urllib.request, urllib.error
 WT = os.environ.get("STRAT_WT", ""); ATT = os.environ.get("STRAT_ATT", "")
 def tail(p, n):
     try:
@@ -397,9 +405,10 @@ flags = sorted(set(re.findall(r"FLAG\{[^}]*\}", attlog + events)))
 n429 = (attlog + srvlog).count("429")
 clean = re.sub(r"\x1b\[[0-9;]*m", "", attlog)
 engagement = "\n".join(l for l in clean.splitlines() if not l.strip().startswith("{"))[-6000:]
-key = os.environ.get("LLM_API_KEY", "")
-if not key:
-    print("STRAT_ERR no LLM_API_KEY found on the box"); raise SystemExit
+raw = os.environ.get("LLM_API_KEYS") or os.environ.get("LLM_API_KEY", "")
+keys = [k.strip() for k in raw.replace("\n", ",").replace(";", ",").split(",") if k.strip()]
+if not keys:
+    print("STRAT_ERR no API key found on the box"); raise SystemExit
 SYS = (
  "You are the Grand Strategist for an AUTHORIZED red-team engagement against a "
  "deliberately vulnerable lab web app. You are given the engagement's live logs. "
@@ -419,20 +428,30 @@ ctx = ("FLAGS CAPTURED: " + (", ".join(flags) or "none") +
 body = {"model": "moonshotai/Kimi-K2.6", "temperature": 0.3, "max_tokens": 1100,
         "messages": [{"role": "system", "content": SYS},
                      {"role": "user", "content": ctx}]}
-req = urllib.request.Request("https://llm.hpc.ntnu.no/v1/chat/completions",
-      data=json.dumps(body).encode(),
-      headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
-try:
-    r = json.load(urllib.request.urlopen(req, timeout=150))
-    print(r["choices"][0]["message"]["content"])
-except Exception as e:
-    print("STRAT_ERR " + str(e))
+data = json.dumps(body).encode()
+# Retry across the key pool with backoff so a busy slot (429) doesn't fail us.
+for attempt in range(10):
+    key = keys[attempt % len(keys)]
+    req = urllib.request.Request("https://llm.hpc.ntnu.no/v1/chat/completions",
+          data=data, headers={"Authorization": "Bearer " + key,
+                              "Content-Type": "application/json"})
+    try:
+        r = json.load(urllib.request.urlopen(req, timeout=150))
+        print(r["choices"][0]["message"]["content"]); break
+    except urllib.error.HTTPError as e:
+        if e.code == 429:
+            time.sleep(min(2 ** attempt, 20) + random.random()); continue
+        print("STRAT_ERR " + str(e)); break
+    except Exception as e:
+        print("STRAT_ERR " + str(e)); break
+else:
+    print("STRAT_ERR every key is rate-limited (429) right now — try again in a moment")
 PY
 """
 
 
 def att_strategist(inst):
-    return _fill(STRATEGIST_TMPL, inst)
+    return _fill(STRATEGIST_TMPL, inst).replace("__KEYS__", _keys_csv())
 
 
 # ---- End engagement: interrupt the Boss so it writes its final summary ----- #
@@ -1487,7 +1506,7 @@ class App(tk.Tk):
                 file=os.path.join(_b, "assets", "medieval", "grand_strategist_portrait_1x.png"))
         except Exception:  # noqa: BLE001  (icon is cosmetic)
             self._strat_img = None
-        load_instance_keys()  # restore per-instance API keys from the local store
+        load_key_set()  # restore the shared API key pool from the local store
         self.current_instance = INSTANCES[0]
 
         # -- header: logo, title, host + global actions -------------------- #
@@ -1527,14 +1546,12 @@ class App(tk.Tk):
         branch_cb.bind("<Return>", self._on_branch_change)
         branch_cb.bind("<FocusOut>", self._on_branch_change)
 
-        # Per-instance API key: this instance runs on its own key (its own
-        # concurrency budget). Masked; blank falls back to the shared .env key.
-        ttk.Label(sel, text="API key", style="HeaderSub.TLabel").pack(side="left", padx=(14, 6))
-        self.apikey_var = tk.StringVar(value=INSTANCES[0].get("api_key", ""))
-        key_entry = ttk.Entry(sel, textvariable=self.apikey_var, width=22, show="•")
-        key_entry.pack(side="left")
-        key_entry.bind("<Return>", self._on_apikey_change)
-        key_entry.bind("<FocusOut>", self._on_apikey_change)
+        # Shared API key pool: rotated across the Boss + subagents so concurrent
+        # calls use different keys (each key is capped at one parallel request).
+        ttk.Label(sel, text="Keys", style="HeaderSub.TLabel").pack(side="left", padx=(14, 6))
+        self.keys_btn = ttk.Button(sel, text=self._keys_btn_text(),
+                                   command=self.open_keys, width=12)
+        self.keys_btn.pack(side="left")
 
         # right cluster: Reset · Stop · Start (current) · Launch (batch) · host
         ttk.Button(header, text="🧹  Reset all", command=self.reset_all,
@@ -1709,7 +1726,6 @@ class App(tk.Tk):
         inst = self._instance_by_label(self.inst_var.get())
         self.current_instance = inst
         self.branch_var.set(inst["branch"])
-        self.apikey_var.set(inst.get("api_key", ""))  # show this instance's key
         self.title(f"PurpleAI Control — instance {inst['label']}")
         for t in self.tabs:
             t.set_instance(inst)
@@ -1728,14 +1744,45 @@ class App(tk.Tk):
         self.current_instance["branch"] = branch
         self._rebuild_tab_scripts()
 
-    def _on_apikey_change(self, _evt=None):
-        """Set the current instance's API key; saved and used on its next Start."""
-        key = self.apikey_var.get().strip()
-        if key == self.current_instance.get("api_key", ""):
-            return
-        self.current_instance["api_key"] = key
-        save_instance_keys()
-        self._rebuild_tab_scripts()
+    def _keys_btn_text(self) -> str:
+        n = len(KEY_SET)
+        return f"🔑 {n} key" + ("" if n == 1 else "s")
+
+    def open_keys(self):
+        """Edit the shared API key pool (one key per line). Rotated across the
+        Boss + subagents so concurrent calls don't starve a single key."""
+        win = tk.Toplevel(self)
+        win.title("API key pool")
+        win.configure(bg=PAL["bg"])
+        win.geometry("480x380")
+        win.transient(self)
+        tk.Label(win, text="Paste your API keys — one per line.\nThey're rotated "
+                 "across the Boss + subagents so concurrent calls use different "
+                 "keys\n(each key allows one request at a time).",
+                 bg=PAL["bg"], fg=PAL["muted"], justify="left",
+                 font=("Segoe UI", 9)).pack(anchor="w", padx=12, pady=(12, 6))
+        txt = ScrolledText(win, bg=PAL["log"], fg=PAL["text"], wrap="none",
+                           font=("Consolas", 10), relief="flat", borderwidth=0,
+                           insertbackground=PAL["text"], padx=8, pady=6, height=11)
+        txt.pack(fill="both", expand=True, padx=12)
+        txt.insert("1.0", "\n".join(KEY_SET))
+        btns = tk.Frame(win, bg=PAL["bg"])
+        btns.pack(fill="x", padx=12, pady=10)
+        ttk.Button(btns, text="Cancel", command=win.destroy,
+                   style="Ghost.TButton").pack(side="right", padx=4)
+
+        def _save():
+            raw = txt.get("1.0", "end")
+            keys = [k.strip() for k in raw.replace(",", "\n").splitlines() if k.strip()]
+            KEY_SET[:] = keys           # mutate the shared pool in place
+            save_key_set()
+            self.keys_btn.config(text=self._keys_btn_text())
+            self._rebuild_tab_scripts()  # next Start exports the new pool
+            win.destroy()
+
+        ttk.Button(btns, text="Save", command=_save,
+                   style="Primary.TButton").pack(side="right", padx=4)
+        win.grab_set()
 
     def start_all(self):
         # Current instance's attacker + defender (defender includes the vuln app).
@@ -1868,9 +1915,8 @@ class App(tk.Tk):
             tk.Checkbutton(win, variable=inc, bg=PAL["bg"], activebackground=PAL["bg"],
                            selectcolor=PAL["panel"], highlightthickness=0,
                            bd=0).grid(row=2 + i, column=0)
-            key_note = "  ·  own key" if inst.get("api_key") else "  ·  shared key"
             tk.Label(win, text=f"{inst['label']}   (server :{inst['server_port']} · "
-                     f"app :{inst['app_port']}){key_note}", bg=PAL["bg"], fg=PAL["text"],
+                     f"app :{inst['app_port']})", bg=PAL["bg"], fg=PAL["text"],
                      font=("Segoe UI", 10)).grid(row=2 + i, column=1, sticky="w")
             bvar = tk.StringVar(value=inst["branch"])
             ttk.Combobox(win, textvariable=bvar, width=18,
