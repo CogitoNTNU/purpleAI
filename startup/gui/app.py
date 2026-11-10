@@ -369,6 +369,88 @@ def att_status(inst):
             "&& echo RUNNING || echo STOPPED")
 
 
+# ---- Grand Strategist: read this instance's logs, ask the LLM for a brief -- #
+# Runs on redai (where the LLM endpoint + key live). Reads the same logs the
+# operator watches, then asks the model to summarize the engagement and suggest
+# how to make the setup more potent/efficient.
+STRATEGIST_TMPL = r"""
+set -uo pipefail
+WT="__WT__"
+ATT="$WT/src/attacker"; [ -d "$ATT" ] || ATT="$WT/src/Attacker"
+set -a
+[ -f "$ATT/.env" ] && . "$ATT/.env"
+[ -z "${LLM_API_KEY:-}" ] && [ -f "$HOME/purpleAI/src/Attacker/.env" ] && . "$HOME/purpleAI/src/Attacker/.env"
+set +a
+STRAT_WT="$WT" STRAT_ATT="$ATT" python3 - <<'PY'
+import os, re, json, urllib.request
+WT = os.environ.get("STRAT_WT", ""); ATT = os.environ.get("STRAT_ATT", "")
+def tail(p, n):
+    try:
+        with open(p, errors="replace") as f:
+            return "".join(f.readlines()[-n:])
+    except Exception:
+        return ""
+attlog = tail(WT + "/startup/logs/attacker.log", 160)
+srvlog = tail(WT + "/startup/logs/langgraph.log", 60)
+events = tail(ATT + "/logs/events.jsonl", 500)
+flags = sorted(set(re.findall(r"FLAG\{[^}]*\}", attlog + events)))
+n429 = (attlog + srvlog).count("429")
+clean = re.sub(r"\x1b\[[0-9;]*m", "", attlog)
+engagement = "\n".join(l for l in clean.splitlines() if not l.strip().startswith("{"))[-6000:]
+key = os.environ.get("LLM_API_KEY", "")
+if not key:
+    print("STRAT_ERR no LLM_API_KEY found on the box"); raise SystemExit
+SYS = (
+ "You are the Grand Strategist for an AUTHORIZED red-team engagement against a "
+ "deliberately vulnerable lab web app. You are given the engagement's live logs. "
+ "Write a concise brief (under 400 words, markdown) with three sections:\n"
+ "## Situation - what has happened: which agents ran, what they found, flags "
+ "captured, and failures (rate limits, crashes, stalls).\n"
+ "## Potency - how effective the setup is at capturing flags and why; be honest "
+ "about what works vs what is stuck.\n"
+ "## Recommendations - concrete, prioritized, actionable steps to raise "
+ "efficiency and effectiveness (targeting, concurrency, missing attack classes, "
+ "config). Reference what you actually see in the logs."
+)
+ctx = ("FLAGS CAPTURED: " + (", ".join(flags) or "none") +
+       "\nRATE-LIMIT (429) hits: %d\n\nSERVER LOG (recent):\n" % n429 +
+       re.sub(r"\x1b\[[0-9;]*m", "", srvlog)[-1500:] +
+       "\n\nENGAGEMENT LOG (recent):\n" + engagement)
+body = {"model": "moonshotai/Kimi-K2.6", "temperature": 0.3, "max_tokens": 1100,
+        "messages": [{"role": "system", "content": SYS},
+                     {"role": "user", "content": ctx}]}
+req = urllib.request.Request("https://llm.hpc.ntnu.no/v1/chat/completions",
+      data=json.dumps(body).encode(),
+      headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
+try:
+    r = json.load(urllib.request.urlopen(req, timeout=150))
+    print(r["choices"][0]["message"]["content"])
+except Exception as e:
+    print("STRAT_ERR " + str(e))
+PY
+"""
+
+
+def att_strategist(inst):
+    return _fill(STRATEGIST_TMPL, inst)
+
+
+# ---- End engagement: interrupt the Boss so it writes its final summary ----- #
+END_ENGAGEMENT_TMPL = r"""
+SESSION="__SESSION__"
+if tmux has-session -t "$SESSION" 2>/dev/null; then
+  tmux send-keys -t "$SESSION" C-c
+  echo "[end] sent interrupt to $SESSION — the Boss stops attacking and writes its final summary."
+else
+  echo "[end] no running attacker session $SESSION."
+fi
+"""
+
+
+def att_end(inst):
+    return _fill(END_ENGAGEMENT_TMPL, inst)
+
+
 # ---- full reset: stop EVERYTHING and clear all logs (every instance) ------ #
 # Run as a one-shot on each host by the "Reset all" button. Leaves other users'
 # tmux sessions (e.g. testVegard) and non-purpleai containers alone.
@@ -792,6 +874,17 @@ class ComponentTab(ttk.Frame):
         if cfg.get("filterable"):
             ttk.Checkbutton(bar, text="Reasoning only",
                             variable=self.reasoning_only).pack(side="left", padx=(10, 2))
+        # Engagement controls (attacker only): the Strategist brief + End.
+        if cfg.get("reasoning_script") and self.app is not None:
+            strat_img = getattr(self.app, "_strat_img", None)
+            if strat_img is not None:
+                ttk.Button(bar, image=strat_img, text=" Strategist", compound="left",
+                           command=self.app.open_strategist).pack(side="right", padx=2)
+            else:
+                ttk.Button(bar, text="🧙 Strategist",
+                           command=self.app.open_strategist).pack(side="right", padx=2)
+            ttk.Button(bar, text="⛔ End engagement",
+                       command=self.app.end_engagement).pack(side="right", padx=2)
 
         # Subagent activity lights (attacker): green while that subagent / its
         # tool is running, grey when idle.
@@ -1306,6 +1399,9 @@ class ComponentTab(ttk.Frame):
                         self._handle_reasoning(payload)
                     elif role == "serverlog":
                         self.append("[srv] " + payload)
+                    elif role == "strategist":
+                        if self.app:
+                            self.app.strat_append(payload)
                     elif role == "events":
                         self._on_event_line(payload)
                     elif role == "logs":
@@ -1383,6 +1479,14 @@ class App(tk.Tk):
         self.red_score = 0
         self.blue_score = TOTAL_FLAGS  # Blue starts holding every flag
         self.arena = None
+        self._strat_widget = None  # open Strategist dialog's text widget, if any
+        # Strategist portrait (used on its button + dialog); bundled under assets.
+        try:
+            _b = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
+            self._strat_img = tk.PhotoImage(
+                file=os.path.join(_b, "assets", "medieval", "grand_strategist_portrait_1x.png"))
+        except Exception:  # noqa: BLE001  (icon is cosmetic)
+            self._strat_img = None
         load_instance_keys()  # restore per-instance API keys from the local store
         self.current_instance = INSTANCES[0]
 
@@ -1670,6 +1774,69 @@ class App(tk.Tk):
         att.append("=== RESET: stopping everything + clearing logs ===\n")
         att.run_oneoff(RESET_REDAI_SH, "redai")
         att.run_oneoff(RESET_BLUEAI_SH, "blueai")
+
+    # -- Grand Strategist + End engagement --------------------------------- #
+    def open_strategist(self):
+        """Ask the strategist to read the current instance's logs and brief the
+        operator: what happened + how to make the setup more potent/efficient."""
+        inst = self.current_instance
+        win = tk.Toplevel(self)
+        win.title(f"Grand Strategist — instance {inst['label']}")
+        win.configure(bg=PAL["bg"])
+        win.geometry("660x580")
+        head = tk.Frame(win, bg=PAL["bg"])
+        head.pack(fill="x", padx=14, pady=(12, 6))
+        if self._strat_img is not None:
+            tk.Label(head, image=self._strat_img, bg=PAL["bg"]).pack(side="left", padx=(0, 10))
+        tk.Label(head, text="Grand Strategist", bg=PAL["bg"], fg=PAL["text"],
+                 font=("Segoe UI Semibold", 14)).pack(side="left")
+        tk.Label(head, text=f"instance {inst['label']} · branch {inst['branch']}",
+                 bg=PAL["bg"], fg=PAL["muted"], font=("Segoe UI", 9)).pack(side="left", padx=10)
+        txt = ScrolledText(win, bg=PAL["log"], fg=PAL["text"], wrap="word",
+                           font=("Segoe UI", 10), relief="flat", borderwidth=0,
+                           padx=12, pady=10)
+        txt.pack(fill="both", expand=True, padx=14, pady=(0, 14))
+        txt.insert("end", "Consulting the strategist — reading the engagement logs "
+                          "and analyzing…\n(this calls the model, so give it a moment)\n\n")
+        txt.configure(state="disabled")
+        self._strat_widget = txt
+        win.protocol("WM_DELETE_WINDOW",
+                     lambda: (setattr(self, "_strat_widget", None), win.destroy()))
+        att = self._tab("attacker")
+        proc = Proc(ssh_script_argv("redai"), att.q,
+                    stdin_data=att_strategist(inst), role="strategist")
+        att._oneoffs = [p for p in getattr(att, "_oneoffs", []) if p.is_running()]
+        att._oneoffs.append(proc)
+        proc.start()
+
+    def strat_append(self, text: str):
+        w = self._strat_widget
+        if w is None:
+            return
+        try:
+            w.configure(state="normal")
+            if text.startswith("STRAT_ERR"):
+                w.insert("end", "\n[strategist unavailable] " + text + "\n")
+            else:
+                w.insert("end", text)
+            w.see("end")
+            w.configure(state="disabled")
+        except tk.TclError:  # dialog was closed
+            self._strat_widget = None
+
+    def end_engagement(self):
+        """End the current instance's attack: interrupt the Boss (it writes its
+        final summary and stops). Leaves the server/containers up for review."""
+        inst = self.current_instance
+        if not messagebox.askyesno(
+                "End engagement",
+                f"End instance {inst['label']}'s attack?\n\nThe Boss stops "
+                "attacking and writes its final summary. The server and logs "
+                "stay up so you (or the Strategist) can review."):
+            return
+        att = self._tab("attacker")
+        att.append(f"\n⛔ ending engagement on instance {inst['label']}…\n")
+        att.run_oneoff(att_end(inst), "redai")
 
     # -- staggered multi-instance launcher --------------------------------- #
     def open_launcher(self):
