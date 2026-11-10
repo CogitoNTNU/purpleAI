@@ -507,7 +507,7 @@ for attempt in range(10):
     except Exception as e:
         print("STRAT_ERR " + str(e)); break
 else:
-    print("STRAT_ERR every key is rate-limited (429) right now — try again in a moment")
+    print("STRAT_ERR every key is rate-limited (429) right now - try again in a moment")
 PY
 """
 
@@ -839,6 +839,8 @@ class Proc:
                 stdin=(subprocess.PIPE if self.stdin_data is not None
                        else subprocess.DEVNULL),
                 text=True,
+                encoding="utf-8",      # remote is UTF-8; don't let Windows pick cp1252
+                errors="replace",      # tolerate odd bytes in log output
                 bufsize=1,
                 creationflags=_NO_WINDOW,
             )
