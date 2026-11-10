@@ -10,6 +10,7 @@ since this GUI runs ssh non-interactively.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import queue
@@ -98,6 +99,52 @@ def save_config():
 def _keys_csv() -> str:
     """The key pool as a single safe CSV token for an env export."""
     return ",".join(k.replace("'", "").replace('"', "") for k in KEY_SET)
+
+
+# Live engagement notes — a running memo of what we're working on / known
+# issues. Editable in the app (and on disk), and fed into the Strategist's
+# context so its advice accounts for the current state. Lives outside the repo.
+_NOTES_FILE = os.path.join(os.path.expanduser("~"), ".purpleai_notes.md")
+NOTES = ""
+_NOTES_SEED = """# Engagement notes - known issues & current focus
+
+(Edit this freely. The Grand Strategist reads it every time, so keep it a live
+memo of what we're working on and what's unresolved.)
+
+- LLM endpoint caps EACH key at 1 concurrent request (max_parallel_requests=1).
+  We rotate a pool of keys (header 'Keys') across the Boss + subagents - aim for
+  >= ~6 keys so a single instance's agents don't contend.
+- Retries are effectively permanent, so runs don't crash on 429 - but with too
+  few keys everything backs off and crawls (looks clogged). More keys = faster.
+- Instances A-D are isolated (own port/worktree/container) but share the key
+  pool; model is selectable per instance (Kimi / GLM 5.3 / DeepSeek) for A/B.
+- SSRF flag has no agent yet, so red currently tops out at 6/7.
+
+## Open questions / ideas
+-
+"""
+
+
+def load_notes():
+    global NOTES
+    try:
+        if not os.path.exists(_NOTES_FILE):
+            with open(_NOTES_FILE, "w", encoding="utf-8") as f:
+                f.write(_NOTES_SEED)
+        with open(_NOTES_FILE, encoding="utf-8") as f:
+            NOTES = f.read()
+    except Exception:  # noqa: BLE001
+        NOTES = _NOTES_SEED
+
+
+def save_notes(text: str):
+    global NOTES
+    NOTES = text
+    try:
+        with open(_NOTES_FILE, "w", encoding="utf-8") as f:
+            f.write(text)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def inst_session(inst):   return f"attacker-{inst['id']}"
@@ -411,7 +458,11 @@ set +a
 export LLM_API_KEYS='__KEYS__'
 export LLM_MODEL='__MODEL__'
 STRAT_WT="$WT" STRAT_ATT="$ATT" python3 - <<'PY'
-import os, re, json, time, random, urllib.request, urllib.error
+import os, re, json, time, random, base64, urllib.request, urllib.error
+try:
+    NOTES = base64.b64decode("__NOTES_B64__").decode("utf-8", "replace")
+except Exception:
+    NOTES = ""
 WT = os.environ.get("STRAT_WT", ""); ATT = os.environ.get("STRAT_ATT", "")
 def tail(p, n):
     try:
@@ -468,10 +519,11 @@ if not keys:
     print("STRAT_ERR no API key found on the box"); raise SystemExit
 SYS = (
  "You are the Grand Strategist for an AUTHORIZED red-team engagement against a "
- "deliberately vulnerable lab web app. You are given the engagement's live logs "
- "AND full read access to the project's source code (attacker agents, prompts, "
- "tools, and the vulnerable app). Use the code to ground your advice. Write a "
- "brief (markdown) with three sections:\n"
+ "deliberately vulnerable lab web app. You are given the operator's live NOTES "
+ "(known issues / current focus), the engagement's live logs, AND full read "
+ "access to the project's source code (attacker agents, prompts, tools, and the "
+ "vulnerable app). Weigh the operator notes heavily, and use the code to ground "
+ "your advice. Write a brief (markdown) with three sections:\n"
  "## Situation - what has happened: which agents ran, what they found, flags "
  "captured, and failures (rate limits, crashes, stalls).\n"
  "## Potency - how effective the setup is at capturing flags and why; be honest "
@@ -481,7 +533,9 @@ SYS = (
  "change (e.g. a weak subagent prompt, a missing attack class vs the vulnerable "
  "app's actual endpoints, concurrency/targeting). Reference the code and logs."
 )
-ctx = ("FLAGS CAPTURED: " + (", ".join(flags) or "none") +
+ctx = ("===== OPERATOR NOTES (known issues / current focus) =====\n" +
+       (NOTES.strip() or "(none)") +
+       "\n\nFLAGS CAPTURED: " + (", ".join(flags) or "none") +
        "\nRATE-LIMIT (429) hits: %d\n\nSERVER LOG (recent):\n" % n429 +
        re.sub(r"\x1b\[[0-9;]*m", "", srvlog)[-1500:] +
        "\n\nENGAGEMENT LOG (recent):\n" + engagement +
@@ -513,9 +567,12 @@ PY
 
 
 def att_strategist(inst):
+    load_notes()  # pick up the latest notes (editable on disk too)
+    notes_b64 = base64.b64encode(NOTES.encode("utf-8")).decode("ascii")
     return (_fill(STRATEGIST_TMPL, inst)
             .replace("__KEYS__", _keys_csv())
-            .replace("__MODEL__", inst.get("model", DEFAULT_MODEL)))
+            .replace("__MODEL__", inst.get("model", DEFAULT_MODEL))
+            .replace("__NOTES_B64__", notes_b64))
 
 
 # ---- End engagement: interrupt the Boss so it writes its final summary ----- #
@@ -1573,6 +1630,7 @@ class App(tk.Tk):
         except Exception:  # noqa: BLE001  (icon is cosmetic)
             self._strat_img = None
         load_config()  # restore the key pool + per-instance model choices
+        load_notes()   # restore (or seed) the live engagement notes
         self.current_instance = INSTANCES[0]
 
         # -- header: logo, title, host + global actions -------------------- #
@@ -1626,6 +1684,9 @@ class App(tk.Tk):
         self.keys_btn = ttk.Button(sel, text=self._keys_btn_text(),
                                    command=self.open_keys, width=12)
         self.keys_btn.pack(side="left")
+        # Live engagement notes (the Strategist reads these).
+        ttk.Button(sel, text="📝 Notes", command=self.open_notes,
+                   width=9).pack(side="left", padx=(10, 0))
 
         # right cluster: Reset · Stop · Start (current) · Launch (batch) · host
         ttk.Button(header, text="🧹  Reset all", command=self.reset_all,
@@ -1828,6 +1889,39 @@ class App(tk.Tk):
         self.current_instance["model"] = mid
         save_config()
         self._rebuild_tab_scripts()
+
+    def open_notes(self):
+        """Edit the live engagement notes the Strategist reads (also a .md file
+        on disk, so you can edit it outside the app too)."""
+        load_notes()  # pick up any on-disk edits
+        win = tk.Toplevel(self)
+        win.title("Engagement notes")
+        win.configure(bg=PAL["bg"])
+        win.geometry("620x520")
+        win.transient(self)
+        tk.Label(win, text="A live memo of what we're working on / known issues. "
+                 "The Grand Strategist reads this every time.",
+                 bg=PAL["bg"], fg=PAL["muted"], justify="left",
+                 font=("Segoe UI", 9)).pack(anchor="w", padx=12, pady=(12, 6))
+        txt = ScrolledText(win, bg=PAL["log"], fg=PAL["text"], wrap="word",
+                           font=("Consolas", 10), relief="flat", borderwidth=0,
+                           insertbackground=PAL["text"], padx=10, pady=8)
+        txt.pack(fill="both", expand=True, padx=12)
+        txt.insert("1.0", NOTES)
+        btns = tk.Frame(win, bg=PAL["bg"])
+        btns.pack(fill="x", padx=12, pady=10)
+        tk.Label(btns, text=_NOTES_FILE, bg=PAL["bg"], fg=PAL["muted"],
+                 font=("Segoe UI", 8)).pack(side="left")
+        ttk.Button(btns, text="Cancel", command=win.destroy,
+                   style="Ghost.TButton").pack(side="right", padx=4)
+
+        def _save():
+            save_notes(txt.get("1.0", "end").rstrip() + "\n")
+            win.destroy()
+
+        ttk.Button(btns, text="Save", command=_save,
+                   style="Primary.TButton").pack(side="right", padx=4)
+        win.grab_set()
 
     def _keys_btn_text(self) -> str:
         n = len(KEY_SET)
