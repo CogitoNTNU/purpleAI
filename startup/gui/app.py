@@ -483,7 +483,7 @@ set +a
 export LLM_API_KEYS='__KEYS__'
 export LLM_MODEL='__MODEL__'
 STRAT_WT="$WT" STRAT_ATT="$ATT" python3 - <<'PY'
-import os, re, sys, json, time, random, base64, contextlib, urllib.request, urllib.error
+import os, re, sys, json, time, random, base64, urllib.request, urllib.error
 try:
     NOTES = base64.b64decode("__NOTES_B64__").decode("utf-8", "replace")
 except Exception:
@@ -569,18 +569,44 @@ body = {"model": os.environ.get("LLM_MODEL", "moonshotai/Kimi-K2.6"),
         "messages": [{"role": "system", "content": SYS},
                      {"role": "user", "content": ctx}]}
 data = json.dumps(body).encode()
-# Request an API slot through the SAME shared FIFO queue the commanders use
+# Request an API slot through the SAME shared FIFO the commanders use
 # (src/attacker/llm_queue.py), so the strategist waits its turn for a free key
 # instead of cycling keys directly and colliding with the live agents' slots.
+# Driven via the queue's own ticket/try_acquire/cooldown primitives (what
+# KeyQueue.acquire does internally) so we can bound the wait and show progress
+# rather than block the dialog silently when the pool is saturated.
 sys.path.insert(0, ATT)
 from llm_queue import KeyQueue
 queue = KeyQueue()
 url = os.environ.get("LLM_BASE_URL", "https://llm.hpc.ntnu.no/v1").rstrip("/") + "/chat/completions"
-def _quiet(fn, *a):  # keep the queue's slot-wait chatter out of the brief
-    with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
-        return fn(*a)
-for attempt in range(10):
-    lease = _quiet(queue.acquire)
+WAIT_BUDGET = float(os.environ.get("STRAT_SLOT_WAIT", "150"))  # seconds to wait for a slot
+
+def acquire_slot(deadline, announced):
+    # Join the shared FIFO and return (Lease, announced), or (None, announced).
+    token = queue.ticket()
+    try:
+        while time.time() < deadline:
+            lease = queue.try_acquire(token)  # pops our token on success
+            if lease:
+                return lease, True
+            if not announced:
+                print("Waiting for a free API slot — the live agents share this key "
+                      "pool, so the strategist is queued behind them…\n", flush=True)
+                announced = True
+            time.sleep(0.5)
+        return None, announced
+    finally:
+        if time.time() >= deadline:
+            queue.discard(token)
+
+deadline = time.time() + WAIT_BUDGET
+announced = False
+while True:
+    lease, announced = acquire_slot(deadline, announced)
+    if lease is None:
+        print("STRAT_ERR the shared key pool is saturated by the running agents right "
+              "now — try again in a moment, or add more API keys to widen the pool.")
+        break
     try:
         req = urllib.request.Request(url, data=data,
               headers={"Authorization": "Bearer " + lease.key,
@@ -590,7 +616,7 @@ for attempt in range(10):
             print(r["choices"][0]["message"]["content"]); break
         except urllib.error.HTTPError as e:
             if e.code in (401, 403):
-                _quiet(queue.cooldown, lease, 300)
+                queue.cooldown(lease, 300)
                 print("STRAT_ERR " + str(e) + " - check the key's permissions"); break
             if e.code in (408, 409, 429) or e.code >= 500:
                 retry = (e.headers.get("retry-after", "") if e.headers else "")
@@ -598,14 +624,17 @@ for attempt in range(10):
                     delay = max(1.0, float(retry))
                 except ValueError:
                     delay = 5.0 + random.random() * 5
-                _quiet(queue.cooldown, lease, delay); continue
+                queue.cooldown(lease, delay)
+                if time.time() >= deadline:
+                    print("STRAT_ERR the API rate-limited every slot (HTTP %s) before a "
+                          "free one opened - try again shortly." % e.code)
+                    break
+                continue  # rejoin the queue for another slot
             print("STRAT_ERR " + str(e)); break
         except Exception as e:
             print("STRAT_ERR " + str(e)); break
     finally:
         lease.close()
-else:
-    print("STRAT_ERR every key is busy/rate-limited right now - try again in a moment")
 PY
 """
 
