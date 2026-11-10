@@ -45,7 +45,7 @@ def get_model() -> ChatOpenAI:
     (LLM_API_KEYS) and the retry count (LLM_MAX_RETRIES) come from the env.
     """
     return ChatOpenAI(
-        model="moonshotai/Kimi-K2.6",
+        model=os.environ.get("LLM_MODEL", "moonshotai/Kimi-K2.6"),
         api_key=_next_key(),
         base_url="https://llm.hpc.ntnu.no/v1",
         max_retries=int(os.environ.get("LLM_MAX_RETRIES", "12")),
