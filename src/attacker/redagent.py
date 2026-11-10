@@ -129,18 +129,20 @@ def _print_trace_pointer() -> None:
 # to pick up where it left off — check running tasks, act on finished ones, and
 # decide the next move — so the engagement advances on its own.
 INITIAL_OBJECTIVE = (
-    f"Begin a penetration test of {Target_url}. Launch work in parallel RIGHT "
-    "AWAY and do NOT wait on any single task: delegate a crawl to the "
-    "recon_agent AND, at the same time, fire the first wave of scans at the "
-    "obvious surface - a SQL injection scan to the sql_injection_agent, a "
-    "cross-site scripting scan to the xss_agent, a server-side template "
-    "injection scan to the ssti_agent, and an XXE scan to the xxe_agent - each "
-    "with a specific task for its specialty. Recon runs CONCURRENTLY, not as a "
-    "gate. As soon as recon's map returns, use it to ROUTE targeted FOLLOW-UP "
-    "scans at whatever the first wave missed - reflected-raw parameters to the "
-    "xss_agent and ssti_agent, numeric/non-reflected ids and login forms to the "
-    "sql_injection_agent, XML/upload endpoints to the xxe_agent - naming the "
-    "exact endpoint and parameter and the recon finding that justifies it."
+    f"Begin a penetration test of {Target_url}. RECON IS THE PRIORITY ON THIS "
+    "FIRST TURN: before anything else, delegate a crawl to the recon_agent so "
+    "its map of endpoints, parameters, forms and input reflection comes back as "
+    "early as possible - this is the lead task. In the SAME turn (do not wait or "
+    "idle), also fire a light first wave at the obvious surface so nothing sits "
+    "idle: a SQL injection scan to the sql_injection_agent, a cross-site "
+    "scripting scan to the xss_agent, a server-side template injection scan to "
+    "the ssti_agent, and an XXE scan to the xxe_agent - each a focused task. But "
+    "treat recon as the lead: the MOMENT its map returns, PRIORITIZE acting on "
+    "its ranked leads - reflected-raw parameters to the xss_agent and ssti_agent, "
+    "numeric/non-reflected ids and login forms to the sql_injection_agent, "
+    "XML/upload endpoints to the xxe_agent - naming the exact endpoint and "
+    "parameter and the recon finding that justifies it, ahead of any blind "
+    "re-scanning."
 )
 CONTINUE_NUDGE = (
     "Continue the engagement. First check the status of every task you have "
