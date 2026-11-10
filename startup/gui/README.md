@@ -1,154 +1,110 @@
-# PurpleAI Control (GUI)
+﻿# PurpleAI Control
 
-A small Tkinter desktop app that starts/stops the three PurpleAI components on
-the lab machines over SSH and shows their live output — no terminal needed.
-
-```
-this PC ──ssh──► gamehost ──ssh──► redai   (Attacker: Boss + subagent server)
-                          └──ssh──► blueai  (Defender + Vulnerable app, Docker)
-```
-
-Every command is run as `ssh gamehost "ssh <redai|blueai> …"` in a background
-thread with the console window hidden, and output is streamed into the window.
+A desktop workspace for running the PurpleAI lab over SSH. The GUI upgrade
+introduces sidebar navigation, a violet and charcoal theme, compact scorecards,
+agent status cards, and resizable live feeds. It uses Python's built-in Tk toolkit
+with a custom theme; no extra GUI dependencies are needed.
 
 ## Run
 
-Double-click **`dist/PurpleAIControl.exe`**. No install, no console.
+Double-click `dist/PurpleAIControl-GUIUpgrade.exe` for the upgraded build.
+The original `dist/PurpleAIControl.exe` can remain alongside it.
 
-## ⚔ Siege (Arena tab)
+From source:
 
-A pixel-art castle-defence view of the same live data. The defender is a castle;
-each flag is a structure (gate / walls / towers / keep). The red agents (Boss,
-SQLi, XSS, SSTI) besiege it and speak their live reasoning in bubbles:
+```powershell
+uv run --no-project --python 3.12 startup/gui/app.py
+```
 
-- **running** agent → attacks the wall (bolts) with a reasoning bubble; **queued**
-  → waits; state shown by a green/amber dot.
-- **flag captured** (scored) → its structure **crumbles**; castle HP drops; all
-  five reachable flags → **the castle falls (RED WINS)**.
-- **leaked, not scored** → a grey bolt pings off (📄), no damage.
-- **defender blocks** (blue point) → a volley fires from the walls and knocks an
-  attacker back.
+For a local design preview with SSH and configuration writes disabled:
 
-Drawn procedurally (no assets) and driven entirely by the attacker/defender
-streams — Start both components and watch it play out. It's an extra tab; the
-text panes stay as they were.
+```powershell
+uv run --no-project --python 3.12 startup/gui/preview.py
+```
 
-## Red vs Blue scoreboard
+## Workspace
 
-The header shows a live game between the teams:
+Use the sidebar to switch between:
 
-- **🔴 RED** = flags the attacker has captured this run.
-- **🔵 BLUE** = requests the defender has blocked this run
-  (`request_decision` events with `status: blocked`).
+- **Attack workspace**: Boss orchestration alongside a resizable 2-by-2 grid
+  of Recon, SQL, Cross-site, and SSTI feeds. Server and agent cards show live
+  activity; objective indicators show which flags have been captured.
+- **Defense workspace**: controls and logs for the defender plus vulnerable app.
+- **Application**: controls and logs for the vulnerable app on its own.
+- **Siege arena**: the existing animated battlefield and War Room, driven by the
+  same live events, reasoning, captures, and defender blocks.
 
-A proportion bar and a "leads / tied" line update as each side scores. Red
-resets when you Start (or Clear) the attacker; Blue resets when you Start the
-defender.
+The top controls select instance A-D, its branch, and its model. Each instance
+has a separate worktree, server port, application port, and tmux session.
+Branch and model changes take effect on the next start. Switching instances
+reattaches the live viewers and restores that instance's arena transcript.
+
+**Start all** starts the current instance's attacker and defender/app stack.
+**Stop all** stops the current instance's components. **Launch instances** opens
+the batch launcher with per-instance branches, an optional vulnerable app,
+and a configurable delay between launches.
+
+Each component provides Start, Stop, Logs, Status, and Clear. The attacker also
+provides Server log, a toggle for the reasoning stream, the Reasoning only
+filter, and End engagement. End engagement interrupts the Boss so it writes its
+final summary, leaving the server and logs available for review.
+
+Sidebar tools provide engagement notes, the Strategist brief, and the shared
+API key pool. Saving keys updates the live pool on redai. **Reset all instances**
+requires confirmation and stops all A-D instances, removes their server state,
+and clears their logs.
+
+## Scoring and live data
+
+Blue begins defending all seven objectives. A flag counts for Red only when
+captured through its owning vulnerability class; a flag leaked through another
+class appears in the logs without scoring. Blue's displayed score is the
+number of objectives still defended. Blocked requests animate the arena.
+
+The attacker reads its console log, `events.jsonl`, the LangGraph server log,
+and thread state for subagent output. Logs start reasoning and health polling
+automatically. Server health is checked every eight seconds and reasoning is
+polled every six seconds while enabled.
+
+Starting the attacker preserves checkpoints and server threads for resume.
+Use Reset all instances when you want to clear the engagement state.
 
 ## Build
 
 ```powershell
 cd startup\gui
-.\build.ps1            # or .\build.ps1 -Clean
+.\build.ps1 -Name PurpleAIControl-GUIUpgrade
 ```
 
-Produces `dist/PurpleAIControl.exe` (windowed, single file). Uses `uv` +
-PyInstaller ephemerally — nothing is added to the project's dependencies. The
-exe is git-ignored; rebuild after editing `app.py`.
+Builds a separate windowed, single-file executable, including arena assets.
+The default command `.\build.ps1` produces `dist/PurpleAIControl.exe`.
+`-Clean` removes existing build outputs first. Build outputs are git-ignored.
+The build uses uv and an ephemeral PyInstaller installation.
 
-## Tabs
+## Lab configuration
 
-| Tab | Start | Stop |
-|---|---|---|
-| **Attacker (redai)** | pull main → start Boss + subagent server in tmux | kill the tmux session + stray procs |
-| **Defender + VulnApp (blueai)** | pull main → `docker compose -f docker-compose.full.yml up -d --build` (brings the app-only stack down first) | `… down` |
-| **Vulnerable app only (blueai)** | pull main → `docker compose -f docker-compose.app.yml up -d --build` (brings the full stack down first) | `… down` |
+Edit the configuration constants in `app.py`:
 
-Each tab has **▶ Start · ■ Stop · 📜 View logs · ⟳ Status · Clear**. Start pulls
-`main` on the box first, then launches; logs auto-stream afterwards. The header
-has **Start all** / **Stop all**.
+- `GAMEHOST`: SSH jump host alias (default `gamehost`).
+- `REPO`: repository path on the lab machines (default `~/purpleAI`).
+- `BLUEAI_IP`: address hosting the target applications.
+- `INSTANCES`: A-D ports and default branches/models.
 
-## Attacker tab specifics
+Commands travel from this PC to gamehost, then to redai or blueai, in background
+processes. SSH aliases and key authentication must already work without password
+prompts. Remote requirements are the repository, tmux on redai, and Docker on
+blueai. Docker uses the login user's access or passwordless `sudo -n docker`.
 
-Extra controls: **📄 Server log**, **🧠 Reasoning**, **Reasoning only** (checkbox).
+API keys and model choices stay in `~/.purpleai_instance_keys.json`; engagement
+notes stay in `~/.purpleai_notes.md`. Neither file is committed to the repository.
 
-### Server + subagent lights
-A row of status lights:
+## Verification
 
-- **Server** — polls `http://localhost:2024/ok` on redai every 8 s.
-  🟢 `connected (200)` / 🔴 `down (:2024)`.
-- **SQLi / XSS / SSTI** — one per subagent, showing
-  `R running / Q queued / M launched`:
-  🟢 green = a run is executing, 🟡 amber = only queued work waiting,
-  ⚪ grey = idle. `M` is the count of unique task IDs launched this run — a quick
-  way to spot the Boss over-delegating.
+```powershell
+$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD='1'
+uv run --no-project --python 3.12 --with pytest python -m pytest tests/test_gui_workspace.py tests/test_war_room_routing.py -k 'not complete_boss' -q
+```
 
-### Four live panes
-The log area is split into **Boss · SQL · Cross-site · SSTI** (resizable
-dividers). Output is routed by subagent:
-
-- **Boss** — the Boss's own reasoning stream.
-- **SQL / Cross-site / SSTI** — each subagent's reasoning (`🧠`), tool runs
-  (`▶ sqlmap/xsser/curl …`), results (`✓/✗`), launches (`➕`) and flags (`🚩`).
-
-Subagent reasoning is pulled from the langgraph server's thread state and
-starts automatically with the log stream. The 🧠 Reasoning button toggles it.
-(The subagents' full formatted trace also lives in LangSmith.)
-
-### Reasoning only
-On by default: the **Boss** pane shows just iteration headers and the Boss's
-reasoning, hiding raw tool-call/result chatter. Untick for the full console.
-
-### 🚩 Flags
-One light per flag planted in the vulnerable app (see
-`src/defender/vulnerable-app/VULNERABILITIES.md`). Each starts **blue**
-(defended / uncaptured) and turns **red** when the attacker captures it; the
-title shows `captured / total`. Resets on attacker Start/Clear.
-
-## How a Start works (attacker)
-
-1. The attacker launch script is **shipped over SSH on stdin** (`bash -s`), so
-   redai needs only the repo — not any helper file. It is normalised to LF so
-   bash doesn't choke on CRLF.
-2. It restarts clean: kills any existing `attacker` tmux session, **rotates
-   `events.jsonl`** and **wipes the server's `.langgraph_api`** so earlier runs'
-   tasks don't carry over.
-3. Starts the subagent server with `langgraph dev --no-browser --no-reload
-   --n-jobs-per-worker 10`:
-   - `--no-browser`: headless redai would otherwise open a text-mode browser
-     that grabs the tty and suspends the server.
-   - `--no-reload`: the attacker writes logs inside the watched tree; auto-reload
-     would restart the server on every write and freeze runs at `pending`.
-   - `--n-jobs-per-worker 10`: run SQLi/XSS/SSTI concurrently.
-4. Waits for `:2024` to answer (after a short delay — your chance to open the
-   Server log), then starts the Boss (`redagent.py`).
-
-## Streams it reads (attacker)
-
-| Source on redai | Shown as |
-|---|---|
-| `startup/logs/attacker.log` | Boss pane (reasoning) |
-| `src/Attacker/logs/events.jsonl` | lights + activity lines + flags |
-| langgraph server thread state (`:2024`) | subagent reasoning panes |
-| `startup/logs/langgraph.log` | 📄 Server log |
-
-## Configuration
-
-Edit the `CONFIG` block at the top of [`app.py`](app.py) and rebuild:
-
-- `GAMEHOST` — ssh alias of the jump host (default `gamehost`).
-- `REPO` — repo path on redai/blueai (default `~/purpleAI`).
-- `COMPONENTS` — per-tab host, commands, subagents, panes.
-- `PURPLE_ATTACKER_DELAY` (env var on redai) — seconds before the Boss starts
-  (default 10).
-
-## Requirements
-
-- The `ssh` aliases `gamehost`, `redai`, `blueai` work as you use them by hand
-  (gamehost from this PC; redai/blueai from gamehost), with **key auth** — the
-  app runs ssh non-interactively (no password prompts).
-- Repo at `~/purpleAI` on redai and blueai; `tmux` on redai (auto-installed if
-  missing and passwordless sudo is available); Docker on blueai.
-- **Docker on blueai**: the app uses plain `docker` if the login user can reach
-  the socket, else passwordless `sudo -n docker`, else it prints a one-time fix
-  (`sudo usermod -aG docker $(whoami)` then re-login).
+The GUI checks exercise navigation, all five output panes, live agent activity,
+flag attribution and score updates, minimum window sizing, and the notes dialog.
+They do not connect to the lab or load the operator's saved configuration.
