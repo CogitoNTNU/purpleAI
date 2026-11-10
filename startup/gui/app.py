@@ -1419,6 +1419,15 @@ class App(tk.Tk):
         branch_cb.bind("<Return>", self._on_branch_change)
         branch_cb.bind("<FocusOut>", self._on_branch_change)
 
+        # Per-instance API key: this instance runs on its own key (its own
+        # concurrency budget). Masked; blank falls back to the shared .env key.
+        ttk.Label(sel, text="API key", style="HeaderSub.TLabel").pack(side="left", padx=(14, 6))
+        self.apikey_var = tk.StringVar(value=INSTANCES[0].get("api_key", ""))
+        key_entry = ttk.Entry(sel, textvariable=self.apikey_var, width=22, show="•")
+        key_entry.pack(side="left")
+        key_entry.bind("<Return>", self._on_apikey_change)
+        key_entry.bind("<FocusOut>", self._on_apikey_change)
+
         # right cluster: Reset · Stop · Start (current) · Launch (batch) · host
         ttk.Button(header, text="🧹  Reset all", command=self.reset_all,
                    style="Ghost.TButton").pack(side="right", padx=(8, 0))
@@ -1589,9 +1598,16 @@ class App(tk.Tk):
         inst = self._instance_by_label(self.inst_var.get())
         self.current_instance = inst
         self.branch_var.set(inst["branch"])
+        self.apikey_var.set(inst.get("api_key", ""))  # show this instance's key
         self.title(f"PurpleAI Control — instance {inst['label']}")
         for t in self.tabs:
             t.set_instance(inst)
+
+    def _rebuild_tab_scripts(self):
+        """Rebuild every tab's per-instance scripts (after a branch/key change)."""
+        for t in self.tabs:
+            if callable(t.cfg.get("build")):
+                t.cfg.update(t.cfg["build"](t.instance))
 
     def _on_branch_change(self, _evt=None):
         """Set the current instance's branch; takes effect on its next Start."""
@@ -1599,10 +1615,16 @@ class App(tk.Tk):
         if not branch or branch == self.current_instance.get("branch"):
             return
         self.current_instance["branch"] = branch
-        # Rebuild each tab's scripts so the next Start pulls the new branch.
-        for t in self.tabs:
-            if callable(t.cfg.get("build")):
-                t.cfg.update(t.cfg["build"](t.instance))
+        self._rebuild_tab_scripts()
+
+    def _on_apikey_change(self, _evt=None):
+        """Set the current instance's API key; saved and used on its next Start."""
+        key = self.apikey_var.get().strip()
+        if key == self.current_instance.get("api_key", ""):
+            return
+        self.current_instance["api_key"] = key
+        save_instance_keys()
+        self._rebuild_tab_scripts()
 
     def start_all(self):
         # Current instance's attacker + defender (defender includes the vuln app).
@@ -1665,9 +1687,6 @@ class App(tk.Tk):
                  font=("Segoe UI Semibold", 9)).grid(row=1, column=1, sticky="w")
         tk.Label(win, text="Branch", bg=PAL["bg"], fg=PAL["muted"],
                  font=("Segoe UI Semibold", 9)).grid(row=1, column=2, sticky="w", padx=6)
-        tk.Label(win, text="API key  (its own budget — blank = shared .env key)",
-                 bg=PAL["bg"], fg=PAL["muted"],
-                 font=("Segoe UI Semibold", 9)).grid(row=1, column=3, sticky="w", padx=6)
 
         rows = []
         for i, inst in enumerate(INSTANCES):
@@ -1675,17 +1694,15 @@ class App(tk.Tk):
             tk.Checkbutton(win, variable=inc, bg=PAL["bg"], activebackground=PAL["bg"],
                            selectcolor=PAL["panel"], highlightthickness=0,
                            bd=0).grid(row=2 + i, column=0)
+            key_note = "  ·  own key" if inst.get("api_key") else "  ·  shared key"
             tk.Label(win, text=f"{inst['label']}   (server :{inst['server_port']} · "
-                     f"app :{inst['app_port']})", bg=PAL["bg"], fg=PAL["text"],
+                     f"app :{inst['app_port']}){key_note}", bg=PAL["bg"], fg=PAL["text"],
                      font=("Segoe UI", 10)).grid(row=2 + i, column=1, sticky="w")
             bvar = tk.StringVar(value=inst["branch"])
             ttk.Combobox(win, textvariable=bvar, width=18,
                          values=["main", "recon-agent"]).grid(
                              row=2 + i, column=2, sticky="w", padx=6, pady=2)
-            kvar = tk.StringVar(value=inst.get("api_key", ""))
-            ttk.Entry(win, textvariable=kvar, width=30, show="•").grid(
-                row=2 + i, column=3, sticky="w", padx=6, pady=2)
-            rows.append((inst, inc, bvar, kvar))
+            rows.append((inst, inc, bvar))
 
         drow = 2 + len(INSTANCES)
         tk.Label(win, text="Delay between launches (seconds):", bg=PAL["bg"],
@@ -1712,13 +1729,8 @@ class App(tk.Tk):
                 delay = max(0, int(float(delay_var.get())))
             except ValueError:
                 delay = 120
-            # Persist every row's key (so it's remembered next session), then
-            # launch the checked instances.
-            for inst, _inc, _bvar, kvar in rows:
-                inst["api_key"] = kvar.get().strip()
-            save_instance_keys()
             sel = [(inst, (bvar.get().strip() or inst["branch"]))
-                   for inst, inc, bvar, kvar in rows if inc.get()]
+                   for inst, inc, bvar in rows if inc.get()]
             win.destroy()
             self._launch_batch(sel, delay, app_var.get())
 
