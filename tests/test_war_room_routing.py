@@ -4,6 +4,7 @@ from pathlib import Path
 import queue
 from types import SimpleNamespace
 from unittest.mock import Mock
+import sys
 
 
 def test_status_stays_in_logs_while_dialogue_reaches_chat():
@@ -29,3 +30,22 @@ def test_status_stays_in_logs_while_dialogue_reaches_chat():
     gui.ComponentTab._drain(tab)
     assert [call.args[0] for call in tab.append.call_args_list] == [*status, dialogue]
     arena.say.assert_called_once_with("boss", "Recon found a new endpoint; assigning a focused scan.")
+
+
+def test_complete_boss_summary_reaches_chat_without_exposing_private_reasoning(monkeypatch, capsys):
+    root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(root / "src/attacker"))
+    import redagent
+    from langchain_core.messages import AIMessage
+    monkeypatch.setattr(redagent, "log_agent_update", Mock())
+    message = AIMessage(
+        content="Finding: endpoint discovered.\n\nImplication: needs validation.\nNext action: focused check.",
+        additional_kwargs={"reasoning_content": "private internal reasoning"},
+    )
+    redagent._render_messages("model", {"messages": [message]})
+    output = capsys.readouterr().out
+    assert len(output.splitlines()) == 1
+    assert "Finding: endpoint discovered." in output
+    assert "Implication: needs validation." in output
+    assert "Next action: focused check." in output
+    assert "private internal reasoning" not in output
