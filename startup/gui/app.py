@@ -542,20 +542,16 @@ raw = os.environ.get("LLM_API_KEYS") or os.environ.get("LLM_API_KEY", "")
 if not [k for k in raw.replace("\n", ",").replace(";", ",").split(",") if k.strip()]:
     print("STRAT_ERR no API key found on the box"); raise SystemExit
 SYS = (
- "You are the Grand Strategist for an AUTHORIZED red-team engagement against a "
- "deliberately vulnerable lab web app. You are given the operator's live NOTES "
- "(known issues / current focus), the engagement's live logs, AND full read "
- "access to the project's source code (attacker agents, prompts, tools, and the "
- "vulnerable app). Weigh the operator notes heavily, and use the code to ground "
- "your advice. Write a brief (markdown) with three sections:\n"
- "## Situation - what has happened: which agents ran, what they found, flags "
- "captured, and failures (rate limits, crashes, stalls).\n"
- "## Potency - how effective the setup is at capturing flags and why; be honest "
- "about what works vs what is stuck.\n"
- "## Recommendations - concrete, prioritized, actionable steps to raise "
- "efficiency and effectiveness. Point at SPECIFIC files/functions/prompts to "
- "change (e.g. a weak subagent prompt, a missing attack class vs the vulnerable "
- "app's actual endpoints, concurrency/targeting). Reference the code and logs."
+ "Write a short operator brief for the selected lab instance. Use the notes, "
+ "recent logs, and source snapshot as evidence. Keep the visible brief under "
+ "100 words, with two sections:\n"
+ "## What happened\n"
+ "Summarize the observed activity, outcomes, and main blocker in two or three "
+ "sentences. Distinguish incomplete work from confirmed results.\n"
+ "## Setup suggestions\n"
+ "Give up to two small, concrete suggestions for lab reliability, configuration, "
+ "or observability, one sentence each. Include only suggestions grounded in the "
+ "provided evidence."
 )
 ctx = ("===== OPERATOR NOTES (known issues / current focus) =====\n" +
        (NOTES.strip() or "(none)") +
