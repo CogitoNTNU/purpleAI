@@ -16,11 +16,22 @@ From source:
 uv run --no-project --python 3.12 startup/gui/app.py
 ```
 
-For a local design preview with SSH and configuration writes disabled:
+## Preview on your own PC
+
+Install Git and `uv`, clone PurpleAI, and run this from the repository root in
+PowerShell. `uv` selects Python 3.12, and the preview uses its Tk desktop toolkit.
 
 ```powershell
 uv run --no-project --python 3.12 startup/gui/preview.py
 ```
+
+The preview opens the interface locally with SSH and configuration writes
+disabled. You can try the navigation, instance and model selectors, and notes
+dialog without lab credentials. Changes made in the preview are temporary.
+
+The live interface is the one our team runs on its shared Cogito NTNU lab setup.
+Its default connection settings refer to that lab. For a local application and
+defender setup, follow the [manual Docker guide](../../README.md#usage-docker).
 
 ## Workspace
 

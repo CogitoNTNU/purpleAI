@@ -25,6 +25,7 @@
     - [View logs](#view-logs)
     - [Stop the containers](#stop-the-containers)
     - [📖 Generate Documentation Site](#-generate-documentation-site)
+  - [Desktop GUI](#desktop-gui)
   - [Testing](#testing)
   - [Team](#team)
     - [License](#license)
@@ -115,6 +116,18 @@ uv run mkdocs serve
 ```
 
 This will build the documentation and start a local server at [http://127.0.0.1:8000/](http://127.0.0.1:8000/) where you can browse the docs and API reference. Get the documentation according to the lastes commit on main by viewing the `gh-pages` branch on GitHub: [https://cogitontnu.github.io/PROJECT-TEMPLATE/](https://cogitontnu.github.io/PROJECT-TEMPLATE/).
+
+## Desktop GUI
+
+PurpleAI Control is the Windows desktop interface we use for our shared Cogito NTNU lab. It shows instance status, logs, the Dashboard, and the War Room. The live GUI defaults refer to the team's lab machines. The manual setup above covers running the application and defender locally.
+
+To try the GUI on your own PC, install Git and `uv`, clone this repository, and open PowerShell at the repository root. Start the local preview with:
+
+```powershell
+uv run --no-project --python 3.12 startup/gui/preview.py
+```
+
+The preview uses Python's Tk desktop toolkit and runs without a lab connection, saved API keys, or Docker. You can explore the layout and controls, including the instance and model selectors. Preview settings are temporary and reset when you close it. See the [GUI README](startup/gui/README.md) for the workspace guide and Windows build instructions.
 
 ## Testing
 
