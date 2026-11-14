@@ -10,7 +10,7 @@ dependencies = [
     "requests>=2.34.2",
     "langchain-openai>=1.7.3",
     "streamlit>=1.66.1",
-    "pandas>=3.1.0",
+    "pandas>=3.1.1",
     "altair>=5.5,<7",
 ]
 
