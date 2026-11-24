@@ -103,11 +103,11 @@ wheels = [
 
 [[package]]
 name = "certifi"
-version = "2025.8.3"
+version = "2026.11.20"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/dc/67/960ebe6bf230a96cda2e0abcf73af550ec4f090005363542f0765df162e0/certifi-2025.8.3.tar.gz", hash = "sha256:e564105f78ded564e3ae7c923924435e1daa7463faeab5bb932bc53ffae63407", size = 162386, upload-time = "2025-08-03T03:07:47.08Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/51/33/4cd27639502f010084bcef7a2036391dd637439901341ce1a530f36f6e51/certifi-2026.11.20.tar.gz", hash = "sha256:af1cb240a8133f105aa52684a3a3258339d7f2fd0bd4e2812698ff5cf5588c4e", size = 128901, upload-time = "2026-11-20T23:37:49.522Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e5/48/1549795ba7742c948d2ad169c1c8cdbae65bc450d6cd753d124b17c8cd32/certifi-2025.8.3-py3-none-any.whl", hash = "sha256:f6c12493cfb1b06ba2ff328595af9350c65d6644968e5d3a2ffd78699af217a5", size = 161216, upload-time = "2025-08-03T03:07:45.777Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/39/5eec3296860b94ac20bb8ed807725b88f6adfab3f343df592afd975f5f86/certifi-2026.11.20-py3-none-any.whl", hash = "sha256:7422df25243767b9877031a2248cb14d09ddac9beee846f4cef3d5c9191d488f", size = 127913, upload-time = "2026-11-20T23:37:48.117Z" },
 ]
 
 [[package]]
@@ -583,9 +583,10 @@ wheels = [
 
 [[package]]
 name = "langchain-core"
-version = "1.7.2"
+version = "1.8.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "certifi" },
     { name = "httpx" },
     { name = "jsonpatch" },
     { name = "langchain-protocol" },
@@ -597,14 +598,14 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "uuid-utils" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/50/e0/c1b304897da6c3a8a6c977f10b339901cbd4d462274da7cbf940798de237/langchain_core-1.7.2.tar.gz", hash = "sha256:7810d029eaa4286838baad56752efb771868a5eebaf52aefe45764645dbea649", size = 1029042, upload-time = "2026-10-29T19:04:13.876Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/75/ba/281e953ec491deda5c9ef8633b47647c41836c6b6fe1395e9d99567dbb44/langchain_core-1.8.4.tar.gz", hash = "sha256:af8976d6df0b3338dc7c830ebf1c505c0fc05a0e3eb564f4901ed7546a418ab6", size = 1025230, upload-time = "2026-11-19T22:35:43.367Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/88/40/15be310450488b8b508836492203291642a17dbd6dd56a48232934aa3a44/langchain_core-1.7.2-py3-none-any.whl", hash = "sha256:61988091e36f074aaac595232180b5aa6e80cb63fb026b02b69843f07a57fdcf", size = 577056, upload-time = "2026-10-29T19:04:12.219Z" },
+    { url = "https://files.pythonhosted.org/packages/16/6d/35b048329e70492ca0d7561431627ac3b7da1a2dedc99870ca188902529c/langchain_core-1.8.4-py3-none-any.whl", hash = "sha256:5755dee8f8b0c709cd22436dea3689c74a3f6e9dc4251590797dcd66bcd1ef67", size = 591065, upload-time = "2026-11-19T22:35:41.819Z" },
 ]
 
 [[package]]
 name = "langchain-openai"
-version = "1.7.3"
+version = "1.8.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
@@ -612,21 +613,21 @@ dependencies = [
     { name = "openai" },
     { name = "tiktoken" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/58/f5/a430230cb50b4b4ade021a5fe5df5a8c5adefa468435d460d2f77f2506ea/langchain_openai-1.7.3.tar.gz", hash = "sha256:c1d2d0fbd4f542ddcdf176c07abcf4d86c3b716513929250bbef04e3efc5e0b5", size = 3407726, upload-time = "2026-10-26T23:08:33.98Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fa/6e/a3ff2ffaeea59532616f34e7f64c863c42ac5cb618d5bc867201700c29c3/langchain_openai-1.8.5.tar.gz", hash = "sha256:53f2612f61290edc115712a887e384dac9984783689d2e2b4ca7fbc75c1e0e64", size = 2812903, upload-time = "2026-11-19T23:16:07.496Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c4/52/5bcba40b1d7e46f352a727c57c231b820069bc83310f97933e10eccbd935/langchain_openai-1.7.3-py3-none-any.whl", hash = "sha256:0ab77cc4579b87c50823b7ccb5d8af48d6c6ae2084f156dcdc37151fcc0717e6", size = 146342, upload-time = "2026-10-26T23:08:32.577Z" },
+    { url = "https://files.pythonhosted.org/packages/de/cc/8bad1420ab5ad396f3c5ea7d4aabbd45b31a84aeb27bc7122756a5c55026/langchain_openai-1.8.5-py3-none-any.whl", hash = "sha256:e5bc9d1da58231496caf2e09c42c5ed21ddc8bb4e2427300c8e8a7b1a8372bf1", size = 158006, upload-time = "2026-11-19T23:16:06.374Z" },
 ]
 
 [[package]]
 name = "langchain-protocol"
-version = "0.0.20"
+version = "0.0.22"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cb/8b/d908d082c3cf5368ddd1816ed114de79c873f979ba7f98b95fab0e841643/langchain_protocol-0.0.20.tar.gz", hash = "sha256:0f5bd002474265648e91161771a9e0438fe9480bd55a416e51af0f60070637ec", size = 6280, upload-time = "2026-10-20T11:13:50.84Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a2/5c/94ffa0c0b9445ac284bf7c0aebf2fa3a32bdf27c20aaf2f061746375b670/langchain_protocol-0.0.22.tar.gz", hash = "sha256:61267bc9f478c9df35ccdafd9fdf556b2698435232d59def54b3809bb02585bb", size = 6508, upload-time = "2026-11-19T15:47:56.068Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/02/4b/f1c99a0b27c5ff8b4b131c0d6e62012c17cc424089efe213767db927afd2/langchain_protocol-0.0.20-py3-none-any.whl", hash = "sha256:3c935e5e46b0f6f9cb52f45ba7cfa53d1b9fa80c82c4a277d47f03e07f7385b1", size = 7347, upload-time = "2026-10-20T11:13:49.566Z" },
+    { url = "https://files.pythonhosted.org/packages/71/0a/e96b6ca3b5a7d91af31fd82aee42e65beb6bbe884587e27df5460feee486/langchain_protocol-0.0.22-py3-none-any.whl", hash = "sha256:d264998a507b735320c15a7b366051cbf41e21f771bea1b03a911f2c58af02e7", size = 7579, upload-time = "2026-11-19T15:47:55.109Z" },
 ]
 
 [[package]]
@@ -1262,7 +1263,7 @@ docs = [
 requires-dist = [
     { name = "altair", specifier = ">=5.5,<7" },
     { name = "flask", specifier = ">=3.1.0" },
-    { name = "langchain-openai", specifier = ">=1.7.3" },
+    { name = "langchain-openai", specifier = ">=1.8.5" },
     { name = "pandas", specifier = ">=3.1.0" },
     { name = "requests", specifier = ">=2.34.2" },
     { name = "streamlit", specifier = ">=1.66.1" },
